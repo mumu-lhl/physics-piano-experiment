@@ -100,9 +100,9 @@ class BridgeSoundboard:
         self.sb_y2[:] = self.sb_y1
         self.sb_y1[:] = y_modes
 
-        # Sum modal radiation output + direct dry bridge transmission
+        # Acoustic radiation predominantly emanates from soundboard plate resonance
         modal_sound = float(np.sum(y_modes))
-        soundboard_out = 0.65 * modal_sound + 0.35 * f_in * 1e-4
+        soundboard_out = 0.92 * modal_sound + 0.08 * f_in * 1e-4
 
         # Equal-power stereo panning across piano width
         pan_clamped = max(0.0, min(1.0, float(pan)))

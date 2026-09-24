@@ -43,7 +43,11 @@ class StiffStringModal:
         self.n_modes = np.arange(1, self.M + 1, dtype=np.float64)
         
         # Spatial basis functions at hammer position: phi_n(x_h) = sin(n * pi * x_h / L)
-        self.phi_h = np.sin(self.n_modes * math.pi * self.x_h / self.L)
+        # Apply finite felt width sinc spatial window to suppress non-physical knife-edge high-frequency harshness
+        norm_k = min(1.0, max(0.0, (params.fundamental_hz - 27.5) / (4186.0 - 27.5)))
+        w_h = 0.020 - (0.010 * norm_k)  # Felt width: ~2.0cm in bass down to ~1.0cm in treble
+        sinc_window = np.sinc((self.n_modes * w_h) / (2.0 * self.L))
+        self.phi_h = np.sin(self.n_modes * math.pi * self.x_h / self.L) * sinc_window
         
         # Spatial derivative coefficients at bridge x = L:
         # F_bridge = T0 * sum((-1)^(n-1) * (n * pi / L) * q_n)

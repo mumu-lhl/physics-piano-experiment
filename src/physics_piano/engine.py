@@ -74,22 +74,28 @@ class PianoEngine:
         num_samples = int(duration * self.sample_rate)
         out_audio = np.zeros((num_samples, 2), dtype=np.float64)
 
+        # Dissipative bridge reaction forces from previous time step
+        f_react_T = 0.0
+        f_react_P = 0.0
+
         for i in range(num_samples):
-            # 1. Sum bridge forces across active voices
             total_bridge_T = 0.0
             total_bridge_P = 0.0
             voices_to_remove = []
 
-            # Step active voices
+            num_active = len(self.active_notes)
+            coupling_T = f_react_T / max(1, num_active)
+            coupling_P = f_react_P / max(1, num_active)
+
+            # 1. Step active voices exactly once with dissipative bridge coupling
             for note in list(self.active_notes):
                 v = self.voices[note]
-                fb_T, fb_P = v.step()
+                fb_T, fb_P = v.step(f_coupling_T=coupling_T, f_coupling_P=coupling_P)
                 total_bridge_T += fb_T
                 total_bridge_P += fb_P
 
                 # Pruning quiet voices if key is released and hammer finished
                 if not v.is_key_down and not self.sustain_pedal:
-                    # Check maximum modal amplitude
                     max_disp = max(np.max(np.abs(s.state_T[:, 0])) for s in v.strings)
                     if max_disp < 1e-9:
                         voices_to_remove.append(note)
@@ -97,18 +103,10 @@ class PianoEngine:
             for note in voices_to_remove:
                 self.active_notes.discard(note)
 
-            # 2. Bridge anisotropic coupling & reaction forces
+            # 2. Bridge anisotropic coupling & soundboard driving force
             f_react_T, f_react_P, f_soundboard = self.bridge.calculate_coupling_forces(total_bridge_T, total_bridge_P)
 
-            # 3. Sympathetic resonance feedback when sustain pedal is down
-            if self.sustain_pedal and abs(f_soundboard) > 1e-7:
-                sympathetic_drive_T = f_soundboard * self.sympathetic_resonance_gain
-                for v in self.voices.values():
-                    # Feed small excitation to undamped strings
-                    for s in v.strings:
-                        s.step(f_hammer=0.0, f_coupling_T=sympathetic_drive_T * 0.1)
-
-            # 4. Soundboard radiation filtering with stereo output
+            # 3. Soundboard acoustic radiation filtering with stereo spatial spread
             left_sample, right_sample = self.bridge.step_soundboard(f_soundboard)
             out_audio[i, 0] = left_sample
             out_audio[i, 1] = right_sample
