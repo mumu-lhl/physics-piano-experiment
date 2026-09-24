@@ -34,13 +34,19 @@ class HuntCrossleyHammer:
         self.contact_time = 0.0 # Cumulative time in contact (seconds)
         self.has_struck = False
 
-    def strike(self, velocity: float):
-        """Trigger hammer strike with normalized MIDI velocity in (0.0, 1.0]."""
+    def strike(self, velocity: float, initial_u_string: float = 0.0):
+        """Trigger hammer strike with normalized MIDI velocity in (0.0, 1.0].
+        
+        Args:
+            velocity: Normalized strike velocity (0.0 to 1.0)
+            initial_u_string: Current displacement of string at strike location x_h
+        """
         clamped_vel = max(0.001, min(1.0, float(velocity)))
         # Non-linear velocity mapping: v0 = v_max * (velocity)^gamma
         v0 = self.v_max * (clamped_vel ** self.gamma_felt)
 
-        self.u_h = 0.0
+        # When re-striking a vibrating string, position hammer slightly behind string contact
+        self.u_h = min(0.0, float(initial_u_string))
         self.v_h = v0
         self.is_active = True
         self.contact_time = 0.0

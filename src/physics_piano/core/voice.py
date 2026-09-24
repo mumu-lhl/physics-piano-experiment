@@ -57,8 +57,11 @@ class PianoVoice:
         # Raise dampers on this voice
         for s in self.strings:
             s.set_damper(False)
-        # Strike hammer
-        self.hammer.strike(velocity)
+        
+        # Calculate current average displacement of strings under felt
+        u_cur = sum(s.get_strike_displacement_and_velocity()[0] for s in self.strings) / len(self.strings)
+        # Strike hammer with current string position context for smooth restrike
+        self.hammer.strike(velocity, initial_u_string=u_cur)
 
     def note_off(self, sustain_pedal: bool = False):
         """Release key. If sustain pedal is not held, lower dampers."""

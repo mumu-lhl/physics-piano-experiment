@@ -32,21 +32,33 @@ class StiffStringModal:
         self.T0 = params.tension
         self.sigma0 = params.sigma0
         self.sigma1 = params.sigma1
-        self.M = params.num_modes
         self.x_h = params.strike_ratio * self.L
 
         self.mu = self.rho * (math.pi * (self.r ** 2))
         self.omega_0 = (math.pi / self.L) * math.sqrt(self.T0 / self.mu)
         self.B = (math.pi ** 3 * self.E * (self.r ** 4)) / (4.0 * self.T0 * (self.L ** 2))
 
-        # Mode indices n = 1, 2, ..., M
-        self.n_modes = np.arange(1, self.M + 1, dtype=np.float64)
-        
-        # Spatial basis functions at hammer position: phi_n(x_h) = sin(n * pi * x_h / L)
-        # Apply finite felt width sinc spatial window to suppress non-physical knife-edge high-frequency harshness
+        # Dynamic mode truncation at Nyquist frequency (0.95 * fs / 2) to eliminate ultrasonic aliasing
+        max_omega = 0.95 * math.pi * self.sample_rate
+        all_n = np.arange(1, params.num_modes + 1, dtype=np.float64)
+        all_omega = all_n * self.omega_0 * np.sqrt(1.0 + self.B * (all_n ** 2))
+        valid_mask = all_omega <= max_omega
+
+        # Always keep at least the fundamental mode
+        if not np.any(valid_mask):
+            self.n_modes = np.array([1.0], dtype=np.float64)
+        else:
+            self.n_modes = all_n[valid_mask]
+
+        self.M = len(self.n_modes)
+
+        # Finite felt width sinc spatial windowing:
+        # felt width: ~2.0cm in bass down to ~1.0cm in high treble
         norm_k = min(1.0, max(0.0, (params.fundamental_hz - 27.5) / (4186.0 - 27.5)))
-        w_h = 0.020 - (0.010 * norm_k)  # Felt width: ~2.0cm in bass down to ~1.0cm in treble
+        w_h = 0.020 - (0.010 * norm_k)
         sinc_window = np.sinc((self.n_modes * w_h) / (2.0 * self.L))
+
+        # Spatial basis functions at hammer position: phi_n(x_h) = sin(n * pi * x_h / L) * sinc
         self.phi_h = np.sin(self.n_modes * math.pi * self.x_h / self.L) * sinc_window
         
         # Spatial derivative coefficients at bridge x = L:
