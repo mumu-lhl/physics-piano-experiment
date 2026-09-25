@@ -1985,8 +1985,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
-name = "physics-piano"
+name = "physics-guitar"
 version = "0.1.0"
+dependencies = [
+ "clap-sys 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "hound",
+ "num-complex",
+ "parking_lot",
+ "realfft",
+]
+
+[[package]]
+name = "physics-piano"
+version = "0.2.0"
 dependencies = [
  "clap-sys 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "crossbeam-channel",

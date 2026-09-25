@@ -1,0 +1,21 @@
+[package]
+name = "physics-guitar"
+version = "0.1.0"
+edition = "2021"
+authors = ["Mumulhl"]
+description = "First-principles physical modeling acoustic & electric guitar synthesizer in Rust"
+
+[lib]
+name = "physics_guitar"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "physics-guitar-rs"
+path = "src/bin/cli.rs"
+
+[dependencies]
+clap-sys = "0.5.0"
+realfft = "3.5.0"
+num-complex = "0.4"
+hound = "3.5.1"
+parking_lot = "0.12"
