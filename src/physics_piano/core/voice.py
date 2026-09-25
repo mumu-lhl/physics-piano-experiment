@@ -123,19 +123,20 @@ class PianoVoice:
             total_bridge_T, total_bridge_P, total_bridge_L: Forces exerted by this key's unison strings on bridge.
         """
         # 1. Average string displacement and velocity under hammer felt
-        u_avg = 0.0
-        v_avg = 0.0
         num_str = len(self.strings)
-        for s in self.strings:
-            u_i, v_i = s.get_strike_displacement_and_velocity()
-            u_avg += u_i
-            v_avg += v_i
-        u_avg /= num_str
-        v_avg /= num_str
-
-        # 2. Compute nonlinear hammer force
-        f_hammer = self.hammer.compute_force(u_avg, v_avg)
-        self.hammer.advance(f_hammer)
+        if self.hammer.is_active:
+            u_avg = 0.0
+            v_avg = 0.0
+            for s in self.strings:
+                u_i, v_i = s.get_strike_displacement_and_velocity()
+                u_avg += u_i
+                v_avg += v_i
+            u_avg /= num_str
+            v_avg /= num_str
+            f_hammer = self.hammer.compute_force(u_avg, v_avg)
+            self.hammer.advance(f_hammer)
+        else:
+            f_hammer = 0.0
 
         # Split hammer force equally among unison strings
         f_hammer_per_string = f_hammer / num_str

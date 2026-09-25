@@ -142,20 +142,25 @@ impl PianoVoice {
 
     #[inline]
     pub fn step(&mut self, f_coupling_t: f64, f_coupling_p: f64) -> (f64, f64, f64) {
-        let mut u_avg = 0.0;
-        let mut v_avg = 0.0;
         let num_str = self.strings.len() as f64;
 
-        for s in &self.strings {
-            let (u, v) = s.get_strike_displacement_and_velocity();
-            u_avg += u;
-            v_avg += v;
-        }
-        u_avg /= num_str;
-        v_avg /= num_str;
+        let f_hammer = if self.hammer.is_active {
+            let mut u_avg = 0.0;
+            let mut v_avg = 0.0;
+            for s in &self.strings {
+                let (u, v) = s.get_strike_displacement_and_velocity();
+                u_avg += u;
+                v_avg += v;
+            }
+            u_avg /= num_str;
+            v_avg /= num_str;
 
-        let f_hammer = self.hammer.compute_force(u_avg, v_avg);
-        self.hammer.advance(f_hammer);
+            let f_h = self.hammer.compute_force(u_avg, v_avg);
+            self.hammer.advance(f_h);
+            f_h
+        } else {
+            0.0
+        };
 
         let f_hammer_per_string = f_hammer / num_str;
         let coupling_per_string_t = f_coupling_t / num_str;
@@ -166,8 +171,7 @@ impl PianoVoice {
         let mut total_bridge_l = 0.0;
 
         for s in &mut self.strings {
-            s.step(f_hammer_per_string, coupling_per_string_t, coupling_per_string_p);
-            let (fb_t, fb_p, fb_l) = s.get_bridge_forces();
+            let (fb_t, fb_p, fb_l) = s.step(f_hammer_per_string, coupling_per_string_t, coupling_per_string_p);
             total_bridge_t += fb_t;
             total_bridge_p += fb_p;
             total_bridge_l += fb_l;

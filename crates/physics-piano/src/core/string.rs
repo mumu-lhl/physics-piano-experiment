@@ -33,6 +33,7 @@ pub struct StiffStringModal {
 
     // Precomputed coefficients
     pub n_modes: Vec<f64>,
+    pub n_modes_sq: Vec<f64>,
     pub phi_h: Vec<f64>,
     pub bridge_coeff: Vec<f64>,
     pub force_scale: f64,
@@ -141,6 +142,8 @@ impl StiffStringModal {
         let damper_drop_rate = 1.0 - (-dt / 0.025).exp();
         let damper_lift_rate = 1.0 - (-dt / 0.006).exp();
 
+        let n_modes_sq = n_modes.iter().map(|&n| n * n).collect();
+
         let mut string = Self {
             params,
             sample_rate,
@@ -158,6 +161,7 @@ impl StiffStringModal {
             b_factor,
             num_modes: m,
             n_modes,
+            n_modes_sq,
             phi_h,
             bridge_coeff,
             force_scale,
@@ -313,12 +317,14 @@ impl StiffStringModal {
     }
 
     #[inline]
-    pub fn step(&mut self, f_hammer: f64, f_coupling_t: f64, f_coupling_p: f64) {
+    pub fn step(&mut self, f_hammer: f64, f_coupling_t: f64, f_coupling_p: f64) -> (f64, f64, f64) {
         let f_hammer_scaled = self.force_scale * f_hammer;
         let f_ext_t = self.force_scale * f_coupling_t;
         let f_ext_p = self.force_scale * f_coupling_p;
 
         let mut modal_strain_sum = 0.0;
+        let mut fb_t = 0.0;
+        let mut fb_p = 0.0;
 
         // Smooth continuous damper depth tracking (DOCX §70-71)
         // Felt compresses smoothly onto string over 20-30ms, eliminating hard step transitions
@@ -334,6 +340,7 @@ impl StiffStringModal {
         }
 
         let is_damping = self.current_damper_depth > 1e-4;
+        let damper_depth_dt = self.current_damper_depth * self.dt;
 
         for i in 0..self.num_modes {
             let f_t = f_hammer_scaled * self.phi_h[i] + f_ext_t;
@@ -360,7 +367,7 @@ impl StiffStringModal {
             // Mode-specific viscoelastic felt absorption
             if is_damping {
                 let rate = self.damper_modal_rates[i];
-                let x = rate * self.current_damper_depth * self.dt;
+                let x = rate * damper_depth_dt;
                 let mode_damper_factor = (1.0 - x + 0.5 * x * x).max(0.0);
                 new_q_t *= mode_damper_factor;
                 new_v_t *= mode_damper_factor;
@@ -373,9 +380,14 @@ impl StiffStringModal {
             self.state_p[i].q = new_q_p;
             self.state_p[i].v = new_v_p;
 
-            modal_strain_sum += self.n_modes[i].powi(2) * (new_q_t.powi(2) + new_q_p.powi(2));
+            let bc = self.bridge_coeff[i];
+            fb_t += new_q_t * bc;
+            fb_p += new_q_p * bc;
+
+            modal_strain_sum += self.n_modes_sq[i] * (new_q_t * new_q_t + new_q_p * new_q_p);
         }
 
         self.current_delta_t = self.geom_tension_coeff * modal_strain_sum;
+        (fb_t, fb_p, self.current_delta_t)
     }
 }
