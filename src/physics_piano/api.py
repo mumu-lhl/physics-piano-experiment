@@ -27,13 +27,19 @@ class PianoSynth:
         velocity: float = 0.8,
         duration: float = 3.0,
         sustain: bool = False,
+        half_pedal: float = 1.0,
+        una_corda: bool = False,
+        radiation_mode: str = "modal",
         normalize: bool = True
     ) -> np.ndarray:
         """Render a single piano note from physical principles."""
         midi = self._resolve_midi(pitch)
         engine = PianoEngine(sample_rate=self.sample_rate, num_modes=self.num_modes)
+        engine.set_radiation_mode(radiation_mode)
+        if una_corda:
+            engine.set_una_corda(True)
         if sustain:
-            engine.pedal_down()
+            engine.pedal_down(depth=half_pedal)
         engine.note_on(midi, velocity=velocity)
 
         # Allow key to stay down for most of duration, release near the end if not sustain
@@ -55,12 +61,18 @@ class PianoSynth:
         velocity: float = 0.8,
         duration: float = 3.5,
         sustain: bool = True,
+        half_pedal: float = 1.0,
+        una_corda: bool = False,
+        radiation_mode: str = "modal",
         normalize: bool = True
     ) -> np.ndarray:
         """Render a polyphonic chord with sympathetic resonance."""
         engine = PianoEngine(sample_rate=self.sample_rate, num_modes=self.num_modes)
+        engine.set_radiation_mode(radiation_mode)
+        if una_corda:
+            engine.set_una_corda(True)
         if sustain:
-            engine.pedal_down()
+            engine.pedal_down(depth=half_pedal)
 
         for p in pitches:
             midi = self._resolve_midi(p)

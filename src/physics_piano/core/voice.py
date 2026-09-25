@@ -50,6 +50,28 @@ class PianoVoice:
         self.is_key_down = False
         self.is_sounding = False
 
+    def set_tuning_offset(self, cents: float):
+        """Apply dynamic microtonal or expression tuning offset across unison strings."""
+        for s in self.strings:
+            s.set_tuning_offset(cents)
+
+    def set_una_corda(self, enabled: bool):
+        """Engage or disengage soft pedal Una Corda on this voice's hammer."""
+        self.hammer.set_una_corda(enabled)
+
+    def set_damper_depth(self, depth: float):
+        """Set continuous half-pedal depth [0.0 = fully lifted, 1.0 = fully damped]."""
+        depth_clamped = max(0.0, min(1.0, float(depth)))
+        active = depth_clamped > 0.0
+        for s in self.strings:
+            s.set_damper(active, depth=depth_clamped)
+
+    def get_energy(self) -> float:
+        """Compute aggregate mechanical energy of voice (strings + hammer)."""
+        e_strings = sum(s.get_energy() for s in self.strings)
+        e_hammer = 0.5 * self.hammer.m_h * (self.hammer.v_h ** 2) if self.hammer.is_active else 0.0
+        return float(e_strings + e_hammer)
+
     def note_on(self, velocity: float):
         """Depress key and strike unison strings."""
         self.is_key_down = True
@@ -70,23 +92,28 @@ class PianoVoice:
             for s in self.strings:
                 s.set_damper(True, depth=1.0)
 
-    def set_sustain_pedal(self, pedal_down: bool):
-        """Update damper state according to global sustain pedal."""
+    def set_sustain_pedal(self, pedal_down: bool, depth: float = 1.0):
+        """Update damper state according to global sustain pedal with half-pedal depth."""
         if pedal_down:
-            # Pedal up-lifts all dampers
-            for s in self.strings:
-                s.set_damper(False)
+            # Pedal up-lifts all dampers (or partially if depth < 1.0)
+            if depth >= 0.99:
+                for s in self.strings:
+                    s.set_damper(False)
+            else:
+                effective_damping = 1.0 - depth
+                for s in self.strings:
+                    s.set_damper(True, depth=effective_damping)
         else:
             # If pedal released and key is not held down, lower dampers
             if not self.is_key_down:
                 for s in self.strings:
                     s.set_damper(True, depth=1.0)
 
-    def step(self, f_coupling_T: float = 0.0, f_coupling_P: float = 0.0) -> Tuple[float, float]:
+    def step(self, f_coupling_T: float = 0.0, f_coupling_P: float = 0.0) -> Tuple[float, float, float]:
         """Compute one step of hammer interaction and unison string states.
         
         Returns:
-            f_bridge_T_sum, f_bridge_P_sum: Forces exerted by this key's unison strings on bridge.
+            total_bridge_T, total_bridge_P, total_bridge_L: Forces exerted by this key's unison strings on bridge.
         """
         # 1. Average string displacement and velocity under hammer felt
         u_avg = 0.0
@@ -109,13 +136,15 @@ class PianoVoice:
         # 3. Advance each unison string and aggregate bridge boundary forces
         total_bridge_T = 0.0
         total_bridge_P = 0.0
+        total_bridge_L = 0.0
         coupling_per_string_T = f_coupling_T / num_str
         coupling_per_string_P = f_coupling_P / num_str
 
         for s in self.strings:
             s.step(f_hammer_per_string, coupling_per_string_T, coupling_per_string_P)
-            fb_T, fb_P = s.get_bridge_forces()
+            fb_T, fb_P, fb_L = s.get_bridge_forces()
             total_bridge_T += fb_T
             total_bridge_P += fb_P
+            total_bridge_L += fb_L
 
-        return total_bridge_T, total_bridge_P
+        return total_bridge_T, total_bridge_P, total_bridge_L

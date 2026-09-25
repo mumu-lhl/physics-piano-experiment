@@ -1,6 +1,7 @@
 """Comprehensive test suite for physical modeling piano engine."""
 
 import unittest
+import math
 import numpy as np
 
 from physics_piano.params.schema import StringPhysicalParameters, HammerPhysicalParameters
@@ -188,6 +189,118 @@ class TestPianoSynthAPI(unittest.TestCase):
         audio_high = self.synth.render_note("C4", velocity=1.5, duration=0.05)
         self.assertGreater(len(audio_low), 0)
         self.assertGreater(len(audio_high), 0)
+
+
+class TestContinuumMechanicsAndSAV(unittest.TestCase):
+    def test_geometric_nonlinearity_tension_modulation(self):
+        # High velocity strike should produce significant longitudinal tension modulation FL
+        param = generate_grand_piano_parameters(num_modes=20)[24].strings[0]
+        string = StiffStringModal(param, sample_rate=48000.0)
+        string.step(f_hammer=200.0)
+        f_t, f_p, f_l = string.get_bridge_forces()
+        self.assertGreater(f_l, 0.0)
+        # Energy should be positive
+        self.assertGreater(string.get_energy(), 0.0)
+
+    def test_sav_hammer_contact_stability(self):
+        h_param = HammerPhysicalParameters(
+            mass=0.01, stiffness=4.0e9, exponent=2.5, dissipation=2.0e4
+        )
+        hammer = HuntCrossleyHammer(h_param, 48000.0)
+        hammer.use_sav = True
+        hammer.strike(0.95)
+        # Verify force is non-negative and stable under multiple compressions
+        for _ in range(50):
+            f = hammer.compute_force(u_string=0.0001, v_string=0.0)
+            self.assertGreaterEqual(f, 0.0)
+            hammer.advance(f)
+            self.assertFalse(math.isnan(hammer.u_h))
+            self.assertFalse(math.isnan(hammer.xi))
+
+    def test_railsback_stretch_tuning(self):
+        from physics_piano.params.grand_piano import compute_railsback_cents
+        # Bass A0 (21) should be negative cents
+        self.assertLess(compute_railsback_cents(21), -20.0)
+        # Mid C4 (60) should be 0.0 cents
+        self.assertEqual(compute_railsback_cents(60), 0.0)
+        # Treble C8 (108) should be positive cents
+        self.assertGreater(compute_railsback_cents(108), 25.0)
+
+
+class TestUPOLSConvolver(unittest.TestCase):
+    def test_upols_exact_convolution(self):
+        from physics_piano.dsp.upols import UPOLSConvolver
+        # Test signal and impulse response
+        ir = np.array([1.0, 0.5, 0.25, 0.125], dtype=np.float64)
+        sig = np.array([0.8, -0.4, 0.2, 0.1, -0.05, 0.02, 0.0, 0.0], dtype=np.float64)
+        direct_conv = np.convolve(sig, ir)[:len(sig)]
+
+        convolver = UPOLSConvolver(ir, block_size=4)
+        b1 = convolver.process_block(sig[:4])
+        b2 = convolver.process_block(sig[4:])
+        upols_conv = np.concatenate([b1[:, 0], b2[:, 0]])
+
+        # Compare outputs
+        np.testing.assert_allclose(upols_conv, direct_conv, atol=1e-10)
+
+    def test_soundboard_ir_generation(self):
+        from physics_piano.dsp.upols import generate_orthotropic_soundboard_ir
+        ir_l, ir_r = generate_orthotropic_soundboard_ir(sample_rate=48000.0, duration=0.05, num_modes=20)
+        self.assertEqual(len(ir_l), len(ir_r))
+        self.assertGreater(np.max(np.abs(ir_l)), 0.0)
+
+
+class TestClapPluginArchitecture(unittest.TestCase):
+    def test_clap_event_stream_and_note_lifecycle(self):
+        from physics_piano.dsp.clap_engine import ClapPianoEngine
+        from physics_piano.core.events import (
+            ClapNoteOnEvent, ClapNoteOffEvent, ClapNoteExpressionEvent,
+            ClapNoteExpressionType, ClapParamValueEvent, ClapParamId
+        )
+
+        engine = ClapPianoEngine(sample_rate=48000.0, num_modes=15, block_size=64)
+        out_events = []
+
+        # Block 1: Note On at sample 10
+        in_events_1 = [ClapNoteOnEvent(time=10, key=69, velocity=0.8)]
+        block1 = engine.process(64, in_events=in_events_1, out_events=out_events)
+        self.assertEqual(block1.shape, (64, 2))
+        self.assertIn(69, engine.active_keys)
+
+        # Block 2: Dynamic tuning expression (+15 cents)
+        in_events_2 = [ClapNoteExpressionEvent(time=0, key=69, expression_type=ClapNoteExpressionType.TUNING, value=15.0)]
+        block2 = engine.process(64, in_events=in_events_2, out_events=out_events)
+        self.assertEqual(block2.shape, (64, 2))
+
+        # Block 3: Note Off
+        in_events_3 = [ClapNoteOffEvent(time=0, key=69)]
+        block3 = engine.process(64, in_events=in_events_3, out_events=out_events)
+        self.assertEqual(block3.shape, (64, 2))
+
+
+class TestObjectiveMetricsSuite(unittest.TestCase):
+    def setUp(self):
+        self.synth = PianoSynth(sample_rate=48000, num_modes=20)
+
+    def test_transient_rise_time(self):
+        from physics_piano.metrics.transient import analyze_transient_onset
+        audio = self.synth.render_note("A4", velocity=0.85, duration=0.2, sustain=False)
+        res = analyze_transient_onset(audio, sample_rate=48000.0)
+        self.assertIn("rise_time_ms", res)
+        self.assertLess(res["rise_time_ms"], 15.0)
+
+    def test_mrsl_identical_signal_zero_loss(self):
+        from physics_piano.metrics.mrsl import compute_mrsl
+        audio = self.synth.render_note("C4", velocity=0.8, duration=0.1, sustain=False)
+        res = compute_mrsl(audio, audio, fft_sizes=[512, 1024])
+        self.assertAlmostEqual(res["total_mrsl_loss"], 0.0, places=4)
+
+    def test_octave_decay_metric(self):
+        from physics_piano.metrics.octave_decay import analyze_octave_t60
+        audio = self.synth.render_note("A4", velocity=0.8, duration=0.3, sustain=True)
+        res = analyze_octave_t60(audio, sample_rate=48000.0)
+        self.assertIn("rmse_t60", res)
+        self.assertGreater(len(res["band_details"]), 0)
 
 
 if __name__ == "__main__":

@@ -27,43 +27,70 @@ class PianoEngine:
         # 3. Bridge and soundboard radiation model
         self.bridge = BridgeSoundboard(self.sample_rate)
 
-        # 4. Global sustain pedal
+        # 4. Global sustain pedal & Una Corda
         self.sustain_pedal = False
+        self.pedal_depth = 1.0
+        self.una_corda = False
         self.sympathetic_resonance_gain = 0.04
 
         # Active voice cache for fast iteration
         self.active_notes: set[int] = set()
+        # Voice peak energy monitor for -96dB dynamic note lifecycle garbage collection
+        self.note_energy_peak: Dict[int, float] = {}
 
     def _get_or_create_voice(self, midi_note: int) -> PianoVoice:
         """Retrieve existing voice or instantiate on-demand."""
         if midi_note not in self.voices:
             if midi_note not in self.key_params:
                 raise ValueError(f"MIDI note {midi_note} is out of piano 88-key range [21, 108]")
-            self.voices[midi_note] = PianoVoice(self.key_params[midi_note], self.sample_rate)
+            v = PianoVoice(self.key_params[midi_note], self.sample_rate)
+            if self.una_corda:
+                v.set_una_corda(True)
+            self.voices[midi_note] = v
         return self.voices[midi_note]
+
+    def set_radiation_mode(self, mode: str):
+        """Set soundboard radiation mode ('modal' or 'upols')."""
+        self.bridge.set_radiation_mode(mode)
 
     def note_on(self, midi_note: int, velocity: float = 0.8):
         """Depress a key with specified strike velocity."""
         v = self._get_or_create_voice(midi_note)
         v.note_on(velocity)
         self.active_notes.add(midi_note)
+        # Register peak strike energy after initial contact
+        self.note_energy_peak[midi_note] = max(1e-6, v.get_energy())
 
     def note_off(self, midi_note: int):
         """Release a key."""
         if midi_note in self.voices:
             self.voices[midi_note].note_off(self.sustain_pedal)
 
-    def pedal_down(self):
-        """Engage sustain pedal: raise all dampers across the piano."""
-        self.sustain_pedal = True
+    def set_note_tuning(self, midi_note: int, cents: float):
+        """Apply dynamic microtonal / temperament tuning offset (CLAP Note Expression)."""
+        if midi_note in self.voices:
+            self.voices[midi_note].set_tuning_offset(cents)
+
+    def set_una_corda(self, enabled: bool):
+        """Toggle soft pedal Una Corda across all voices."""
+        self.una_corda = bool(enabled)
         for v in self.voices.values():
-            v.set_sustain_pedal(True)
+            v.set_una_corda(self.una_corda)
+
+    def set_sustain_pedal(self, pedal_down: bool, depth: float = 1.0):
+        """Configure sustain pedal with continuous half-pedal depth."""
+        self.sustain_pedal = bool(pedal_down)
+        self.pedal_depth = max(0.0, min(1.0, float(depth)))
+        for v in self.voices.values():
+            v.set_sustain_pedal(self.sustain_pedal, depth=self.pedal_depth)
+
+    def pedal_down(self, depth: float = 1.0):
+        """Engage sustain pedal: raise all dampers across the piano."""
+        self.set_sustain_pedal(True, depth=depth)
 
     def pedal_up(self):
         """Release sustain pedal: drop dampers on all inactive keys."""
-        self.sustain_pedal = False
-        for v in self.voices.values():
-            v.set_sustain_pedal(False)
+        self.set_sustain_pedal(False, depth=0.0)
 
     def render(self, duration: float) -> np.ndarray:
         """Render audio for specified duration in seconds.
@@ -81,6 +108,7 @@ class PianoEngine:
         for i in range(num_samples):
             total_bridge_T = 0.0
             total_bridge_P = 0.0
+            total_bridge_L = 0.0
             voices_to_remove = []
 
             num_active = len(self.active_notes)
@@ -90,21 +118,31 @@ class PianoEngine:
             # 1. Step active voices exactly once with dissipative bridge coupling
             for note in list(self.active_notes):
                 v = self.voices[note]
-                fb_T, fb_P = v.step(f_coupling_T=coupling_T, f_coupling_P=coupling_P)
+                fb_T, fb_P, fb_L = v.step(f_coupling_T=coupling_T, f_coupling_P=coupling_P)
                 total_bridge_T += fb_T
                 total_bridge_P += fb_P
+                total_bridge_L += fb_L
 
-                # Pruning quiet voices if key is released and hammer finished
+                # Update peak energy
+                cur_energy = v.get_energy()
+                if cur_energy > self.note_energy_peak.get(note, 0.0):
+                    self.note_energy_peak[note] = cur_energy
+
+                # Voice lifecycle & energy-driven garbage collection:
+                # If key released and sustain pedal off, test if modal energy dropped below -96 dB
                 if not v.is_key_down and not self.sustain_pedal:
-                    max_disp = max(np.max(np.abs(s.state_T[:, 0])) for s in v.strings)
-                    if max_disp < 1e-9:
+                    peak_e = self.note_energy_peak.get(note, 1e-6)
+                    ratio = cur_energy / max(1e-12, peak_e)
+                    if ratio < 2.5e-10 or cur_energy < 1e-12:  # -96 dB threshold
                         voices_to_remove.append(note)
 
             for note in voices_to_remove:
                 self.active_notes.discard(note)
 
-            # 2. Bridge anisotropic coupling & soundboard driving force
-            f_react_T, f_react_P, f_soundboard = self.bridge.calculate_coupling_forces(total_bridge_T, total_bridge_P)
+            # 2. 3D Bridge anisotropic coupling & soundboard driving force
+            f_react_T, f_react_P, f_soundboard = self.bridge.calculate_coupling_forces(
+                total_bridge_T, total_bridge_P, total_bridge_L
+            )
 
             # 3. Soundboard acoustic radiation filtering with stereo spatial spread
             left_sample, right_sample = self.bridge.step_soundboard(f_soundboard)

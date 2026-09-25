@@ -40,26 +40,49 @@ def pitch_name_to_midi(pitch: str) -> int:
     return (octave + 1) * 12 + note_idx
 
 
-def generate_grand_piano_parameters(num_modes: int = 35) -> Dict[int, KeyParameters]:
+def compute_railsback_cents(midi_note: int) -> float:
+    """Compute Railsback stretch tuning offset in cents for acoustic grand piano.
+    
+    Inharmonicity B causes partials to stretch upward: f_n = n * f0 * sqrt(1 + B * n^2).
+    To align upper partials of bass notes with fundamental frequencies of treble notes,
+    concert pianos employ a characteristic Railsback stretch tuning curve:
+      - Bass (A0): -30 to -35 cents
+      - Mid (C4): 0 cents
+      - Treble (C8): +30 to +38 cents
+    """
+    if midi_note < 60:
+        norm = (60.0 - float(midi_note)) / 39.0
+        return -32.0 * (norm ** 1.85)
+    elif midi_note > 60:
+        norm = (float(midi_note) - 60.0) / 48.0
+        return 35.0 * (norm ** 2.1)
+    return 0.0
+
+
+def generate_grand_piano_parameters(
+    num_modes: int = 35,
+    stretch_tuning: bool = False
+) -> Dict[int, KeyParameters]:
     """Generate physically-grounded parameters for all 88 keys of a concert grand piano.
     
-    Ranges:
-      - Bass (21-32, A0..G#1): 1 wound string, longer length, heavy hammer
-      - Tenor (33-44, A1..G#2): 2 unison strings
-      - Treble (45-108, A2..C8): 3 unison strings, scaling length and felt hardness
+    Discontinuous Mechanical Break Points (calibrated to Steinway D-274 / Yamaha CFX):
+      - Bass (21-28, A0..E1): 1 heavy single-wound copper string per note
+      - Tenor (29-34, F1..Bb2): 2 double-wound copper strings (bichords)
+      - Treble (35-108, B2..C8): 3 plain high-carbon steel wire strings (trichords)
     """
     key_params_dict = {}
 
     for midi in range(21, 109):
         norm_key = (midi - 21) / (108 - 21)  # 0.0 at A0, 1.0 at C8
-        f0 = 440.0 * (2.0 ** ((midi - 69) / 12.0))
+        cents_stretch = compute_railsback_cents(midi) if stretch_tuning else 0.0
+        f0 = 440.0 * (2.0 ** ((midi - 69 + cents_stretch / 100.0) / 12.0))
         pitch_name = midi_to_pitch_name(midi)
 
-        # 1. Unison counts: 1 string in bass, 2 in tenor, 3 in treble
-        if midi <= 32:
+        # 1. Discontinuous break points across keyboard
+        if midi <= 28:
             num_unisons = 1
             detuning = [0.0]
-        elif midi <= 44:
+        elif midi <= 34:
             num_unisons = 2
             detuning = [-0.25, 0.25]
         else:
@@ -73,15 +96,18 @@ def generate_grand_piano_parameters(num_modes: int = 35) -> Dict[int, KeyParamet
         else:
             length = 0.065 + (0.95 - 0.065) * ((1.0 - norm_key) ** 1.35)
 
-        # 3. String wire radius r (meters)
-        # Bass wound strings effectively have larger radius and density
-        if midi <= 32:
-            radius = 0.00068 - (norm_key * 0.00015)
-            density = 7850.0 * 2.8  # Copper wound virtual density enhancement
-        elif midi <= 44:
-            radius = 0.00055 - (norm_key * 0.00010)
-            density = 7850.0 * 1.6
+        # 3. String wire radius r (meters) and density rho
+        # Discontinuous transitions between wound and plain wire sections
+        if midi <= 28:
+            # Single-wound copper bass strings
+            radius = 0.00072 - (norm_key * 0.00012)
+            density = 7850.0 * 3.2  # Heavy copper wrapping
+        elif midi <= 34:
+            # Double-wound copper bichords
+            radius = 0.00058 - (norm_key * 0.00010)
+            density = 7850.0 * 2.0  # Medium copper winding
         else:
+            # Plain high-tensile music wire steel
             radius = 0.00048 - (norm_key * 0.00015)
             density = 7850.0  # High-carbon music wire steel
 

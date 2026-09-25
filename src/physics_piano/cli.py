@@ -19,9 +19,12 @@ def cmd_render(args):
 
     if args.chord:
         pitches = [p.strip() for p in args.chord.split(",")]
-        print(f"[*] Rendering physical chord: {pitches} (duration={args.duration}s, vel={args.velocity}, sustain={args.sustain})")
+        print(f"[*] Rendering physical chord: {pitches} (duration={args.duration}s, vel={args.velocity}, sustain={args.sustain}, una_corda={args.una_corda}, rad={args.radiation})")
         t0 = time.time()
-        audio = synth.render_chord(pitches, velocity=args.velocity, duration=args.duration, sustain=args.sustain)
+        audio = synth.render_chord(
+            pitches, velocity=args.velocity, duration=args.duration, sustain=args.sustain,
+            una_corda=args.una_corda, radiation_mode=args.radiation
+        )
         elapsed = time.time() - t0
     else:
         note_name = args.note or "C4"
@@ -33,9 +36,13 @@ def cmd_render(args):
         print(f"    - Length L: {s0.length:.3f} m, Radius r: {s0.radius*1e3:.3f} mm, Tension T0: {s0.tension:.1f} N")
         print(f"    - Theoretical Inharmonicity B: {s0.inharmonicity_b:.6e}")
         print(f"    - Felt Exponent p: {key_info.hammer.exponent:.2f}, Mass: {key_info.hammer.mass*1e3:.2f} g")
+        print(f"    - Una Corda: {args.una_corda}, Radiation: {args.radiation}")
 
         t0 = time.time()
-        audio = synth.render_note(note_name, velocity=args.velocity, duration=args.duration, sustain=args.sustain)
+        audio = synth.render_note(
+            note_name, velocity=args.velocity, duration=args.duration, sustain=args.sustain,
+            una_corda=args.una_corda, radiation_mode=args.radiation
+        )
         elapsed = time.time() - t0
 
     write_wav(args.output, audio, sample_rate=args.sample_rate)
@@ -91,6 +98,30 @@ def cmd_verify(args):
         print(f"Monotonic contraction verified:  {res['is_monotonic_contracting']}")
         print(f"Contraction Ratio:               {res['contraction_ratio']:.2f}x")
         print(f"Status:                          {'[PASS]' if res['passed'] else '[FAIL]'}")
+
+    if args.metric in ("dynamics", "all"):
+        print("\n--- 4. Dynamic Spectral Centroid Scaling Slope (kappa_dyn) ---")
+        from physics_piano.metrics.dynamic_centroid import measure_dynamic_centroid_slope
+        res_dyn = measure_dynamic_centroid_slope(key_info, velocities=[0.2, 0.4, 0.6, 0.8, 1.0], sample_rate=args.sample_rate)
+        print(f"Dynamic log-slope kappa_dyn:     {res_dyn['kappa_dyn']:.3f} (Target: {res_dyn['target_range']})")
+        print(f"Status:                          {'[PASS]' if res_dyn['passed'] else '[FAIL]'}")
+
+    if args.metric in ("transient", "all"):
+        print("\n--- 5. Initial Attack Transient & Envelope Rise Time (Delta t_10-90) ---")
+        from physics_piano.metrics.transient import analyze_transient_onset
+        audio = synth.render_note(target_note, velocity=0.9, duration=0.5, sustain=False)
+        res_trans = analyze_transient_onset(audio, sample_rate=args.sample_rate)
+        print(f"Rise Time Delta t_10-90:         {res_trans['rise_time_ms']:.2f} ms (Target: {res_trans['target_rise_time']})")
+        print(f"Peak Arrival Time:               {res_trans['peak_arrival_time_ms']:.2f} ms (Target: {res_trans['target_peak_arrival']})")
+        print(f"Status:                          {'[PASS]' if res_trans['passed'] else '[FAIL]'}")
+
+    if args.metric in ("octave", "all"):
+        print("\n--- 6. 1/1 Octave Band Filter Bank Decay (RMSE_T60) ---")
+        from physics_piano.metrics.octave_decay import analyze_octave_t60
+        audio = synth.render_note(target_note, velocity=0.8, duration=3.0, sustain=True)
+        res_oct = analyze_octave_t60(audio, sample_rate=args.sample_rate, f0=key_info.target_f0)
+        print(f"RMSE_T60 across octave bands:    {res_oct['rmse_t60']:.4f} (Target: <= 0.08)")
+        print(f"Status:                          {'[PASS]' if res_oct['passed'] else '[FAIL]'}")
     print("=" * 65)
 
 
@@ -131,6 +162,8 @@ def main():
     p_render.add_argument("-v", "--velocity", type=float, default=0.8, help="Strike velocity in (0, 1]")
     p_render.add_argument("-d", "--duration", type=float, default=3.0, help="Duration in seconds")
     p_render.add_argument("-s", "--sustain", action="store_true", help="Hold sustain pedal down")
+    p_render.add_argument("--una-corda", action="store_true", help="Engage Una Corda soft pedal")
+    p_render.add_argument("--radiation", choices=["modal", "upols"], default="modal", help="Soundboard radiation mode")
     p_render.add_argument("-m", "--modes", type=int, default=35, help="Number of modal oscillators per string")
     p_render.add_argument("-r", "--sample-rate", type=int, default=48000, help="Audio sample rate (Hz)")
     p_render.add_argument("-o", "--output", type=str, default="piano_output.wav", help="Output WAV path")
@@ -138,7 +171,7 @@ def main():
 
     # 2. verify
     p_verify = subparsers.add_parser("verify", help="Run objective physical verification tests")
-    p_verify.add_argument("metric", choices=["inharmonicity", "edc", "contact", "all"], help="Metric to verify")
+    p_verify.add_argument("metric", choices=["inharmonicity", "edc", "contact", "dynamics", "transient", "octave", "all"], help="Metric to verify")
     p_verify.add_argument("-n", "--note", type=str, default="A4", help="Note to test")
     p_verify.add_argument("-m", "--modes", type=int, default=35, help="Number of modes")
     p_verify.add_argument("-r", "--sample-rate", type=int, default=48000, help="Audio sample rate")
