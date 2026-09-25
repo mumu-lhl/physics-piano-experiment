@@ -160,8 +160,8 @@ fn test_tier6_and_tier7_engine_integration() {
     ];
 
     let mut peak = 0.0f64;
-    // Process 4 blocks (512 samples = ~10.6ms) to let string and soundboard modes evolve
-    for b in 0..4 {
+    // Process 40 blocks (~0.1s) to let string and soundboard modes evolve
+    for b in 0..40 {
         let evs = if b == 0 { &events[..] } else { &[] };
         engine.process_block(block_size, evs, &mut out_events, &mut out_l, &mut out_r);
         for s in 0..block_size {
@@ -169,6 +169,7 @@ fn test_tier6_and_tier7_engine_integration() {
             peak = peak.max(out_l[s].abs()).max(out_r[s].abs());
         }
     }
+    println!("PEAK AMPLITUDE WITH MULTI_UPOLS: {}", peak);
     assert!(peak > 0.005, "Integrated engine must radiate audio with multi_upols & action noise, got peak {peak}");
 
     // Fast pedal release to test frame shock

@@ -106,21 +106,23 @@ pub fn generate_multi_perspective_soundboard_irs(
         }
     }
 
-    // Normalize each perspective
-    let normalize = |ir_l: &mut [f64], ir_r: &mut [f64]| {
+    // Normalize each perspective and apply bridge-force to sound pressure radiation scale (~1e-4).
+    // Bridge dynamic force from string vibration is ~50-200 Newtons. The acoustic transfer function
+    // from bridge force to air pressure at 1 meter scales to [0.0, 1.0] audio range via ~0.7e-4.
+    let normalize_and_scale = |ir_l: &mut [f64], ir_r: &mut [f64], scale: f64| {
         let mut peak = 1e-6f64;
         for s in 0..ir_l.len() {
             peak = peak.max(ir_l[s].abs()).max(ir_r[s].abs());
         }
         for s in 0..ir_l.len() {
-            ir_l[s] /= peak;
-            ir_r[s] /= peak;
+            ir_l[s] = (ir_l[s] / peak) * scale;
+            ir_r[s] = (ir_r[s] / peak) * scale;
         }
     };
 
-    normalize(&mut close_l, &mut close_r);
-    normalize(&mut player_l, &mut player_r);
-    normalize(&mut ambient_l, &mut ambient_r);
+    normalize_and_scale(&mut close_l, &mut close_r, 0.7e-4);
+    normalize_and_scale(&mut player_l, &mut player_r, 0.5e-4);
+    normalize_and_scale(&mut ambient_l, &mut ambient_r, 0.35e-4);
 
     (
         StereoIR { left: close_l, right: close_r },
