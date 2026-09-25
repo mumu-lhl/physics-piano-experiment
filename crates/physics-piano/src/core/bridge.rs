@@ -102,9 +102,12 @@ impl BridgeSoundboard {
 
         let soundboard_out = 0.92 * modal_sound + 0.08 * f_in * 1e-4;
 
-        let pan_clamped = pan.clamp(0.0, 1.0);
-        let left_gain = (pan_clamped * PI * 0.5).cos();
-        let right_gain = (pan_clamped * PI * 0.5).sin();
+        let (left_gain, right_gain) = if (pan - 0.5).abs() < 1e-6 {
+            (std::f64::consts::FRAC_1_SQRT_2, std::f64::consts::FRAC_1_SQRT_2)
+        } else {
+            let pan_clamped = pan.clamp(0.0, 1.0);
+            ((pan_clamped * PI * 0.5).cos(), (pan_clamped * PI * 0.5).sin())
+        };
 
         (soundboard_out * left_gain, soundboard_out * right_gain)
     }

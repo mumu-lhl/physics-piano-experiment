@@ -217,6 +217,7 @@ impl PianoEngine {
         }
 
         let mut event_idx = 0;
+        let use_upols = self.radiation_mode == "upols" && self.upols.is_some();
 
         for s in 0..num_samples {
             // Stage 1: Sample-accurate event dispatch
@@ -272,16 +273,10 @@ impl PianoEngine {
             self.f_react_p = react_p;
 
             // Stage 4: Soundboard radiation & stereo output
-            if self.radiation_mode == "upols" {
-                if let Some(ref mut upols) = self.upols {
-                    let (l, r) = upols.process_sample(f_sb);
-                    out_left[s] = l;
-                    out_right[s] = r;
-                } else {
-                    let (l, r) = self.bridge.step_soundboard(f_sb, 0.5);
-                    out_left[s] = l;
-                    out_right[s] = r;
-                }
+            if use_upols {
+                let (l, r) = self.upols.as_mut().unwrap().process_sample(f_sb);
+                out_left[s] = l;
+                out_right[s] = r;
             } else {
                 let (l, r) = self.bridge.step_soundboard(f_sb, 0.5);
                 out_left[s] = l;

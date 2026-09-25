@@ -139,8 +139,11 @@ class BridgeSoundboard:
         soundboard_out = 0.92 * modal_sound + 0.08 * f_in * 1e-4
 
         # Equal-power stereo panning across piano width
-        pan_clamped = max(0.0, min(1.0, float(pan)))
-        left_gain = math.cos(pan_clamped * math.pi * 0.5)
-        right_gain = math.sin(pan_clamped * math.pi * 0.5)
+        if abs(pan - 0.5) < 1e-6:
+            left_gain = right_gain = 0.7071067811865476
+        else:
+            pan_clamped = max(0.0, min(1.0, float(pan)))
+            left_gain = math.cos(pan_clamped * math.pi * 0.5)
+            right_gain = math.sin(pan_clamped * math.pi * 0.5)
 
         return soundboard_out * left_gain, soundboard_out * right_gain
