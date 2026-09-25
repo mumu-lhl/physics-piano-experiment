@@ -122,10 +122,16 @@ impl<'a> GuitarFretboardWidget<'a> {
             };
 
             // String vibration glow if energetic
-            if energy > 0.02 {
-                let glow_alpha = (energy * 200.0).clamp(0.0, 200.0) as u8;
-                let glow_stroke = Stroke::new(thickness + 3.0_f32, Color32::from_rgba_unmultiplied(255, 210, 120, glow_alpha));
-                painter.line_segment([Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y)], glow_stroke);
+            if energy > 0.05 {
+                let norm = ((energy - 0.05) / 0.95).clamp(0.0, 1.0);
+                let glow_alpha = (norm * 220.0) as u8;
+                if glow_alpha > 0 {
+                    let glow_stroke = Stroke::new(
+                        thickness + 3.0_f32,
+                        Color32::from_rgba_unmultiplied(255, 210, 120, glow_alpha),
+                    );
+                    painter.line_segment([Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y)], glow_stroke);
+                }
             }
 
             painter.line_segment(
@@ -134,7 +140,7 @@ impl<'a> GuitarFretboardWidget<'a> {
             );
 
             // 5. Draw Active Pressed Note Indicator on Fretboard
-            // Only draw if active_frets is Some and string has active held state or detectable vibration
+            // Only draw if active_frets is Some and string has active held state
             if let Some(fret) = self.active_frets[str_idx] {
                 let note_x = if fret == 0 {
                     rect.min.x + nut_width * 0.5
@@ -154,7 +160,6 @@ impl<'a> GuitarFretboardWidget<'a> {
 
         // 6. Robust Mouse / Touch Interaction with Press and Release tracking
         let is_primary_down = ui.input(|i| i.pointer.primary_down());
-        let is_primary_released = ui.input(|i| i.pointer.primary_released());
         let pointer_pos = ui.input(|i| i.pointer.latest_pos());
 
         let mut hovered_target: Option<(u8, u8)> = None;
@@ -175,7 +180,7 @@ impl<'a> GuitarFretboardWidget<'a> {
             }
         }
 
-        let target_held = if is_primary_down && !is_primary_released {
+        let target_held = if is_primary_down {
             hovered_target
         } else {
             None

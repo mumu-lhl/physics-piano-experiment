@@ -266,6 +266,28 @@ impl GuitarString {
             modal_sq_sum += wave_num.powi(2) * (st.q.powi(2) + sp.q.powi(2));
         }
 
+        // Active release damping when note is released (~150ms finger mute)
+        if !self.is_held {
+            let release_damping = 0.997_f64;
+            let mut total_amp = 0.0_f64;
+            for m in 0..self.num_modes {
+                self.state_t[m].q *= release_damping;
+                self.state_t[m].v *= release_damping;
+                self.state_p[m].q *= release_damping;
+                self.state_p[m].v *= release_damping;
+                total_amp += self.state_t[m].q.abs() + self.state_p[m].q.abs();
+            }
+            // Clamp to zero to eliminate denormals and zero out energy cleanly
+            if total_amp < 1e-7 {
+                for m in 0..self.num_modes {
+                    self.state_t[m].q = 0.0;
+                    self.state_t[m].v = 0.0;
+                    self.state_p[m].q = 0.0;
+                    self.state_p[m].v = 0.0;
+                }
+            }
+        }
+
         // Geometric tension modulation: Delta T = (E * A / 4L^2) * sum(k_m^2 * q_m^2)
         self.current_delta_t = self.geom_tension_coeff * modal_sq_sum;
 
@@ -282,15 +304,8 @@ impl GuitarString {
         energy
     }
 
-    /// Releases the string (damping increases when note is unheld).
+    /// Releases the string (switches to active finger release muting).
     pub fn release(&mut self) {
         self.is_held = false;
-        // Increase natural air damping when left hand releases string
-        for m in 0..self.num_modes {
-            self.phi_t[m].0 *= 0.9992;
-            self.phi_t[m].1 *= 0.9992;
-            self.phi_p[m].0 *= 0.9992;
-            self.phi_p[m].1 *= 0.9992;
-        }
     }
 }

@@ -4,6 +4,7 @@ use nih_plug::prelude::*;
 use nih_plug_egui::{
     create_egui_editor,
     egui::{self, Color32, FontId, RichText, Vec2},
+    widgets::ParamSlider,
     EguiState,
 };
 use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
@@ -18,7 +19,7 @@ use crate::gui::GuitarFretboardWidget;
 
 #[derive(Params)]
 pub struct PhysicsGuitarParams {
-    #[persist = "editor-state-v3"]
+    #[persist = "editor-state-v4"]
     pub editor_state: Arc<EguiState>,
 
     /// Instrument Mode: 0 = Electric, 1 = Acoustic
@@ -53,7 +54,7 @@ pub struct PhysicsGuitarParams {
 impl Default for PhysicsGuitarParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(1080, 520),
+            editor_state: EguiState::from_size(1120, 540),
 
             mode: IntParam::new("Instrument Mode", 0, IntRange::Linear { min: 0, max: 1 }),
             pluck_style: IntParam::new("Pluck Style", 0, IntRange::Linear { min: 0, max: 1 }),
@@ -393,34 +394,22 @@ impl Plugin for PhysicsGuitar {
                                 setter.end_set_parameter(&params.pluck_style);
                             }
 
-                            ui.spacing_mut().slider_width = (ui.available_width() - 85.0).max(60.0);
-                            let mut mute_val = params.palm_mute.value();
-                            if ui.add(egui::Slider::new(&mut mute_val, 0.0..=1.0).text("Mute")).changed() {
-                                setter.begin_set_parameter(&params.palm_mute);
-                                setter.set_parameter(&params.palm_mute, mute_val);
-                                setter.end_set_parameter(&params.palm_mute);
-                            }
+                            let slider_w = (ui.available_width() - 4.0).max(60.0);
+                            ui.label(RichText::new("Palm Mute").color(Color32::from_rgb(180, 185, 200)));
+                            ui.add(ParamSlider::for_param(&params.palm_mute, setter).with_width(slider_w));
                         });
 
                         // Col 3: Master Output
                         cols[3].group(|ui| {
                             ui.set_width(ui.available_width());
                             ui.label(RichText::new("Master Output").strong());
-                            ui.spacing_mut().slider_width = (ui.available_width() - 85.0).max(60.0);
-                            let mut gain_db = util::gain_to_db(params.master_gain.value());
-                            if ui.add(egui::Slider::new(&mut gain_db, -30.0..=6.0).text("Gain (dB)")).changed() {
-                                let new_gain = util::db_to_gain(gain_db);
-                                setter.begin_set_parameter(&params.master_gain);
-                                setter.set_parameter(&params.master_gain, new_gain);
-                                setter.end_set_parameter(&params.master_gain);
-                            }
 
-                            let mut pluck_pos_val = params.pluck_pos.value();
-                            if ui.add(egui::Slider::new(&mut pluck_pos_val, 0.05..=0.35).text("Pluck Pos")).changed() {
-                                setter.begin_set_parameter(&params.pluck_pos);
-                                setter.set_parameter(&params.pluck_pos, pluck_pos_val);
-                                setter.end_set_parameter(&params.pluck_pos);
-                            }
+                            let slider_w = (ui.available_width() - 4.0).max(60.0);
+                            ui.label(RichText::new("Master Gain").color(Color32::from_rgb(180, 185, 200)));
+                            ui.add(ParamSlider::for_param(&params.master_gain, setter).with_width(slider_w));
+
+                            ui.label(RichText::new("Pluck Position").color(Color32::from_rgb(180, 185, 200)));
+                            ui.add(ParamSlider::for_param(&params.pluck_pos, setter).with_width(slider_w));
                         });
                     });
 
