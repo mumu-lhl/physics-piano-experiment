@@ -243,7 +243,8 @@ class StiffStringModal:
 
         # 4. Mode-specific viscoelastic felt damping
         if self.current_damper_depth > 1e-4:
-            damper_damping = np.exp(-self.damper_modal_rates * self.current_damper_depth * self.dt)
+            x = self.damper_modal_rates * self.current_damper_depth * self.dt
+            damper_damping = np.maximum(0.0, 1.0 - x + 0.5 * x * x)
             new_q_T *= damper_damping
             new_v_T *= damper_damping
             new_q_P *= damper_damping

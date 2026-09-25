@@ -63,6 +63,15 @@ impl PianoVoice {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.is_sounding = false;
+        self.is_key_down = false;
+        self.hammer.reset();
+        for s in &mut self.strings {
+            s.reset();
+        }
+    }
+
     pub fn set_tuning_offset(&mut self, cents: f64) {
         for s in &mut self.strings {
             s.set_tuning_offset(cents);

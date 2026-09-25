@@ -173,10 +173,10 @@ class ClapPianoEngine:
                 if cur_e > self.note_energy_peak.get(key, 0.0):
                     self.note_energy_peak[key] = cur_e
 
-                if not v.is_key_down and not self.sustain_pedal:
+                if not v.is_key_down:
                     peak_e = self.note_energy_peak.get(key, 1e-6)
                     ratio = cur_e / max(1e-12, peak_e)
-                    if ratio < 2.5e-10 or cur_e < 1e-12:  # -96 dB threshold
+                    if ratio < 1e-7 or cur_e < 1e-10:
                         keys_to_remove.append(key)
                         if out_events is not None:
                             out_events.append(ClapNoteEndEvent(time=s, key=key))

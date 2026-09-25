@@ -44,7 +44,13 @@ pub struct PianoEngine {
     // Reaction coupling forces from previous step
     pub f_react_t: f64,
     pub f_react_p: f64,
+
+    pub max_active_voices: usize,
+    pub active_keys_vec: Vec<u8>,
+    pub keys_to_remove_scratch: Vec<u8>,
 }
+
+pub const MAX_ACTIVE_VOICES: usize = 16;
 
 impl PianoEngine {
     pub fn new(sample_rate: f64, num_modes: usize, stretch_tuning: bool) -> Self {
@@ -72,6 +78,9 @@ impl PianoEngine {
             note_energy_peak: HashMap::with_capacity(88),
             f_react_t: 0.0,
             f_react_p: 0.0,
+            max_active_voices: MAX_ACTIVE_VOICES,
+            active_keys_vec: Vec::with_capacity(32),
+            keys_to_remove_scratch: Vec::with_capacity(32),
         }
     }
 
@@ -104,7 +113,54 @@ impl PianoEngine {
         self.voices.get_mut(&key)
     }
 
+    #[inline]
+    pub fn sync_active_keys_vec(&mut self) {
+        self.active_keys_vec.clear();
+        self.active_keys_vec.extend(self.active_keys.iter().copied());
+    }
+
+    pub fn steal_voice(&mut self) -> Option<u8> {
+        if self.active_keys.is_empty() {
+            return None;
+        }
+
+        // Candidate 1: Key is not physically held down, lowest vibrational energy
+        let released_candidate = self.active_keys.iter()
+            .filter(|k| !self.depressed_keys.contains(k))
+            .min_by(|&&a, &&b| {
+                let ea = self.voices.get(&a).map(|v| v.get_energy()).unwrap_or(0.0);
+                let eb = self.voices.get(&b).map(|v| v.get_energy()).unwrap_or(0.0);
+                ea.partial_cmp(&eb).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .copied();
+
+        let candidate = released_candidate.or_else(|| {
+            // Candidate 2: All active keys are physically held down, steal the lowest energy one
+            self.active_keys.iter()
+                .min_by(|&&a, &&b| {
+                    let ea = self.voices.get(&a).map(|v| v.get_energy()).unwrap_or(0.0);
+                    let eb = self.voices.get(&b).map(|v| v.get_energy()).unwrap_or(0.0);
+                    ea.partial_cmp(&eb).unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .copied()
+        });
+
+        if let Some(stolen_key) = candidate {
+            self.active_keys.remove(&stolen_key);
+            if let Some(v) = self.voices.get_mut(&stolen_key) {
+                v.reset();
+            }
+            self.sync_active_keys_vec();
+            Some(stolen_key)
+        } else {
+            None
+        }
+    }
+
     pub fn note_on(&mut self, key: u8, velocity: f64) {
+        if self.active_keys.len() >= self.max_active_voices && !self.active_keys.contains(&key) {
+            self.steal_voice();
+        }
         let cur_energy = {
             let v = self.get_or_create_voice(key);
             v.note_on(velocity);
@@ -113,6 +169,7 @@ impl PianoEngine {
         self.active_keys.insert(key);
         self.depressed_keys.insert(key);
         self.note_energy_peak.insert(key, cur_energy.max(1e-6));
+        self.sync_active_keys_vec();
     }
 
     pub fn note_off(&mut self, key: u8) {
@@ -155,6 +212,10 @@ impl PianoEngine {
         assert_eq!(out_left.len(), num_samples);
         assert_eq!(out_right.len(), num_samples);
 
+        if self.active_keys_vec.len() != self.active_keys.len() {
+            self.sync_active_keys_vec();
+        }
+
         let mut event_idx = 0;
 
         for s in 0..num_samples {
@@ -190,38 +251,17 @@ impl PianoEngine {
             let mut total_bridge_p = 0.0;
             let mut total_bridge_l = 0.0;
 
-            let num_active = self.active_keys.len();
+            let num_active = self.active_keys_vec.len();
             let coupling_t = self.f_react_t / num_active.max(1) as f64;
             let coupling_p = self.f_react_p / num_active.max(1) as f64;
 
-            let mut keys_to_remove = Vec::new();
-
-            for &key in &self.active_keys {
+            for &key in &self.active_keys_vec {
                 if let Some(v) = self.voices.get_mut(&key) {
                     let (fb_t, fb_p, fb_l) = v.step(coupling_t, coupling_p);
                     total_bridge_t += fb_t;
                     total_bridge_p += fb_p;
                     total_bridge_l += fb_l;
-
-                    let cur_energy = v.get_energy();
-                    let peak_e = self.note_energy_peak.get(&key).copied().unwrap_or(1e-6);
-                    if cur_energy > peak_e {
-                        self.note_energy_peak.insert(key, cur_energy);
-                    }
-
-                    // Voice lifecycle & -96dB dynamic note termination
-                    if !v.is_key_down && !self.sustain_pedal {
-                        let ratio = cur_energy / peak_e.max(1e-12);
-                        if ratio < 2.5e-10 || cur_energy < 1e-12 {
-                            keys_to_remove.push(key);
-                            out_events.push(EngineOutEvent::NoteEnd { time: s, key });
-                        }
-                    }
                 }
-            }
-
-            for key in keys_to_remove {
-                self.active_keys.remove(&key);
             }
 
             // Stage 3: Bridge reaction force reduction
@@ -248,6 +288,44 @@ impl PianoEngine {
                 out_right[s] = r;
             }
         }
+
+        // Stage 5: Voice lifecycle & polyphony management at block boundary
+        self.keys_to_remove_scratch.clear();
+        for &key in &self.active_keys_vec {
+            if let Some(v) = self.voices.get(&key) {
+                let cur_energy = v.get_energy();
+                let peak_e = self.note_energy_peak.get(&key).copied().unwrap_or(1e-6).max(cur_energy);
+                self.note_energy_peak.insert(key, peak_e);
+
+                if !self.depressed_keys.contains(&key) {
+                    let ratio = cur_energy / peak_e.max(1e-12);
+                    // Damped or sustained: if decayed to inaudibility (-70 dB ~ -80 dB)
+                    let thresh = if !self.sustain_pedal { 1e-7 } else { 1e-7 };
+                    if ratio < thresh || cur_energy < 1e-10 {
+                        self.keys_to_remove_scratch.push(key);
+                    }
+                }
+            }
+        }
+
+        for &key in &self.keys_to_remove_scratch {
+            self.active_keys.remove(&key);
+            if let Some(v) = self.voices.get_mut(&key) {
+                v.reset();
+            }
+            out_events.push(EngineOutEvent::NoteEnd { time: num_samples, key });
+        }
+
+        // Voice Stealing: enforce max polyphony
+        while self.active_keys.len() > self.max_active_voices {
+            if let Some(stolen_key) = self.steal_voice() {
+                out_events.push(EngineOutEvent::NoteEnd { time: num_samples, key: stolen_key });
+            } else {
+                break;
+            }
+        }
+
+        self.sync_active_keys_vec();
     }
 
     /// Render audio for a given duration in seconds.

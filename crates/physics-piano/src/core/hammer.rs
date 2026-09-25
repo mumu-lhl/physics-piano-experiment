@@ -59,6 +59,15 @@ impl HuntCrossleyHammer {
         self.una_corda = enabled;
     }
 
+    pub fn reset(&mut self) {
+        self.u_h = 0.0;
+        self.v_h = 0.0;
+        self.is_active = false;
+        self.contact_time = 0.0;
+        self.has_struck = false;
+        self.xi = 0.0;
+    }
+
     pub fn strike(&mut self, velocity: f64, initial_u_string: f64) {
         let clamped_vel = velocity.clamp(0.001, 1.0);
         let v0 = self.v_max * clamped_vel.powf(self.gamma_felt);

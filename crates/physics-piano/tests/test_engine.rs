@@ -331,5 +331,30 @@ fn test_damper_release_decay_and_high_register_damperless() {
     }
 }
 
+#[test]
+fn test_melody_voice_accumulation_and_crackling() {
+    let mut engine = PianoEngine::new(48000.0, 30, true);
+    let block_size = 256;
+    let mut out_l = vec![0.0; block_size];
+    let mut out_r = vec![0.0; block_size];
+    let mut out_events = Vec::new();
+
+    let melody = [60, 62, 64, 65, 67, 69, 71, 72, 71, 69, 67, 65, 64, 62, 60];
+    let mut max_out = 0.0f64;
+    for (i, &note) in melody.iter().enumerate() {
+        engine.note_on(note, 0.8);
+        // Play note for 250ms (~47 blocks)
+        for _ in 0..47 {
+            engine.process_block(block_size, &[], &mut out_events, &mut out_l, &mut out_r);
+            for s in 0..block_size {
+                max_out = max_out.max(out_l[s].abs()).max(out_r[s].abs());
+                assert!(!out_l[s].is_nan(), "NaN in melody playback!");
+            }
+        }
+        engine.note_off(note);
+        println!("Note {}: active_keys count = {}, peak_amplitude = {}", i, engine.active_keys.len(), max_out);
+    }
+}
+
 
 

@@ -269,6 +269,27 @@ impl StiffStringModal {
         (u_h, v_h)
     }
 
+    pub fn reset(&mut self) {
+        for state in &mut self.state_t {
+            state.q = 0.0;
+            state.v = 0.0;
+        }
+        for state in &mut self.state_p {
+            state.q = 0.0;
+            state.v = 0.0;
+        }
+        self.current_delta_t = 0.0;
+        if self.has_damper {
+            self.current_damper_depth = 1.0;
+            self.target_damper_depth = 1.0;
+            self.damper_active = true;
+        } else {
+            self.current_damper_depth = 0.0;
+            self.target_damper_depth = 0.0;
+            self.damper_active = false;
+        }
+    }
+
     #[inline]
     pub fn get_energy(&self) -> f64 {
         let mut energy = 0.0;
@@ -339,7 +360,8 @@ impl StiffStringModal {
             // Mode-specific viscoelastic felt absorption
             if is_damping {
                 let rate = self.damper_modal_rates[i];
-                let mode_damper_factor = (-rate * self.current_damper_depth * self.dt).exp();
+                let x = rate * self.current_damper_depth * self.dt;
+                let mode_damper_factor = (1.0 - x + 0.5 * x * x).max(0.0);
                 new_q_t *= mode_damper_factor;
                 new_v_t *= mode_damper_factor;
                 new_q_p *= mode_damper_factor;
