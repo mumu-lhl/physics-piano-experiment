@@ -28,6 +28,11 @@ pub struct BridgeSoundboard {
 
     // Filter states: (x1, x2, y1, y2)
     pub filter_states: [(f64, f64, f64, f64); 9],
+
+    // Multi-microphone perspective gains
+    pub close_gain: f64,
+    pub player_gain: f64,
+    pub ambient_gain: f64,
 }
 
 impl BridgeSoundboard {
@@ -70,7 +75,16 @@ impl BridgeSoundboard {
             num_body_modes: 9,
             biquad_coeffs,
             filter_states: [(0.0, 0.0, 0.0, 0.0); 9],
+            close_gain: 1.0,
+            player_gain: 0.707,
+            ambient_gain: 0.501,
         }
+    }
+
+    pub fn set_mic_gains(&mut self, close: f64, player: f64, ambient: f64) {
+        self.close_gain = close;
+        self.player_gain = player;
+        self.ambient_gain = ambient;
     }
 
     #[inline]
@@ -88,7 +102,8 @@ impl BridgeSoundboard {
 
     #[inline]
     pub fn step_soundboard(&mut self, f_in: f64, pan: f64) -> (f64, f64) {
-        let mut modal_sound = 0.0;
+        let mut low_mid_modes = 0.0;
+        let mut high_modes = 0.0;
 
         for i in 0..self.num_body_modes {
             let (b0, b2, a1, a2) = self.biquad_coeffs[i];
@@ -97,10 +112,15 @@ impl BridgeSoundboard {
             let y_mode = b0 * f_in + b2 * x2 - a1 * y1 - a2 * y2;
 
             self.filter_states[i] = (f_in, x1, y_mode, y1);
-            modal_sound += y_mode;
+            if i < 5 {
+                low_mid_modes += y_mode;
+            } else {
+                high_modes += y_mode;
+            }
         }
 
-        let soundboard_out = 0.92 * modal_sound + 0.08 * f_in * 1e-4;
+        let all_modes = low_mid_modes + high_modes;
+        let direct_trans = f_in * 1e-4;
 
         let (left_gain, right_gain) = if (pan - 0.5).abs() < 1e-6 {
             (std::f64::consts::FRAC_1_SQRT_2, std::f64::consts::FRAC_1_SQRT_2)
@@ -109,6 +129,24 @@ impl BridgeSoundboard {
             ((pan_clamped * PI * 0.5).cos(), (pan_clamped * PI * 0.5).sin())
         };
 
-        (soundboard_out * left_gain, soundboard_out * right_gain)
+        // Perspective 1: Close (near-field bridge attack + high modes)
+        let close_mono = 0.65 * high_modes + 0.35 * low_mid_modes + 0.12 * direct_trans;
+        let close_l = close_mono * left_gain;
+        let close_r = close_mono * right_gain;
+
+        // Perspective 2: Player (full-body spruce acoustic resonance)
+        let player_mono = 0.92 * all_modes + 0.04 * direct_trans;
+        let player_l = player_mono * (0.75 * left_gain + 0.25 * right_gain);
+        let player_r = player_mono * (0.25 * left_gain + 0.75 * right_gain);
+
+        // Perspective 3: Ambient (diffuse room field, low-mid warmth)
+        let amb_mono = 0.85 * low_mid_modes + 0.15 * high_modes;
+        let amb_l = amb_mono * std::f64::consts::FRAC_1_SQRT_2;
+        let amb_r = amb_mono * std::f64::consts::FRAC_1_SQRT_2;
+
+        let out_l = (self.close_gain * close_l + self.player_gain * player_l + self.ambient_gain * amb_l) * 0.6;
+        let out_r = (self.close_gain * close_r + self.player_gain * player_r + self.ambient_gain * amb_r) * 0.6;
+
+        (out_l, out_r)
     }
 }

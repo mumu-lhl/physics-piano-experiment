@@ -270,7 +270,6 @@ impl Plugin for PhysicsPiano {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         self.engine = PianoEngine::new(buffer_config.sample_rate as f64, 35, true);
-        self.engine.set_radiation_mode("multi_upols");
         let max_samples = buffer_config.max_buffer_size as usize;
         self.scratch_l = vec![0.0; max_samples];
         self.scratch_r = vec![0.0; max_samples];

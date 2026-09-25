@@ -132,6 +132,7 @@ impl PianoEngine {
     }
 
     pub fn set_mic_gains(&mut self, close: f64, player: f64, ambient: f64) {
+        self.bridge.set_mic_gains(close, player, ambient);
         if let Some(upols) = self.multi_upols.as_mut() {
             upols.close_gain = close;
             upols.player_gain = player;
