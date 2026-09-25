@@ -170,3 +170,85 @@ fn test_engine_full_synthesis_and_pedal() {
         engine.process_block(block_size, &empty_events, &mut out_events, &mut out_l, &mut out_r);
     }
 }
+
+#[test]
+fn test_clap_plugin_c_abi_and_extensions() {
+    use clap_sys::factory::plugin_factory::{clap_plugin_factory, CLAP_PLUGIN_FACTORY_ID};
+    use clap_sys::ext::audio_ports::{clap_plugin_audio_ports, CLAP_EXT_AUDIO_PORTS};
+    use clap_sys::ext::note_ports::{clap_plugin_note_ports, CLAP_EXT_NOTE_PORTS};
+    use clap_sys::ext::params::{clap_plugin_params, CLAP_EXT_PARAMS};
+    use clap_sys::ext::thread_pool::CLAP_EXT_THREAD_POOL;
+    use physics_piano::clap_entry;
+    use std::ffi::CStr;
+    use std::ptr;
+
+    unsafe {
+        // 1. Entry init
+        let init_fn = clap_entry.init.expect("init must be defined");
+        assert!(init_fn(ptr::null()));
+
+        // 2. Factory lookup
+        let get_factory_fn = clap_entry.get_factory.expect("get_factory must be defined");
+        let factory_ptr = get_factory_fn(CLAP_PLUGIN_FACTORY_ID.as_ptr());
+        assert!(!factory_ptr.is_null());
+
+        let factory = &*(factory_ptr as *const clap_plugin_factory);
+        let count_fn = factory.get_plugin_count.unwrap();
+        assert_eq!(count_fn(factory), 1);
+
+        let desc_fn = factory.get_plugin_descriptor.unwrap();
+        let desc = &*desc_fn(factory, 0);
+        let id_str = CStr::from_ptr(desc.id).to_str().unwrap();
+        assert_eq!(id_str, "com.mumu.physics-piano");
+
+        // 3. Create plugin instance
+        let create_fn = factory.create_plugin.unwrap();
+        let plugin = create_fn(factory, ptr::null(), desc.id);
+        assert!(!plugin.is_null());
+
+        // 4. Query extensions
+        let get_ext_fn = (*plugin).get_extension.unwrap();
+
+        // Audio Ports
+        let audio_ext = get_ext_fn(plugin, CLAP_EXT_AUDIO_PORTS.as_ptr());
+        assert!(!audio_ext.is_null());
+        let audio_ports = &*(audio_ext as *const clap_plugin_audio_ports);
+        assert_eq!((audio_ports.count.unwrap())(plugin, true), 0); // 0 audio inputs
+        assert_eq!((audio_ports.count.unwrap())(plugin, false), 1); // 1 audio output
+
+        // Note Ports
+        let note_ext = get_ext_fn(plugin, CLAP_EXT_NOTE_PORTS.as_ptr());
+        assert!(!note_ext.is_null());
+        let note_ports = &*(note_ext as *const clap_plugin_note_ports);
+        assert_eq!((note_ports.count.unwrap())(plugin, true), 1); // 1 note input
+        assert_eq!((note_ports.count.unwrap())(plugin, false), 0); // 0 note outputs
+
+        // Parameters
+        let params_ext = get_ext_fn(plugin, CLAP_EXT_PARAMS.as_ptr());
+        assert!(!params_ext.is_null());
+        let params = &*(params_ext as *const clap_plugin_params);
+        assert_eq!((params.count.unwrap())(plugin), 3); // Sustain, Una Corda, Master Volume
+
+        // Thread Pool
+        let tp_ext = get_ext_fn(plugin, CLAP_EXT_THREAD_POOL.as_ptr());
+        assert!(!tp_ext.is_null());
+
+        // 5. Lifecycle: init, activate, deactivate, destroy
+        let init_p = (*plugin).init.unwrap();
+        assert!(init_p(plugin));
+
+        let activate_p = (*plugin).activate.unwrap();
+        assert!(activate_p(plugin, 48000.0, 32, 512));
+
+        let deactivate_p = (*plugin).deactivate.unwrap();
+        deactivate_p(plugin);
+
+        let destroy_p = (*plugin).destroy.unwrap();
+        destroy_p(plugin);
+
+        // 6. Entry deinit
+        let deinit_fn = clap_entry.deinit.expect("deinit must be defined");
+        deinit_fn();
+    }
+}
+
