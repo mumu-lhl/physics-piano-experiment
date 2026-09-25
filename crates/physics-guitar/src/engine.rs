@@ -89,6 +89,27 @@ impl GuitarEngine {
         }
     }
 
+    /// Changes the instrument mode (Acoustic vs Electric) and dynamically reloads
+    /// authentic physical string properties (Phosphor Bronze .012 vs Nickel Steel .010),
+    /// preserving active fretting state.
+    pub fn set_mode(&mut self, mode: GuitarInstrumentMode) {
+        if self.mode != mode {
+            self.mode = mode;
+            let set_type = match mode {
+                GuitarInstrumentMode::Acoustic => GuitarStringSetType::Acoustic012,
+                GuitarInstrumentMode::Electric => GuitarStringSetType::Electric010,
+            };
+            let string_params = generate_guitar_string_set(set_type, 30);
+            for (i, p) in string_params.into_iter().enumerate() {
+                if i < self.strings.len() {
+                    let fret = self.strings[i].current_fret;
+                    self.strings[i].params = p;
+                    self.strings[i].set_fret(fret);
+                }
+            }
+        }
+    }
+
     /// Handles MIDI Note On event.
     pub fn note_on(&mut self, channel: u8, midi_note: u8, velocity: f64) {
         if velocity <= 0.0 {

@@ -241,16 +241,19 @@ pub struct WoodDiffusionBank {
 impl WoodDiffusionBank {
     pub fn new(sample_rate: f64) -> Self {
         let dt = 1.0 / sample_rate;
-        // 8 key upper wood plate resonances observed in Dreadnought guitar soundboard measurements
+        // 11 dense diffuse wood plate modal formants with authentic Sitka spruce internal friction Q factors
         let high_modes_specs = [
-            (420.0, 22.0, 2.2, 0.15),
-            (560.0, 25.0, 1.9, 0.14),
-            (720.0, 28.0, 1.6, 0.12),
-            (980.0, 30.0, 1.4, 0.10),
-            (1450.0, 32.0, 1.1, 0.08),
-            (2200.0, 35.0, 0.8, 0.06),
-            (3600.0, 38.0, 0.6, 0.05),
-            (5800.0, 40.0, 0.4, 0.03),
+            (420.0, 10.0, 2.2, 0.16),
+            (530.0, 10.5, 2.0, 0.15),
+            (660.0, 11.0, 1.8, 0.14),
+            (820.0, 11.5, 1.6, 0.13),
+            (1040.0, 12.0, 1.5, 0.12),
+            (1320.0, 12.5, 1.3, 0.10),
+            (1750.0, 13.0, 1.1, 0.09),
+            (2300.0, 13.5, 0.9, 0.08),
+            (3100.0, 14.0, 0.7, 0.06),
+            (4200.0, 14.5, 0.5, 0.05),
+            (5600.0, 15.0, 0.4, 0.04),
         ];
 
         let mut modes = Vec::with_capacity(high_modes_specs.len());
@@ -274,12 +277,14 @@ impl WoodDiffusionBank {
 /// Hybrid Acoustic Guitar Body combining:
 /// 1. Christensen 3-DOF low-frequency physical state space (A0, T1, T2)
 /// 2. 4th-order Linkwitz-Riley phase-aligned crossover at 450 Hz
-/// 3. High-frequency orthotropic wood diffusion bank
+/// 3. High-frequency orthotropic wood diffusion bank with authentic spruce loss
+/// 4. Second-order warm acoustic air absorption filter (6.8 kHz)
 #[derive(Debug, Clone)]
 pub struct AcousticGuitarBody {
     pub crossover: LinkwitzRiley4thOrder,
     pub christensen_low: Christensen3DofBody,
     pub wood_high: WoodDiffusionBank,
+    pub air_damping: BiquadFilter,
     pub resonance_gain: f64,
 }
 
@@ -289,6 +294,7 @@ impl AcousticGuitarBody {
             crossover: LinkwitzRiley4thOrder::new(450.0, sample_rate),
             christensen_low: Christensen3DofBody::new(sample_rate),
             wood_high: WoodDiffusionBank::new(sample_rate),
+            air_damping: BiquadFilter::new_lowpass(6800.0, 0.7071, sample_rate),
             resonance_gain: 1.0,
         }
     }
@@ -307,11 +313,13 @@ impl AcousticGuitarBody {
         // Low frequency physical fluid-structure coupling (Christensen A0/T1/T2)
         let low_rad = self.christensen_low.step(low_in);
 
-        // High frequency wood grain diffusion
+        // High frequency wood grain diffusion with authentic spruce plate loss
         let high_rad = self.wood_high.step(high_in);
 
-        // Recombine and mix with direct bridge force
-        let acoustic_body_out = (low_rad + high_rad) * self.resonance_gain;
-        bridge_force * 0.25 + acoustic_body_out * 0.75
+        // Recombine physical acoustic radiation into room air
+        let acoustic_body_out = (low_rad * 1.35 + high_rad * 0.95) * self.resonance_gain;
+
+        // Smooth wooden air absorption and radiation rolloff (eliminates piezo quack & digital sizzle)
+        self.air_damping.process(acoustic_body_out)
     }
 }

@@ -275,10 +275,16 @@ impl Plugin for PhysicsGuitar {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate;
+        let mode_val = self.params.mode.value();
+        let (initial_set, initial_mode) = if mode_val == 1 {
+            (GuitarStringSetType::Acoustic012, GuitarInstrumentMode::Acoustic)
+        } else {
+            (GuitarStringSetType::Electric010, GuitarInstrumentMode::Electric)
+        };
         self.engine = GuitarEngine::new(
             self.sample_rate as f64,
-            GuitarStringSetType::Electric010,
-            GuitarInstrumentMode::Electric,
+            initial_set,
+            initial_mode,
         );
         true
     }
@@ -315,11 +321,12 @@ impl Plugin for PhysicsGuitar {
 
         // 2. Sync plugin parameters to engine
         let mode_val = self.params.mode.value();
-        self.engine.mode = if mode_val == 1 {
+        let target_mode = if mode_val == 1 {
             GuitarInstrumentMode::Acoustic
         } else {
             GuitarInstrumentMode::Electric
         };
+        self.engine.set_mode(target_mode);
 
         let style_val = self.params.pluck_style.value();
         self.engine.set_pluck_style(if style_val == 1 {
