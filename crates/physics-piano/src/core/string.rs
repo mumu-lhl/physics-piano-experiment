@@ -57,6 +57,12 @@ pub struct StiffStringModal {
     pub damper_active: bool,
     pub damper_decay_mult: f64,
     pub damper_depth: f64,
+    pub has_damper: bool,
+    pub target_damper_depth: f64,
+    pub current_damper_depth: f64,
+    pub damper_drop_rate: f64,
+    pub damper_lift_rate: f64,
+    pub damper_modal_rates: Vec<f64>,
 
     // Microtonal expression tuning (cents)
     pub tuning_offset_cents: f64,
@@ -118,6 +124,23 @@ impl StiffStringModal {
         let force_scale = 2.0 / (mu * length);
         let geom_tension_coeff = (youngs_modulus * area * PI.powi(2)) / (4.0 * length.powi(2));
 
+        // Viscoelastic felt damping rates (DOCX §68-71)
+        // Bass strings have higher momentum/mass and decay slightly slower (~350ms T60)
+        // Tenor strings decay in ~220ms T60, while higher modes decay faster under wool felt.
+        let reg_factor = 0.55 + 0.45 * (length / 0.62).min(2.5);
+        let base_rate = 36.0 / reg_factor;
+        let mut damper_modal_rates = Vec::with_capacity(m);
+        for &n in &n_modes {
+            // Damper head rests at ~13% of string length with finite felt width
+            let spatial = 0.70 + 0.30 * (n * PI * 0.13).sin().powi(2);
+            let freq_factor = 1.0 + 0.22 * (n - 1.0).min(10.0);
+            damper_modal_rates.push(base_rate * spatial * freq_factor);
+        }
+
+        // 25ms smoothing time constant for felt drop; 6ms for felt lift
+        let damper_drop_rate = 1.0 - (-dt / 0.025).exp();
+        let damper_lift_rate = 1.0 - (-dt / 0.006).exp();
+
         let mut string = Self {
             params,
             sample_rate,
@@ -151,6 +174,12 @@ impl StiffStringModal {
             damper_active: true,
             damper_decay_mult: 1.0,
             damper_depth: 1.0,
+            has_damper: true,
+            target_damper_depth: 1.0,
+            current_damper_depth: 1.0,
+            damper_drop_rate,
+            damper_lift_rate,
+            damper_modal_rates,
             tuning_offset_cents: 0.0,
         };
 
@@ -218,7 +247,14 @@ impl StiffStringModal {
 
     pub fn set_damper(&mut self, active: bool, depth: f64) {
         self.damper_active = active;
+        if !self.has_damper {
+            self.damper_depth = 0.0;
+            self.target_damper_depth = 0.0;
+            self.damper_decay_mult = 1.0;
+            return;
+        }
         self.damper_depth = depth.clamp(0.0, 1.0);
+        self.target_damper_depth = if active { self.damper_depth } else { 0.0 };
         self.damper_decay_mult = 1.0 + (if active { 15.0 * self.damper_depth } else { 0.0 });
     }
 
@@ -263,11 +299,20 @@ impl StiffStringModal {
 
         let mut modal_strain_sum = 0.0;
 
-        let damper_factor = if self.damper_active && self.damper_decay_mult > 1.0 {
-            (-self.damper_decay_mult * 30.0 * self.dt).exp()
+        // Smooth continuous damper depth tracking (DOCX §70-71)
+        // Felt compresses smoothly onto string over 20-30ms, eliminating hard step transitions
+        if (self.target_damper_depth - self.current_damper_depth).abs() > 1e-6 {
+            let alpha = if self.target_damper_depth > self.current_damper_depth {
+                self.damper_drop_rate
+            } else {
+                self.damper_lift_rate
+            };
+            self.current_damper_depth += (self.target_damper_depth - self.current_damper_depth) * alpha;
         } else {
-            1.0
-        };
+            self.current_damper_depth = self.target_damper_depth;
+        }
+
+        let is_damping = self.current_damper_depth > 1e-4;
 
         for i in 0..self.num_modes {
             let f_t = f_hammer_scaled * self.phi_h[i] + f_ext_t;
@@ -291,11 +336,14 @@ impl StiffStringModal {
             let mut new_q_p = p11_p * q_p + p12_p * v_p + g1_p * f_p;
             let mut new_v_p = p21_p * q_p + p22_p * v_p + g2_p * f_p;
 
-            if damper_factor < 1.0 {
-                new_q_t *= damper_factor;
-                new_v_t *= damper_factor;
-                new_q_p *= damper_factor;
-                new_v_p *= damper_factor;
+            // Mode-specific viscoelastic felt absorption
+            if is_damping {
+                let rate = self.damper_modal_rates[i];
+                let mode_damper_factor = (-rate * self.current_damper_depth * self.dt).exp();
+                new_q_t *= mode_damper_factor;
+                new_v_t *= mode_damper_factor;
+                new_q_p *= mode_damper_factor;
+                new_v_p *= mode_damper_factor;
             }
 
             self.state_t[i].q = new_q_t;

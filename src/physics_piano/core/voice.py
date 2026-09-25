@@ -24,6 +24,7 @@ class PianoVoice:
 
         # Instantiate unison strings with micro-detuning
         self.strings: List[StiffStringModal] = []
+        has_damper = self.midi_note < 89
         for i, s_param in enumerate(key_params.strings):
             cents_detune = key_params.detuning_cents[i] if i < len(key_params.detuning_cents) else 0.0
             # Tension adjustment for micro-detuning: f ~ sqrt(T), so delta_T ~ 2 * delta_f
@@ -42,7 +43,12 @@ class PianoVoice:
                 num_modes=s_param.num_modes,
                 polarization_mistuning=s_param.polarization_mistuning
             )
-            self.strings.append(StiffStringModal(detuned_param, self.sample_rate))
+            s_obj = StiffStringModal(detuned_param, self.sample_rate)
+            s_obj.has_damper = has_damper
+            if not has_damper:
+                s_obj.set_damper(False, 0.0)
+                s_obj.current_damper_depth = 0.0
+            self.strings.append(s_obj)
 
         # Shared hammer
         self.hammer = HuntCrossleyHammer(key_params.hammer, self.sample_rate)
@@ -78,7 +84,8 @@ class PianoVoice:
         self.is_sounding = True
         # Raise dampers on this voice
         for s in self.strings:
-            s.set_damper(False)
+            s.set_damper(False, 0.0)
+            s.current_damper_depth = 0.0
         
         # Calculate current average displacement of strings under felt
         u_cur = sum(s.get_strike_displacement_and_velocity()[0] for s in self.strings) / len(self.strings)

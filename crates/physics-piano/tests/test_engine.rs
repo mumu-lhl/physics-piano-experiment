@@ -283,4 +283,53 @@ fn test_polyphonic_stability_and_headroom() {
     println!("10-Note Chord Peak Absolute Amplitude: {}", max_abs);
 }
 
+#[test]
+fn test_damper_release_decay_and_high_register_damperless() {
+    let mut engine = PianoEngine::new(48000.0, 30, true);
+    let block_size = 256;
+    let mut out_l = vec![0.0; block_size];
+    let mut out_r = vec![0.0; block_size];
+    let mut out_events = Vec::new();
+
+    // 1. Struck Middle C (MIDI 60)
+    engine.note_on(60, 0.8);
+    // Let sound ring for 0.2s (about 37 blocks)
+    for _ in 0..37 {
+        engine.process_block(block_size, &[], &mut out_events, &mut out_l, &mut out_r);
+    }
+
+    let energy_before_release = engine.get_voice(60).unwrap().get_energy();
+    assert!(energy_before_release > 1e-6);
+
+    // Release note
+    engine.note_off(60);
+
+    // After 10ms (approx 2 blocks), energy must NOT be killed instantly (unlike old 14ms cut)
+    engine.process_block(block_size, &[], &mut out_events, &mut out_l, &mut out_r);
+    engine.process_block(block_size, &[], &mut out_events, &mut out_l, &mut out_r);
+    let energy_at_10ms = engine.get_voice(60).unwrap().get_energy();
+    // It should still have > 10% of energy (smooth felt descent)
+    assert!(energy_at_10ms > energy_before_release * 0.10, "Damper cut off too brutally in 10ms");
+
+    // After 300ms (56 blocks), energy should be attenuated significantly (> 98% decayed)
+    for _ in 0..56 {
+        engine.process_block(block_size, &[], &mut out_events, &mut out_l, &mut out_r);
+    }
+    if let Some(v) = engine.get_voice(60) {
+        let energy_at_300ms = v.get_energy();
+        assert!(energy_at_300ms < energy_before_release * 0.05, "Damper should have extinguished string by 300ms");
+    }
+
+    // 2. High register C8 (MIDI 108) must NOT have dampers
+    engine.note_on(108, 0.8);
+    for _ in 0..10 {
+        engine.process_block(block_size, &[], &mut out_events, &mut out_l, &mut out_r);
+    }
+    let c8_voice = engine.get_voice(108).unwrap();
+    for s in &c8_voice.strings {
+        assert!(!s.has_damper, "C8 strings must not have dampers on acoustic grand");
+    }
+}
+
+
 

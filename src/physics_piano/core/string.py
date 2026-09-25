@@ -84,6 +84,17 @@ class StiffStringModal:
         self.damper_active = True
         self.damper_decay_mult = 1.0
         self.damper_depth = 1.0
+        self.has_damper = True
+        self.target_damper_depth = 1.0
+        self.current_damper_depth = 1.0
+        self.damper_drop_rate = 1.0 - math.exp(-self.dt / 0.025)
+        self.damper_lift_rate = 1.0 - math.exp(-self.dt / 0.006)
+
+        reg_factor = 0.55 + 0.45 * min(2.5, self.L / 0.62)
+        base_rate = 36.0 / reg_factor
+        spatial = 0.70 + 0.30 * (np.sin(self.n_modes * math.pi * 0.13) ** 2)
+        freq_factor = 1.0 + 0.22 * np.minimum(10.0, self.n_modes - 1.0)
+        self.damper_modal_rates = base_rate * spatial * freq_factor
 
         # Tuning offset in cents (CLAP Note Expression)
         self.tuning_offset_cents = 0.0
@@ -158,7 +169,13 @@ class StiffStringModal:
     def set_damper(self, active: bool, depth: float = 1.0):
         """Configure damper state with continuous half-pedal depth support."""
         self.damper_active = active
+        if not getattr(self, 'has_damper', True):
+            self.damper_depth = 0.0
+            self.target_damper_depth = 0.0
+            self.damper_decay_mult = 1.0
+            return
         self.damper_depth = max(0.0, min(1.0, float(depth)))
+        self.target_damper_depth = self.damper_depth if active else 0.0
         self.damper_decay_mult = 1.0 + (15.0 * self.damper_depth if active else 0.0)
 
     def get_strike_displacement_and_velocity(self) -> Tuple[float, float]:
@@ -197,6 +214,13 @@ class StiffStringModal:
         f_modal_T = (self.force_scale * self.phi_h * f_hammer) + (self.force_scale * f_coupling_T)
         f_modal_P = self.force_scale * f_coupling_P
 
+        # Smooth continuous damper depth tracking (DOCX §70-71)
+        if abs(self.target_damper_depth - self.current_damper_depth) > 1e-6:
+            alpha = self.damper_drop_rate if self.target_damper_depth > self.current_damper_depth else self.damper_lift_rate
+            self.current_damper_depth += (self.target_damper_depth - self.current_damper_depth) * alpha
+        else:
+            self.current_damper_depth = self.target_damper_depth
+
         # 1. Advance state_T
         q_T = self.state_T[:, 0]
         v_T = self.state_T[:, 1]
@@ -217,9 +241,9 @@ class StiffStringModal:
         else:
             self.current_delta_T = 0.0
 
-        # 4. Damper friction damping when active
-        if self.damper_active and self.damper_decay_mult > 1.0:
-            damper_damping = np.exp(-self.damper_decay_mult * 30.0 * self.dt)
+        # 4. Mode-specific viscoelastic felt damping
+        if self.current_damper_depth > 1e-4:
+            damper_damping = np.exp(-self.damper_modal_rates * self.current_damper_depth * self.dt)
             new_q_T *= damper_damping
             new_v_T *= damper_damping
             new_q_P *= damper_damping

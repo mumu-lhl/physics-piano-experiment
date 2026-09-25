@@ -25,6 +25,7 @@ impl PianoVoice {
         let target_f0 = key_params.target_f0;
         let pan = (midi_note as f64 - 21.0) / (108.0 - 21.0) * 0.8 + 0.1;
 
+        let has_damper = midi_note < 89;
         let mut strings = Vec::with_capacity(key_params.num_unisons);
         for (i, s_param) in key_params.strings.iter().enumerate() {
             let cents_detune = if i < key_params.detuning_cents.len() {
@@ -38,7 +39,13 @@ impl PianoVoice {
             let mut detuned_param = s_param.clone();
             detuned_param.tension = detuned_tension;
 
-            strings.push(StiffStringModal::new(detuned_param, sample_rate));
+            let mut s = StiffStringModal::new(detuned_param, sample_rate);
+            s.has_damper = has_damper;
+            if !has_damper {
+                s.set_damper(false, 0.0);
+                s.current_damper_depth = 0.0;
+            }
+            strings.push(s);
         }
 
         let hammer = HuntCrossleyHammer::new(key_params.hammer.clone(), sample_rate);
@@ -88,6 +95,7 @@ impl PianoVoice {
         self.is_sounding = true;
         for s in &mut self.strings {
             s.set_damper(false, 0.0);
+            s.current_damper_depth = 0.0;
         }
 
         let u_avg: f64 = self.strings.iter().map(|s| s.get_strike_displacement_and_velocity().0).sum::<f64>()

@@ -96,6 +96,14 @@ impl PianoEngine {
         })
     }
 
+    pub fn get_voice(&self, key: u8) -> Option<&PianoVoice> {
+        self.voices.get(&key)
+    }
+
+    pub fn get_voice_mut(&mut self, key: u8) -> Option<&mut PianoVoice> {
+        self.voices.get_mut(&key)
+    }
+
     pub fn note_on(&mut self, key: u8, velocity: f64) {
         let cur_energy = {
             let v = self.get_or_create_voice(key);
