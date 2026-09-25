@@ -1990,6 +1990,8 @@ version = "0.1.0"
 dependencies = [
  "clap-sys 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "hound",
+ "nih_plug",
+ "nih_plug_egui",
  "num-complex",
  "parking_lot",
  "realfft",
