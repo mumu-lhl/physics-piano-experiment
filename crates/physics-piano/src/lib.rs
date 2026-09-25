@@ -11,3 +11,4 @@ pub use clap_plugin::raw_clap_entry;
 pub use nih_plugin::PhysicsPiano;
 
 nih_plug::nih_export_clap!(nih_plugin::PhysicsPiano);
+nih_plug::nih_export_vst3!(nih_plugin::PhysicsPiano);
