@@ -12,3 +12,4 @@ build/
 target/
 steinway_b_samples/
 *.aiff
+*.docx
