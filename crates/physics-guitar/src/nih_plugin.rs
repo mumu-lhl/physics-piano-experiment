@@ -18,7 +18,7 @@ use crate::gui::GuitarFretboardWidget;
 
 #[derive(Params)]
 pub struct PhysicsGuitarParams {
-    #[persist = "editor-state"]
+    #[persist = "editor-state-v3"]
     pub editor_state: Arc<EguiState>,
 
     /// Instrument Mode: 0 = Electric, 1 = Acoustic
@@ -53,7 +53,7 @@ pub struct PhysicsGuitarParams {
 impl Default for PhysicsGuitarParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(960, 480),
+            editor_state: EguiState::from_size(1080, 520),
 
             mode: IntParam::new("Instrument Mode", 0, IntRange::Linear { min: 0, max: 1 }),
             pluck_style: IntParam::new("Pluck Style", 0, IntRange::Linear { min: 0, max: 1 }),
@@ -334,9 +334,11 @@ impl Plugin for PhysicsGuitar {
 
                     ui.separator();
 
-                    // Mode & Performance Controls Rack
-                    ui.horizontal(|ui| {
-                        ui.group(|ui| {
+                    // Mode & Performance Controls Rack (4 balanced responsive columns)
+                    ui.columns(4, |cols| {
+                        // Col 0: Instrument Mode
+                        cols[0].group(|ui| {
+                            ui.set_width(ui.available_width());
                             ui.label(RichText::new("Instrument").strong());
                             let mut mode_idx = params.mode.value();
                             ui.radio_value(&mut mode_idx, 0, "Electric Guitar");
@@ -348,12 +350,14 @@ impl Plugin for PhysicsGuitar {
                             }
                         });
 
-                        ui.group(|ui| {
+                        // Col 1: Pickup Selector
+                        cols[1].group(|ui| {
+                            ui.set_width(ui.available_width());
                             ui.label(RichText::new("Pickup Selector").strong());
                             let mut pos_idx = params.pickup_pos.value();
                             ui.horizontal(|ui| {
                                 ui.radio_value(&mut pos_idx, 0, "Bridge");
-                                ui.radio_value(&mut pos_idx, 1, "Middle");
+                                ui.radio_value(&mut pos_idx, 1, "Mid");
                                 ui.radio_value(&mut pos_idx, 2, "Neck");
                             });
                             if pos_idx != params.pickup_pos.value() {
@@ -364,7 +368,7 @@ impl Plugin for PhysicsGuitar {
 
                             let mut type_idx = params.pickup_type.value();
                             ui.horizontal(|ui| {
-                                ui.radio_value(&mut type_idx, 0, "Single-Coil");
+                                ui.radio_value(&mut type_idx, 0, "Single");
                                 ui.radio_value(&mut type_idx, 1, "Humbucker");
                             });
                             if type_idx != params.pickup_type.value() {
@@ -374,7 +378,9 @@ impl Plugin for PhysicsGuitar {
                             }
                         });
 
-                        ui.group(|ui| {
+                        // Col 2: Pluck & Tone
+                        cols[2].group(|ui| {
+                            ui.set_width(ui.available_width());
                             ui.label(RichText::new("Pluck & Tone").strong());
                             let mut style_idx = params.pluck_style.value();
                             ui.horizontal(|ui| {
@@ -387,22 +393,33 @@ impl Plugin for PhysicsGuitar {
                                 setter.end_set_parameter(&params.pluck_style);
                             }
 
+                            ui.spacing_mut().slider_width = (ui.available_width() - 85.0).max(60.0);
                             let mut mute_val = params.palm_mute.value();
-                            if ui.add(egui::Slider::new(&mut mute_val, 0.0..=1.0).text("Palm Mute")).changed() {
+                            if ui.add(egui::Slider::new(&mut mute_val, 0.0..=1.0).text("Mute")).changed() {
                                 setter.begin_set_parameter(&params.palm_mute);
                                 setter.set_parameter(&params.palm_mute, mute_val);
                                 setter.end_set_parameter(&params.palm_mute);
                             }
                         });
 
-                        ui.group(|ui| {
+                        // Col 3: Master Output
+                        cols[3].group(|ui| {
+                            ui.set_width(ui.available_width());
                             ui.label(RichText::new("Master Output").strong());
+                            ui.spacing_mut().slider_width = (ui.available_width() - 85.0).max(60.0);
                             let mut gain_db = util::gain_to_db(params.master_gain.value());
                             if ui.add(egui::Slider::new(&mut gain_db, -30.0..=6.0).text("Gain (dB)")).changed() {
                                 let new_gain = util::db_to_gain(gain_db);
                                 setter.begin_set_parameter(&params.master_gain);
                                 setter.set_parameter(&params.master_gain, new_gain);
                                 setter.end_set_parameter(&params.master_gain);
+                            }
+
+                            let mut pluck_pos_val = params.pluck_pos.value();
+                            if ui.add(egui::Slider::new(&mut pluck_pos_val, 0.05..=0.35).text("Pluck Pos")).changed() {
+                                setter.begin_set_parameter(&params.pluck_pos);
+                                setter.set_parameter(&params.pluck_pos, pluck_pos_val);
+                                setter.end_set_parameter(&params.pluck_pos);
                             }
                         });
                     });

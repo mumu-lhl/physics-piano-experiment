@@ -56,16 +56,18 @@ impl<'a> GuitarFretboardWidget<'a> {
         // Bone nut
         painter.rect_filled(nut_rect, 2.0, Color32::from_rgb(235, 230, 215));
 
-        let playable_width = rect.width() - nut_width - 8.0;
+        let playable_width = rect.width() - nut_width - 16.0;
         let fret_count = 24;
 
-        // Fret x positions based on 1 - 2^(-k / 17) scale visual compression
+        // Physical guitar fret spacing: distance = L * (1 - 2^(-k / 12))
+        // Normalized so that 24th fret (k = 24) is exactly at 100% of playable width:
+        // 1 - 2^(-24 / 12) = 1 - 0.25 = 0.75
         let get_fret_x = |k: u8| -> f32 {
             if k == 0 {
                 rect.min.x + nut_width
             } else {
-                let frac = 1.0 - 2.0f32.powf(-(k as f32) / 16.5);
-                rect.min.x + nut_width + frac * playable_width * 1.58
+                let norm = (1.0 - 2.0f32.powf(-(k as f32) / 12.0)) / 0.75;
+                rect.min.x + nut_width + norm * playable_width
             }
         };
 
