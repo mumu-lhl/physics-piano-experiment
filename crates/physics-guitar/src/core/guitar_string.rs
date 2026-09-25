@@ -59,6 +59,8 @@ pub struct GuitarString {
     pub fret_buzz_sensitivity: f64,
     /// Key pressed status (true while note is held, false on release)
     pub is_held: bool,
+    /// Active finger release muting (true while finger is damping after key release)
+    pub is_releasing: bool,
 }
 
 impl GuitarString {
@@ -88,6 +90,7 @@ impl GuitarString {
             harmonic_node: 0,
             fret_buzz_sensitivity: 0.35,
             is_held: false,
+            is_releasing: false,
         };
         s.recalculate_modal_operators();
         s
@@ -161,9 +164,13 @@ impl GuitarString {
                 sigma_m += 180.0 * suppression;
             }
 
+            // Horizontal (P) in-plane polarization encounters significantly lower soundboard radiation loss
+            // (~40% of vertical out-of-plane damping), creating the characteristic acoustic two-stage decay.
+            let sigma_m_p = sigma_m * 0.40;
+
             // Discrete state-space operators via matrix exponential for mode m
             let (phi_t, gamma_t) = Self::compute_discrete_operators(omega_m_t, sigma_m, self.dt);
-            let (phi_p, gamma_p) = Self::compute_discrete_operators(omega_m_p, sigma_m * 0.95, self.dt);
+            let (phi_p, gamma_p) = Self::compute_discrete_operators(omega_m_p, sigma_m_p, self.dt);
 
             self.phi_t.push(phi_t);
             self.gamma_t.push(gamma_t);
@@ -215,8 +222,9 @@ impl GuitarString {
 
     /// Plucks the string with given exciter, pluck position, and velocity.
     pub fn pluck(&mut self, exciter: &PluckExciter, pluck_pos_ratio: f64, velocity: f64) {
-        let (q_t, q_p) = exciter.compute_initial_modal_displacements(
+        let (q_t, q_p, v_t) = exciter.compute_initial_modal_displacements(
             self.effective_length,
+            self.current_f0,
             pluck_pos_ratio,
             velocity,
             self.num_modes,
@@ -224,12 +232,13 @@ impl GuitarString {
 
         for m in 0..self.num_modes {
             self.state_t[m].q += q_t[m];
-            self.state_t[m].v = 0.0;
+            self.state_t[m].v = v_t[m];
 
             self.state_p[m].q += q_p[m];
             self.state_p[m].v = 0.0;
         }
         self.is_held = true;
+        self.is_releasing = false;
     }
 
     /// Advances the modal oscillators by 1 audio sample (dt).
@@ -288,8 +297,8 @@ impl GuitarString {
             }
         }
 
-        // Active release damping when note is released (~150ms finger mute)
-        if !self.is_held {
+        // Active release damping when note is explicitly released (~150ms finger mute)
+        if self.is_releasing {
             let release_damping = 0.997_f64;
             let mut total_amp = 0.0_f64;
             for m in 0..self.num_modes {
@@ -307,13 +316,41 @@ impl GuitarString {
                     self.state_p[m].q = 0.0;
                     self.state_p[m].v = 0.0;
                 }
+                self.is_releasing = false;
             }
         }
 
         // Geometric tension modulation: Delta T = (E * A / 4L^2) * sum(k_m^2 * q_m^2)
         self.current_delta_t = self.geom_tension_coeff * modal_sq_sum;
 
+        // Non-linear Kirchhoff-Carrier dynamic tension restoring force (twang & attack pitch drift)
+        // Clamped to 0.04 (max ~35 cents pitch drift on attack) for absolute numerical stability
+        let rel_delta_t = (self.current_delta_t / self.params.tension).clamp(0.0, 0.04);
+        if rel_delta_t > 1e-6 {
+            let tension_factor = rel_delta_t * (self.params.tension / self.params.linear_density) * self.dt;
+            for m in 0..self.num_modes {
+                let m_f = (m + 1) as f64;
+                let k_sq = (m_f * PI / self.effective_length).powi(2);
+                let delta_v = tension_factor * k_sq;
+                self.state_t[m].v -= delta_v * self.state_t[m].q;
+                self.state_p[m].v -= delta_v * self.state_p[m].q;
+            }
+        }
+
         (force_bridge_t, force_bridge_p)
+    }
+
+    /// Injects bridge vibration into string modes to enable sympathetic resonance between strings.
+    #[inline(always)]
+    pub fn inject_bridge_motion(&mut self, bridge_velocity: f64, coupling: f64) {
+        if coupling <= 0.0 || bridge_velocity.abs() < 1e-12 {
+            return;
+        }
+        let max_m = self.num_modes.min(16);
+        for m in 0..max_m {
+            let impulse = -coupling * bridge_velocity * self.bridge_phi[m] * self.dt;
+            self.state_t[m].v += impulse;
+        }
     }
 
     /// Evaluates total mechanical energy in string (Joules).
@@ -329,5 +366,6 @@ impl GuitarString {
     /// Releases the string (switches to active finger release muting).
     pub fn release(&mut self) {
         self.is_held = false;
+        self.is_releasing = true;
     }
 }

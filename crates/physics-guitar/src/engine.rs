@@ -288,11 +288,13 @@ impl GuitarEngine {
         }
 
         let mut total_bridge_t = 0.0;
+        let mut total_bridge_p = 0.0;
         let mut pickup_mix = 0.0;
 
         for (i, s) in self.strings.iter_mut().enumerate() {
-            let (f_t, _f_p) = s.step();
+            let (f_t, f_p) = s.step();
             total_bridge_t += f_t;
+            total_bridge_p += f_p;
 
             if self.mode == GuitarInstrumentMode::Electric {
                 let emf = self.pickup.sample_string(s);
@@ -308,17 +310,34 @@ impl GuitarEngine {
         // Tactile finger squeak noise across wound strings
         let squeak_sample = self.squeak.process_sample();
 
-        let mono_out = match self.mode {
-            GuitarInstrumentMode::Acoustic => self.body.process(total_bridge_t * 0.35) + squeak_sample * 0.5,
+        let (out_l, out_r) = match self.mode {
+            GuitarInstrumentMode::Acoustic => {
+                // Bridge rocking torque: horizontal shear couples into soundboard as ~18% effective normal force
+                // (produces authentic two-stage decay: punchy vertical attack + lingering horizontal sustain)
+                let effective_bridge_force = total_bridge_t + 0.18 * total_bridge_p;
+                let (body_l, body_r) = self.body.process_stereo(effective_bridge_force * 0.35);
+
+                // Inter-string sympathetic resonance: bridge velocity drives unmuted strings across soundboard
+                let v_br = self.body.bridge_velocity();
+                let sym_coupling = 0.00025;
+                for s in &mut self.strings {
+                    s.inject_bridge_motion(v_br, sym_coupling);
+                }
+
+                // Spatial stereo field: soundhole/body spread + neck squeak placed naturally towards left
+                let squeak_l = squeak_sample * 0.6 * 0.5;
+                let squeak_r = squeak_sample * 0.4 * 0.5;
+
+                (body_l + squeak_l, body_r + squeak_r)
+            }
             GuitarInstrumentMode::Electric => {
                 let pre_amp = pickup_mix * 2.5 + squeak_sample * 0.35;
-                self.amp_cab.process(pre_amp)
+                let amp_out = self.amp_cab.process(pre_amp);
+                (amp_out, amp_out)
             }
         };
 
-        let sample = mono_out * self.master_volume;
-        // Stereo output with slight natural room spread
-        (sample, sample)
+        (out_l * self.master_volume, out_r * self.master_volume)
     }
 
     /// Renders an audio block into left and right channel slices.

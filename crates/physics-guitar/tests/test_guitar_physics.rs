@@ -33,8 +33,8 @@ fn test_pluck_dynamics_and_window_filtering() {
     let exciter_plectrum = PluckExciter::new(PluckStyle::Plectrum);
     let exciter_finger = PluckExciter::new(PluckStyle::FingerFlesh);
 
-    let (q_t_plec, _) = exciter_plectrum.compute_initial_modal_displacements(0.648, 0.15, 0.8, 30);
-    let (q_t_finger, _) = exciter_finger.compute_initial_modal_displacements(0.648, 0.15, 0.8, 30);
+    let (q_t_plec, _, _) = exciter_plectrum.compute_initial_modal_displacements(0.648, 329.63, 0.15, 0.8, 30);
+    let (q_t_finger, _, _) = exciter_finger.compute_initial_modal_displacements(0.648, 329.63, 0.15, 0.8, 30);
 
     assert_eq!(q_t_plec.len(), 30);
     assert_eq!(q_t_finger.len(), 30);
@@ -214,3 +214,86 @@ fn test_christensen_3dof_acoustic_body() {
     }
     assert!(ring_samples > 100, "Acoustic body must sustain resonant ring");
 }
+
+#[test]
+fn test_acoustic_two_stage_decay() {
+    let strings = generate_guitar_string_set(GuitarStringSetType::Acoustic012, 30);
+    let mut string = GuitarString::new(strings[0].clone(), 44100.0);
+    let exciter = PluckExciter::new(PluckStyle::Plectrum);
+    string.pluck(&exciter, 0.15, 0.8);
+
+    // Initial energy in vertical vs horizontal planes
+    let mut energy_t_init = 0.0;
+    let mut energy_p_init = 0.0;
+    for m in 0..string.num_modes {
+        energy_t_init += 0.5 * (string.state_t[m].v.powi(2) + string.omega_t[m].powi(2) * string.state_t[m].q.powi(2));
+        energy_p_init += 0.5 * (string.state_p[m].v.powi(2) + string.omega_p[m].powi(2) * string.state_p[m].q.powi(2));
+    }
+
+    // Step 15000 samples (~340ms)
+    for _ in 0..15000 {
+        string.step();
+    }
+
+    let mut energy_t_later = 0.0;
+    let mut energy_p_later = 0.0;
+    for m in 0..string.num_modes {
+        energy_t_later += 0.5 * (string.state_t[m].v.powi(2) + string.omega_t[m].powi(2) * string.state_t[m].q.powi(2));
+        energy_p_later += 0.5 * (string.state_p[m].v.powi(2) + string.omega_p[m].powi(2) * string.state_p[m].q.powi(2));
+    }
+
+    let ratio_t = energy_t_later / energy_t_init;
+    let ratio_p = energy_p_later / energy_p_init;
+
+    // Horizontal polarization P must decay significantly slower than vertical polarization T
+    assert!(ratio_p > ratio_t * 1.5, "Horizontal polarization must sustain longer than vertical (two-stage decay)");
+}
+
+#[test]
+fn test_sympathetic_resonance_coupling() {
+    let strings = generate_guitar_string_set(GuitarStringSetType::Acoustic012, 30);
+    let mut s_open = GuitarString::new(strings[0].clone(), 44100.0); // High E
+    assert_eq!(s_open.total_energy(), 0.0);
+
+    // Inject bridge vibration at 329.63 Hz matching String 1 fundamental
+    let f0 = 329.63;
+    for n in 0..2000 {
+        let v_bridge = 0.05 * (2.0 * std::f64::consts::PI * f0 * (n as f64) / 44100.0).sin();
+        s_open.inject_bridge_motion(v_bridge, 0.0003);
+        s_open.step();
+    }
+
+    // Open string must build up energy via sympathetic resonance
+    assert!(s_open.total_energy() > 1e-12, "Sympathetic resonance must excite tuned open string");
+}
+
+#[test]
+fn test_dynamic_tension_modulation() {
+    let strings = generate_guitar_string_set(GuitarStringSetType::Acoustic012, 30);
+    let mut string = GuitarString::new(strings[5].clone(), 44100.0); // Low E
+    let exciter = PluckExciter::new(PluckStyle::Plectrum);
+    string.pluck(&exciter, 0.15, 1.0); // Hard pluck
+
+    string.step();
+    // Dynamic tension delta_T must be positive on hard attack
+    assert!(string.current_delta_t > 0.0, "Hard pluck must induce dynamic geometric tension increase");
+}
+
+#[test]
+fn test_acoustic_stereo_spatial_radiation() {
+    let mut engine = GuitarEngine::new(44100.0, GuitarStringSetType::Acoustic012, GuitarInstrumentMode::Acoustic);
+    engine.note_on(1, 40, 0.9); // Low E2
+
+    let mut left = [0.0f32; 1024];
+    let mut right = [0.0f32; 1024];
+    engine.process_block(&mut left, &mut right);
+
+    // Both channels must have energy, but not be bit-for-bit identical (must have stereo width)
+    let sum_l: f32 = left.iter().map(|s| s.abs()).sum();
+    let sum_r: f32 = right.iter().map(|s| s.abs()).sum();
+    assert!(sum_l > 0.0 && sum_r > 0.0);
+
+    let diff_sq: f32 = left.iter().zip(right.iter()).map(|(l, r)| (l - r).powi(2)).sum();
+    assert!(diff_sq > 1e-6, "Acoustic body must produce natural spatial stereo image (not dead mono)");
+}
+
