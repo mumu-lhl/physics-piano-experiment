@@ -11,8 +11,10 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use crate::engine::{EngineEvent, EngineOutEvent, PianoEngine};
-use crate::gui::controls::{render_lissajous_scope, render_vu_meter};
-use crate::gui::keyboard::PianoKeyboardWidget;
+use crate::gui::{
+    render_lissajous_scope, render_vu_meter,
+    PianoKeyboardWidget, I18n, Language, setup_cjk_fonts,
+};
 
 #[derive(Params)]
 pub struct PhysicsPianoParams {
@@ -434,17 +436,30 @@ fn soft_limit(x: f32) -> f32 {
         let orbit_p_arc = self.recent_orbit_p.clone();
         let gui_tx = self.gui_event_tx.clone();
 
-        #[derive(Default)]
         struct GuiKeyboardState {
             held_mouse_key: Option<u8>,
             held_qwerty_keys: HashSet<egui::Key>,
+            language: Language,
+        }
+
+        impl Default for GuiKeyboardState {
+            fn default() -> Self {
+                Self {
+                    held_mouse_key: None,
+                    held_qwerty_keys: HashSet::new(),
+                    language: Language::from_system_locale(),
+                }
+            }
         }
 
         create_egui_editor(
             self.params.editor_state.clone(),
             GuiKeyboardState::default(),
-            |_, _| {},
+            |egui_ctx, _gui_state| {
+                setup_cjk_fonts(egui_ctx);
+            },
             move |egui_ctx, setter, gui_state| {
+                let lang = gui_state.language;
                 egui::CentralPanel::default()
                     .frame(egui::Frame::NONE.fill(Color32::from_rgb(18, 19, 24)))
                     .show(egui_ctx, |ui| {
@@ -453,16 +468,32 @@ fn soft_limit(x: f32) -> f32 {
                         // Header Bar
                         ui.horizontal(|ui| {
                             ui.heading(
-                                RichText::new("PHYSICS PIANO")
+                                RichText::new(I18n::title(lang))
                                     .font(FontId::proportional(22.0))
                                     .color(Color32::from_rgb(255, 215, 120))
                                     .strong(),
                             );
                             ui.label(
-                                RichText::new("Acoustic Grand Physical Modeling Synthesizer (Rust Engine)")
+                                RichText::new(I18n::subtitle(lang))
                                     .font(FontId::proportional(12.0))
                                     .color(Color32::from_rgb(150, 155, 170)),
                             );
+
+                            // Language Switcher Toggle Button
+                            let (btn_text, next_lang) = match lang {
+                                Language::English => ("🌐 中文", Language::SimplifiedChinese),
+                                Language::SimplifiedChinese => ("🌐 English", Language::English),
+                            };
+                            if ui
+                                .button(
+                                    RichText::new(btn_text)
+                                        .font(FontId::proportional(12.0))
+                                        .color(Color32::from_rgb(210, 220, 240)),
+                                )
+                                .clicked()
+                            {
+                                gui_state.language = next_lang;
+                            }
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let pl = peak_l.load(std::sync::atomic::Ordering::Relaxed);
@@ -483,24 +514,24 @@ fn soft_limit(x: f32) -> f32 {
                             ui.horizontal_wrapped(|ui| {
                                 // 1. Pedals & Micro-Mechanics (Tier 6)
                                 ui.vertical(|ui| {
-                                    ui.label(RichText::new("PEDALS & MECHANICS").strong().color(Color32::from_rgb(200, 205, 220)));
+                                    ui.label(RichText::new(I18n::rack_pedals(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
                                     ui.horizontal(|ui| {
                                         ui.vertical(|ui| {
-                                            ui.label("Sustain:");
+                                            ui.label(I18n::sustain(lang));
                                             ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.sustain_pedal, setter).with_width(85.0));
                                             let mut una = params.una_corda.value();
-                                            if ui.checkbox(&mut una, "Una Corda").changed() {
+                                            if ui.checkbox(&mut una, I18n::una_corda(lang)).changed() {
                                                 setter.set_parameter(&params.una_corda, una);
                                             }
                                         });
                                         ui.vertical(|ui| {
-                                            ui.label("Key Action:");
+                                            ui.label(I18n::key_action(lang));
                                             ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.key_noise, setter).with_width(80.0));
-                                            ui.label("Damper Noise:");
+                                            ui.label(I18n::damper_noise(lang));
                                             ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.damper_noise, setter).with_width(80.0));
                                         });
                                         ui.vertical(|ui| {
-                                            ui.label("Pedal Shock:");
+                                            ui.label(I18n::pedal_shock(lang));
                                             ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.pedal_noise, setter).with_width(80.0));
                                         });
                                     });
@@ -510,18 +541,18 @@ fn soft_limit(x: f32) -> f32 {
 
                                 // 2. String & Hammer Physics
                                 ui.vertical(|ui| {
-                                    ui.label(RichText::new("STRING & HAMMER").strong().color(Color32::from_rgb(200, 205, 220)));
+                                    ui.label(RichText::new(I18n::rack_string(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
                                     ui.horizontal(|ui| {
                                         ui.vertical(|ui| {
-                                            ui.label("Inharmonicity B:");
+                                            ui.label(I18n::inharmonicity(lang));
                                             ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.inharmonicity_scale, setter).with_width(88.0));
-                                            ui.label("Hammer Hardness:");
+                                            ui.label(I18n::hammer_hardness(lang));
                                             ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.hammer_hardness, setter).with_width(88.0));
                                         });
                                         ui.vertical(|ui| {
-                                            ui.label("Unison Detune:");
+                                            ui.label(I18n::unison_detune(lang));
                                             ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.unison_detuning, setter).with_width(88.0));
-                                            ui.label("Phantom Partials:");
+                                            ui.label(I18n::phantom_partials(lang));
                                             ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.phantom_gain, setter).with_width(88.0));
                                         });
                                     });
@@ -531,18 +562,18 @@ fn soft_limit(x: f32) -> f32 {
 
                                 // 3. Spatial Multi-Mic & Lid Baffle (Tier 7)
                                 ui.vertical(|ui| {
-                                    ui.label(RichText::new("SPATIAL MICS & LID").strong().color(Color32::from_rgb(200, 205, 220)));
+                                    ui.label(RichText::new(I18n::rack_spatial(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
                                     ui.horizontal(|ui| {
                                         ui.vertical(|ui| {
-                                            ui.label("Close Mic:");
+                                            ui.label(I18n::mic_close(lang));
                                             ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.mic_close, setter).with_width(80.0));
-                                            ui.label("Player Mic:");
+                                            ui.label(I18n::mic_player(lang));
                                             ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.mic_player, setter).with_width(80.0));
                                         });
                                         ui.vertical(|ui| {
-                                            ui.label("Ambient Mic:");
+                                            ui.label(I18n::mic_ambient(lang));
                                             ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.mic_ambient, setter).with_width(80.0));
-                                            ui.label("Lid Angle:");
+                                            ui.label(I18n::lid_angle(lang));
                                             ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.lid_angle, setter).with_width(80.0));
                                         });
                                     });
@@ -552,7 +583,8 @@ fn soft_limit(x: f32) -> f32 {
 
                                 // 4. Master Output
                                 ui.vertical(|ui| {
-                                    ui.label(RichText::new("OUTPUT").strong().color(Color32::from_rgb(200, 205, 220)));
+                                    ui.label(RichText::new(I18n::rack_output(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
+                                    ui.label(I18n::master_gain(lang));
                                     ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.master_gain, setter).with_width(110.0));
                                 });
                             });
@@ -629,7 +661,7 @@ fn soft_limit(x: f32) -> f32 {
                         // Footer with laptop QWERTY keyboard hints
                         ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new("Tip: Click or drag on keys to play (vertical position = velocity). QWERTY keys: A, W, S, E, D, F, T, G, Y, H, U, J, K")
+                                RichText::new(I18n::keyboard_hint(lang))
                                     .font(FontId::proportional(11.0))
                                     .color(Color32::from_rgb(110, 115, 130)),
                             );
