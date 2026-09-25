@@ -189,9 +189,10 @@ impl BodyModalOscillator {
         self.q = q_next;
         self.v = v_next;
 
-        // Modal acceleration output: a = -omega^2 * q - 2*zeta*omega*v + F_modal
-        let a = -self.omega.powi(2) * self.q - 2.0 * self.zeta * self.omega * self.v + modal_force;
-        a * self.output_weight
+        // Acoustic soundboard surface velocity radiation: v * omega * output_weight
+        // Has natural resonant modal gain (Q), but rolls off naturally as 1/omega at high frequencies
+        // with ZERO direct string force feedthrough!
+        self.v * self.omega * self.output_weight
     }
 }
 
@@ -294,7 +295,7 @@ impl AcousticGuitarBody {
             crossover: LinkwitzRiley4thOrder::new(450.0, sample_rate),
             christensen_low: Christensen3DofBody::new(sample_rate),
             wood_high: WoodDiffusionBank::new(sample_rate),
-            air_damping: BiquadFilter::new_lowpass(6800.0, 0.7071, sample_rate),
+            air_damping: BiquadFilter::new_lowpass(5500.0, 0.7071, sample_rate),
             resonance_gain: 1.0,
         }
     }
@@ -317,9 +318,9 @@ impl AcousticGuitarBody {
         let high_rad = self.wood_high.step(high_in);
 
         // Recombine physical acoustic radiation into room air
-        let acoustic_body_out = (low_rad * 1.35 + high_rad * 0.95) * self.resonance_gain;
+        let acoustic_body_out = (low_rad * 1.5 + high_rad * 1.1) * self.resonance_gain;
 
-        // Smooth wooden air absorption and radiation rolloff (eliminates piezo quack & digital sizzle)
+        // Smooth wooden air absorption and radiation rolloff (warm acoustic studio sheen)
         self.air_damping.process(acoustic_body_out)
     }
 }

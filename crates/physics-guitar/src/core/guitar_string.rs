@@ -270,25 +270,20 @@ impl GuitarString {
         }
 
         // Signorini unilateral fret collision / Fret Buzz (docx Chapter 2)
-        if self.fret_buzz_sensitivity > 0.0 {
+        if self.fret_buzz_sensitivity > 0.05 {
             let x_buzz = 0.03 * self.effective_length;
             let mut u_buzz = 0.0;
-            for m in 0..self.num_modes.min(12) {
+            for m in 0..self.num_modes.min(10) {
                 let m_f = (m + 1) as f64;
                 u_buzz += self.state_t[m].q * (m_f * PI * x_buzz / self.effective_length).sin();
             }
 
-            let buzz_threshold = 0.0006 * (1.1 - self.fret_buzz_sensitivity * 0.5);
-            if u_buzz.abs() > buzz_threshold {
-                let excess = u_buzz.abs() - buzz_threshold;
-                let restitution_damping = 1.0 - (excess * 200.0).clamp(0.0, 0.20);
+            let clearance = 0.0012 * (1.2 - self.fret_buzz_sensitivity * 0.6);
+            if u_buzz.abs() > clearance {
+                let excess = u_buzz.abs() - clearance;
+                let restitution_damping = 1.0 - (excess * 150.0).clamp(0.0, 0.35);
                 for m in 0..self.num_modes {
-                    if m < 4 {
-                        self.state_t[m].v *= restitution_damping;
-                    } else if m < 14 {
-                        let sign = if m % 2 == 0 { 1.0 } else { -1.0 };
-                        self.state_t[m].v += (excess * 12.0) * sign;
-                    }
+                    self.state_t[m].v *= restitution_damping;
                 }
             }
         }

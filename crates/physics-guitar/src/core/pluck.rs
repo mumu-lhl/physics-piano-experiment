@@ -25,8 +25,8 @@ pub struct PluckExciter {
 impl PluckExciter {
     pub fn new(style: PluckStyle) -> Self {
         let (half_width, release_time, angle_rad) = match style {
-            PluckStyle::FingerFlesh => (0.0040, 0.0035, PI / 4.0), // 4.0 mm, 3.5ms release, 45 degrees
-            PluckStyle::Plectrum => (0.0005, 0.00025, PI / 6.0),    // 0.5 mm, 0.25ms release, 30 degrees
+            PluckStyle::FingerFlesh => (0.0050, 0.0025, PI / 4.0), // 5.0 mm flesh width, 2.5ms release, 45 degrees
+            PluckStyle::Plectrum => (0.0015, 0.0006, PI / 6.0),    // 1.5 mm celluloid/tortex pick contact, 0.6ms release, 30 degrees
         };
         Self {
             style,
@@ -77,8 +77,7 @@ impl PluckExciter {
             };
 
             // 3. Release impedance attenuation |S(omega)| ~ 1 / sqrt(1 + (omega * tau_rel)^2)
-            // with wave speed c approx 2 * L * f0
-            let omega_approx = m_f * PI * 330.0; // nominal frequency reference
+            let omega_approx = m_f * 2.0 * PI * 220.0;
             let release_filter = 1.0 / (1.0 + (omega_approx * self.release_time).powi(2)).sqrt();
 
             let q_filtered = q_ideal * sinc_term * release_filter;
