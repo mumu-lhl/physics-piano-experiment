@@ -47,16 +47,17 @@ fn test_pluck_dynamics_and_window_filtering() {
 
 #[test]
 fn test_fretboard_routing_and_mpe() {
-    let router = FretboardRouter::new();
+    let mut router = FretboardRouter::new();
     let strings_held = [false; 6];
 
     // Note 40 (E2) should map to String 6, fret 0
-    let loc_e2 = router.allocate_note(40, &strings_held).expect("Should allocate E2");
+    let dummy_frets = [None; 6];
+    let loc_e2 = router.allocate_note(40, &strings_held, &dummy_frets).expect("Should allocate E2");
     assert_eq!(loc_e2.string_index, 6);
     assert_eq!(loc_e2.fret, 0);
 
     // Note 60 (C4) can be played on String 2 (fret 1)
-    let loc_c4 = router.allocate_note(60, &strings_held).expect("Should allocate C4");
+    let loc_c4 = router.allocate_note(60, &strings_held, &dummy_frets).expect("Should allocate C4");
     assert_eq!(loc_c4.string_index, 2);
     assert_eq!(loc_c4.fret, 1);
 
@@ -80,8 +81,8 @@ fn test_magnetic_pickup_single_vs_humbucker() {
     string.step();
     string.step();
 
-    let pu_single = MagneticPickup::new(PickupType::SingleCoil, PickupPosition::Bridge);
-    let pu_humbucker = MagneticPickup::new(PickupType::Humbucker, PickupPosition::Bridge);
+    let mut pu_single = MagneticPickup::new(PickupType::SingleCoil, PickupPosition::Bridge, 44100.0);
+    let mut pu_humbucker = MagneticPickup::new(PickupType::Humbucker, PickupPosition::Bridge, 44100.0);
 
     let sig_single = pu_single.sample_string(&string);
     let sig_hum = pu_humbucker.sample_string(&string);
@@ -145,4 +146,71 @@ fn test_guitar_engine_rendering_stability() {
             assert!(!s.is_nan() && !s.is_infinite(), "Acoustic engine output must be finite");
         }
     }
+}
+
+#[test]
+fn test_smart_strummer_chord_stagger() {
+    use physics_guitar::core::strummer::{SmartStrummer, StrumDirection};
+
+    let mut strummer = SmartStrummer::new(44100.0);
+    strummer.strum_speed_ms = 20.0; // 20ms total stroke
+    strummer.direction = StrumDirection::Down;
+
+    // Chord: strings 5 (low E), 4 (A), 3 (D)
+    let chord = [(5, 0, 0.8), (4, 2, 0.8), (3, 2, 0.8)];
+    strummer.trigger_chord(&chord);
+
+    assert_eq!(strummer.pending_plucks.len(), 3);
+    // Down stroke: string 5 has 0 delay, string 4 intermediate, string 3 largest delay
+    assert_eq!(strummer.pending_plucks[0].string_index, 5);
+    assert_eq!(strummer.pending_plucks[0].delay_samples, 0);
+
+    assert_eq!(strummer.pending_plucks[1].string_index, 4);
+    assert!(strummer.pending_plucks[1].delay_samples > 0);
+
+    assert_eq!(strummer.pending_plucks[2].string_index, 3);
+    assert!(strummer.pending_plucks[2].delay_samples > strummer.pending_plucks[1].delay_samples);
+}
+
+#[test]
+fn test_tube_amp_and_cabinet_saturation() {
+    use physics_guitar::core::amp_cab::GuitarAmpCab;
+
+    let mut amp = GuitarAmpCab::new(44100.0);
+    amp.drive = 0.8; // High drive
+    amp.is_enabled = true;
+    amp.cab_enabled = true;
+
+    // Pass high amplitude sine wave
+    let mut out_max = 0.0f64;
+    for n in 0..1000 {
+        let input = 2.5 * (2.0 * std::f64::consts::PI * 440.0 * n as f64 / 44100.0).sin();
+        let out = amp.process(input);
+        assert!(!out.is_nan() && !out.is_infinite());
+        out_max = out_max.max(out.abs());
+    }
+
+    // Output must be saturated and bounded
+    assert!(out_max > 0.0 && out_max < 3.0);
+}
+
+#[test]
+fn test_christensen_3dof_acoustic_body() {
+    use physics_guitar::core::body::AcousticGuitarBody;
+
+    let mut body = AcousticGuitarBody::new(44100.0);
+    // Pulse input
+    let out_impulse = body.process(10.0);
+    assert!(!out_impulse.is_nan() && out_impulse.abs() > 0.0);
+
+    // Ringing decay
+    let mut ring_samples = 0;
+    for _ in 0..2000 {
+        let out = body.process(0.0);
+        assert!(!out.is_nan());
+        if out.abs() > 1e-4 {
+            ring_samples += 1;
+        }
+    }
+    assert!(ring_samples > 100, "Acoustic body must sustain resonant ring");
 }

@@ -176,6 +176,69 @@ impl I18n {
         }
     }
 
+    pub fn pickup_bn(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "B+N",
+            Language::SimplifiedChinese => "桥+颈",
+        }
+    }
+
+    pub fn pickup_bm(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "B+M",
+            Language::SimplifiedChinese => "桥+中",
+        }
+    }
+
+    pub fn tone_knob(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Passive Tone:",
+            Language::SimplifiedChinese => "被动音色旋钮:",
+        }
+    }
+
+    pub fn rack_amp(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "AMP & CABINET",
+            Language::SimplifiedChinese => "电子管音箱与箱体",
+        }
+    }
+
+    pub fn amp_drive(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "12AX7 Tube Drive:",
+            Language::SimplifiedChinese => "12AX7 前级增益:",
+        }
+    }
+
+    pub fn cab_enabled(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "12\" Celestion Cab",
+            Language::SimplifiedChinese => "12寸箱体模拟",
+        }
+    }
+
+    pub fn rack_strum(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "STRUM & ACTION",
+            Language::SimplifiedChinese => "智能扫弦与手感",
+        }
+    }
+
+    pub fn strum_speed(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Strum Speed:",
+            Language::SimplifiedChinese => "扫弦时差 (毫秒):",
+        }
+    }
+
+    pub fn fret_buzz(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Fret Clatter / Buzz:",
+            Language::SimplifiedChinese => "品丝碰撞打品度:",
+        }
+    }
+
     pub fn fretboard_hint(lang: Language) -> &'static str {
         match lang {
             Language::English => "Interactive 6-String Fretboard (Click or Drag frets to play):",

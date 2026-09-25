@@ -55,6 +55,8 @@ pub struct GuitarString {
     pub pitch_bend_semitones: f64,
     /// Whether natural harmonic node is active (0 = none, 2 = 12th fret octave, 3 = 7th fret, 4 = 5th fret)
     pub harmonic_node: u8,
+    /// Fret buzz sensitivity [0.0 = clean/disabled, 1.0 = heavy metallic buzz on hard plucks]
+    pub fret_buzz_sensitivity: f64,
     /// Key pressed status (true while note is held, false on release)
     pub is_held: bool,
 }
@@ -84,6 +86,7 @@ impl GuitarString {
             palm_mute_depth: 0.0,
             pitch_bend_semitones: 0.0,
             harmonic_node: 0,
+            fret_buzz_sensitivity: 0.35,
             is_held: false,
         };
         s.recalculate_modal_operators();
@@ -150,12 +153,12 @@ impl GuitarString {
                 sigma_m += self.palm_mute_depth * 80.0 * (1.0 + 0.15 * m_f);
             }
 
-            // Natural harmonic selective damping
+            // Natural harmonic selective damping (docx Chapter 3)
             if self.harmonic_node > 0 {
-                // If m is not a multiple of harmonic_node, suppress it heavily
-                if m % (self.harmonic_node as usize) != 0 {
-                    sigma_m += 120.0;
-                }
+                let k = self.harmonic_node as f64;
+                // Delta alpha_m = R / (rho * A * L) * sin^2(m_f * pi / k)
+                let suppression = (m_f * PI / k).sin().powi(2);
+                sigma_m += 180.0 * suppression;
             }
 
             // Discrete state-space operators via matrix exponential for mode m
@@ -264,6 +267,30 @@ impl GuitarString {
 
             // Accumulate square wave numbers for geometric tension modulation
             modal_sq_sum += wave_num.powi(2) * (st.q.powi(2) + sp.q.powi(2));
+        }
+
+        // Signorini unilateral fret collision / Fret Buzz (docx Chapter 2)
+        if self.fret_buzz_sensitivity > 0.0 {
+            let x_buzz = 0.03 * self.effective_length;
+            let mut u_buzz = 0.0;
+            for m in 0..self.num_modes.min(12) {
+                let m_f = (m + 1) as f64;
+                u_buzz += self.state_t[m].q * (m_f * PI * x_buzz / self.effective_length).sin();
+            }
+
+            let buzz_threshold = 0.0006 * (1.1 - self.fret_buzz_sensitivity * 0.5);
+            if u_buzz.abs() > buzz_threshold {
+                let excess = u_buzz.abs() - buzz_threshold;
+                let restitution_damping = 1.0 - (excess * 200.0).clamp(0.0, 0.20);
+                for m in 0..self.num_modes {
+                    if m < 4 {
+                        self.state_t[m].v *= restitution_damping;
+                    } else if m < 14 {
+                        let sign = if m % 2 == 0 { 1.0 } else { -1.0 };
+                        self.state_t[m].v += (excess * 12.0) * sign;
+                    }
+                }
+            }
         }
 
         // Active release damping when note is released (~150ms finger mute)

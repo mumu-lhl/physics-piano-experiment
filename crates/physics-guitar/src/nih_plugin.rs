@@ -14,12 +14,12 @@ use parking_lot::Mutex;
 use crate::engine::{GuitarEngine, GuitarInstrumentMode};
 use crate::params::GuitarStringSetType;
 use crate::core::pluck::PluckStyle;
-use crate::core::pickup::{PickupType, PickupPosition};
+use crate::core::pickup::{PickupType, PickupSelector};
 use crate::gui::{GuitarFretboardWidget, I18n, Language, setup_cjk_fonts};
 
 #[derive(Params)]
 pub struct PhysicsGuitarParams {
-    #[persist = "editor-state-v5"]
+    #[persist = "editor-state-v6"]
     pub editor_state: Arc<EguiState>,
 
     /// Instrument Mode: 0 = Electric, 1 = Acoustic
@@ -30,13 +30,17 @@ pub struct PhysicsGuitarParams {
     #[id = "pluck_style"]
     pub pluck_style: IntParam,
 
-    /// Electric Guitar Pickup Position: 0 = Bridge, 1 = Middle, 2 = Neck
+    /// Electric Guitar Pickup Position: 0 = Bridge, 1 = Middle, 2 = Neck, 3 = Bridge+Neck, 4 = Bridge+Middle
     #[id = "pickup_pos"]
     pub pickup_pos: IntParam,
 
     /// Electric Guitar Pickup Type: 0 = Single-Coil, 1 = Humbucker
     #[id = "pickup_type"]
     pub pickup_type: IntParam,
+
+    /// Passive RLC Tone knob [0.0 ~ 1.0] (0% = Dark Jazz, 100% = Open chime)
+    #[id = "tone"]
+    pub tone: FloatParam,
 
     /// Palm Mute Depth [0.0 ~ 1.0] (0% = Open ring, 100% = Tight chug)
     #[id = "palmmute"]
@@ -46,6 +50,22 @@ pub struct PhysicsGuitarParams {
     #[id = "pluckpos"]
     pub pluck_pos: FloatParam,
 
+    /// 12AX7 Tube Preamp Drive [0.0 ~ 1.0] (Clean to saturated overdrive)
+    #[id = "amp_drive"]
+    pub amp_drive: FloatParam,
+
+    /// 12" Guitar Cabinet Simulation Filter
+    #[id = "cab_enabled"]
+    pub cab_enabled: BoolParam,
+
+    /// Smart Strum Speed [0.0 ms ~ 50.0 ms] (0 = instant solo, 18ms = acoustic strum)
+    #[id = "strum_speed"]
+    pub strum_speed: FloatParam,
+
+    /// Fret Buzz / String Clatter Sensitivity [0.0 ~ 1.0]
+    #[id = "fret_buzz"]
+    pub fret_buzz: FloatParam,
+
     /// Master Output Gain [-30 dB ~ +6 dB]
     #[id = "gain"]
     pub master_gain: FloatParam,
@@ -54,12 +74,21 @@ pub struct PhysicsGuitarParams {
 impl Default for PhysicsGuitarParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(1120, 540),
+            editor_state: EguiState::from_size(1180, 560),
 
             mode: IntParam::new("Instrument Mode", 0, IntRange::Linear { min: 0, max: 1 }),
             pluck_style: IntParam::new("Pluck Style", 0, IntRange::Linear { min: 0, max: 1 }),
-            pickup_pos: IntParam::new("Pickup Position", 0, IntRange::Linear { min: 0, max: 2 }),
+            pickup_pos: IntParam::new("Pickup Position", 0, IntRange::Linear { min: 0, max: 4 }),
             pickup_type: IntParam::new("Pickup Type", 1, IntRange::Linear { min: 0, max: 1 }), // default Humbucker
+
+            tone: FloatParam::new(
+                "Passive Tone",
+                1.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_unit(" %")
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
 
             palm_mute: FloatParam::new(
                 "Palm Mute",
@@ -77,6 +106,34 @@ impl Default for PhysicsGuitarParams {
             )
             .with_unit(" L")
             .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            amp_drive: FloatParam::new(
+                "12AX7 Drive",
+                0.25,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_unit(" %")
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
+
+            cab_enabled: BoolParam::new("12\" Cabinet", true),
+
+            strum_speed: FloatParam::new(
+                "Strum Speed",
+                18.0,
+                FloatRange::Linear { min: 0.0, max: 50.0 },
+            )
+            .with_unit(" ms")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            fret_buzz: FloatParam::new(
+                "Fret Clatter",
+                0.35,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_unit(" %")
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
 
             master_gain: FloatParam::new(
                 "Master Gain",
@@ -239,20 +296,27 @@ impl Plugin for PhysicsGuitar {
         });
 
         let pos_val = self.params.pickup_pos.value();
-        self.engine.pickup.position = match pos_val {
-            1 => PickupPosition::Middle,
-            2 => PickupPosition::Neck,
-            _ => PickupPosition::Bridge,
+        self.engine.pickup.selector = match pos_val {
+            1 => PickupSelector::Middle,
+            2 => PickupSelector::Neck,
+            3 => PickupSelector::BridgeAndNeck,
+            4 => PickupSelector::BridgeAndMiddle,
+            _ => PickupSelector::Bridge,
         };
 
         let type_val = self.params.pickup_type.value();
-        self.engine.pickup.pickup_type = if type_val == 1 {
+        self.engine.pickup.set_pickup_type(if type_val == 1 {
             PickupType::Humbucker
         } else {
             PickupType::SingleCoil
-        };
+        });
 
+        self.engine.set_tone(self.params.tone.value() as f64);
         self.engine.set_palm_mute(self.params.palm_mute.value() as f64);
+        self.engine.set_fret_buzz(self.params.fret_buzz.value() as f64);
+        self.engine.strummer.set_strum_speed_ms(self.params.strum_speed.value() as f64);
+        self.engine.amp_cab.drive = self.params.amp_drive.value() as f64;
+        self.engine.amp_cab.cab_enabled = self.params.cab_enabled.value();
         self.engine.pluck_pos_ratio = self.params.pluck_pos.value() as f64;
         self.engine.master_volume = self.params.master_gain.value() as f64;
 
@@ -378,10 +442,11 @@ impl Plugin for PhysicsGuitar {
                     ui.group(|ui| {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
-                            let total_spacing = 3.0 * 20.0 + 20.0;
-                            let section_width = ((ui.available_width() - total_spacing) / 4.0).max(180.0);
+                            let total_spacing = 4.0 * 16.0 + 20.0;
+                            let section_width = ((ui.available_width() - total_spacing) / 5.0).max(180.0);
+                            let slider_w = (section_width - 8.0).max(60.0);
 
-                            // Section 0: Instrument Mode
+                            // Section 0: Instrument Mode & Pluck Style
                             ui.vertical(|ui| {
                                 ui.set_width(section_width);
                                 ui.label(RichText::new(I18n::rack_instrument(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
@@ -393,46 +458,8 @@ impl Plugin for PhysicsGuitar {
                                     setter.set_parameter(&params.mode, mode_idx);
                                     setter.end_set_parameter(&params.mode);
                                 }
-                            });
 
-                            ui.separator();
-
-                            // Section 1: Pickup Selector
-                            ui.vertical(|ui| {
-                                ui.set_width(section_width);
-                                ui.label(RichText::new(I18n::rack_pickup(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
-                                ui.label(RichText::new(I18n::pickup_pos(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                let mut pos_idx = params.pickup_pos.value();
-                                ui.horizontal(|ui| {
-                                    ui.radio_value(&mut pos_idx, 0, I18n::pickup_bridge(lang));
-                                    ui.radio_value(&mut pos_idx, 1, I18n::pickup_mid(lang));
-                                    ui.radio_value(&mut pos_idx, 2, I18n::pickup_neck(lang));
-                                });
-                                if pos_idx != params.pickup_pos.value() {
-                                    setter.begin_set_parameter(&params.pickup_pos);
-                                    setter.set_parameter(&params.pickup_pos, pos_idx);
-                                    setter.end_set_parameter(&params.pickup_pos);
-                                }
-
-                                ui.label(RichText::new(I18n::pickup_type(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                let mut type_idx = params.pickup_type.value();
-                                ui.horizontal(|ui| {
-                                    ui.radio_value(&mut type_idx, 0, I18n::pickup_single(lang));
-                                    ui.radio_value(&mut type_idx, 1, I18n::pickup_humbucker(lang));
-                                });
-                                if type_idx != params.pickup_type.value() {
-                                    setter.begin_set_parameter(&params.pickup_type);
-                                    setter.set_parameter(&params.pickup_type, type_idx);
-                                    setter.end_set_parameter(&params.pickup_type);
-                                }
-                            });
-
-                            ui.separator();
-
-                            // Section 2: Pluck & Tone
-                            ui.vertical(|ui| {
-                                ui.set_width(section_width);
-                                ui.label(RichText::new(I18n::rack_pluck(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
+                                ui.add_space(4.0);
                                 ui.label(RichText::new(I18n::pluck_style(lang)).color(Color32::from_rgb(160, 165, 180)));
                                 let mut style_idx = params.pluck_style.value();
                                 ui.horizontal(|ui| {
@@ -444,25 +471,89 @@ impl Plugin for PhysicsGuitar {
                                     setter.set_parameter(&params.pluck_style, style_idx);
                                     setter.end_set_parameter(&params.pluck_style);
                                 }
+                            });
+
+                            ui.separator();
+
+                            // Section 1: Pickup & Passive Tone
+                            ui.vertical(|ui| {
+                                ui.set_width(section_width);
+                                ui.label(RichText::new(I18n::rack_pickup(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
+                                ui.label(RichText::new(I18n::pickup_pos(lang)).color(Color32::from_rgb(160, 165, 180)));
+                                let mut pos_idx = params.pickup_pos.value();
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.radio_value(&mut pos_idx, 0, I18n::pickup_bridge(lang));
+                                    ui.radio_value(&mut pos_idx, 1, I18n::pickup_mid(lang));
+                                    ui.radio_value(&mut pos_idx, 2, I18n::pickup_neck(lang));
+                                    ui.radio_value(&mut pos_idx, 3, I18n::pickup_bn(lang));
+                                    ui.radio_value(&mut pos_idx, 4, I18n::pickup_bm(lang));
+                                });
+                                if pos_idx != params.pickup_pos.value() {
+                                    setter.begin_set_parameter(&params.pickup_pos);
+                                    setter.set_parameter(&params.pickup_pos, pos_idx);
+                                    setter.end_set_parameter(&params.pickup_pos);
+                                }
+
+                                let mut type_idx = params.pickup_type.value();
+                                ui.horizontal(|ui| {
+                                    ui.radio_value(&mut type_idx, 0, I18n::pickup_single(lang));
+                                    ui.radio_value(&mut type_idx, 1, I18n::pickup_humbucker(lang));
+                                });
+                                if type_idx != params.pickup_type.value() {
+                                    setter.begin_set_parameter(&params.pickup_type);
+                                    setter.set_parameter(&params.pickup_type, type_idx);
+                                    setter.end_set_parameter(&params.pickup_type);
+                                }
+
+                                ui.label(RichText::new(I18n::tone_knob(lang)).color(Color32::from_rgb(160, 165, 180)));
+                                ui.add(ParamSlider::for_param(&params.tone, setter).with_width(slider_w));
+                            });
+
+                            ui.separator();
+
+                            // Section 2: Tube Amp & Cabinet
+                            ui.vertical(|ui| {
+                                ui.set_width(section_width);
+                                ui.label(RichText::new(I18n::rack_amp(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
+                                ui.label(RichText::new(I18n::amp_drive(lang)).color(Color32::from_rgb(160, 165, 180)));
+                                ui.add(ParamSlider::for_param(&params.amp_drive, setter).with_width(slider_w));
+
+                                let mut cab_val = params.cab_enabled.value();
+                                if ui.checkbox(&mut cab_val, I18n::cab_enabled(lang)).changed() {
+                                    setter.begin_set_parameter(&params.cab_enabled);
+                                    setter.set_parameter(&params.cab_enabled, cab_val);
+                                    setter.end_set_parameter(&params.cab_enabled);
+                                }
 
                                 ui.label(RichText::new(I18n::palm_mute(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                let slider_w = (section_width - 8.0).max(60.0);
                                 ui.add(ParamSlider::for_param(&params.palm_mute, setter).with_width(slider_w));
                             });
 
                             ui.separator();
 
-                            // Section 3: Master Output
+                            // Section 3: Smart Strum & Action
+                            ui.vertical(|ui| {
+                                ui.set_width(section_width);
+                                ui.label(RichText::new(I18n::rack_strum(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
+                                ui.label(RichText::new(I18n::strum_speed(lang)).color(Color32::from_rgb(160, 165, 180)));
+                                ui.add(ParamSlider::for_param(&params.strum_speed, setter).with_width(slider_w));
+
+                                ui.label(RichText::new(I18n::fret_buzz(lang)).color(Color32::from_rgb(160, 165, 180)));
+                                ui.add(ParamSlider::for_param(&params.fret_buzz, setter).with_width(slider_w));
+                            });
+
+                            ui.separator();
+
+                            // Section 4: Master Output
                             ui.vertical(|ui| {
                                 ui.set_width(section_width);
                                 ui.label(RichText::new(I18n::rack_output(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
 
-                                let slider_w = (section_width - 8.0).max(60.0);
-                                ui.label(RichText::new(I18n::master_gain(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                ui.add(ParamSlider::for_param(&params.master_gain, setter).with_width(slider_w));
-
                                 ui.label(RichText::new(I18n::pluck_pos(lang)).color(Color32::from_rgb(160, 165, 180)));
                                 ui.add(ParamSlider::for_param(&params.pluck_pos, setter).with_width(slider_w));
+
+                                ui.label(RichText::new(I18n::master_gain(lang)).color(Color32::from_rgb(160, 165, 180)));
+                                ui.add(ParamSlider::for_param(&params.master_gain, setter).with_width(slider_w));
                             });
                         });
                     });
@@ -502,8 +593,11 @@ impl Plugin for PhysicsGuitar {
                         .with_callbacks(&mut on_pressed, &mut on_released)
                         .show(ui, fretboard_size);
 
-                    // Continuous repaint for smooth real-time animation
-                    egui_ctx.request_repaint();
+                    // Throttled repaint: request repaint only when strings vibrate or mouse interacts
+                    let is_animating = string_energies.iter().any(|&e| e > 0.001) || gui_state.held_mouse_fret.is_some();
+                    if is_animating {
+                        egui_ctx.request_repaint();
+                    }
                 });
             },
         )

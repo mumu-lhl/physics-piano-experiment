@@ -5,8 +5,10 @@ use crate::params::{generate_guitar_string_set, GuitarStringSetType};
 use crate::core::guitar_string::GuitarString;
 use crate::core::pluck::{PluckExciter, PluckStyle};
 use crate::core::fretboard::FretboardRouter;
-use crate::core::pickup::{MagneticPickup, PickupType, PickupPosition};
+use crate::core::pickup::{MagneticPickup, PickupType, PickupSelector};
 use crate::core::body::AcousticGuitarBody;
+use crate::core::amp_cab::GuitarAmpCab;
+use crate::core::strummer::{SmartStrummer, StrumPluckEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuitarInstrumentMode {
@@ -25,10 +27,15 @@ pub struct GuitarEngine {
     pub exciter: PluckExciter,
     pub router: FretboardRouter,
 
-    // Electric guitar pickup
+    // Electric guitar pickup & passive RLC tone network
     pub pickup: MagneticPickup,
+    // Tube amp and 12-inch cabinet
+    pub amp_cab: GuitarAmpCab,
     // Acoustic guitar body
     pub body: AcousticGuitarBody,
+    // Smart strummer
+    pub strummer: SmartStrummer,
+    ready_plucks: Vec<StrumPluckEvent>,
 
     // Performance parameters
     pub pluck_pos_ratio: f64,
@@ -61,8 +68,11 @@ impl GuitarEngine {
             strings,
             exciter,
             router: FretboardRouter::new(),
-            pickup: MagneticPickup::new(PickupType::SingleCoil, PickupPosition::Bridge),
+            pickup: MagneticPickup::new(PickupType::SingleCoil, PickupSelector::Bridge, sample_rate),
+            amp_cab: GuitarAmpCab::new(sample_rate),
             body: AcousticGuitarBody::new(sample_rate),
+            strummer: SmartStrummer::new(sample_rate),
+            ready_plucks: Vec::with_capacity(16),
             pluck_pos_ratio: 0.15,
             palm_mute_depth: 0.0,
             master_volume: 0.85,
@@ -78,24 +88,37 @@ impl GuitarEngine {
         }
 
         let mut strings_held = [false; 6];
+        let mut active_frets = [None; 6];
         for i in 0..6 {
             strings_held[i] = self.strings[i].is_held;
+            if self.strings[i].is_held {
+                active_frets[i] = Some(self.strings[i].current_fret);
+            }
         }
 
         // Check if MPE channel (Channel 2..=7) or standard MIDI
         let loc = if (2..=7).contains(&channel) {
             self.router.allocate_mpe_note(channel, midi_note)
         } else {
-            self.router.allocate_note(midi_note, &strings_held)
+            self.router.allocate_note(midi_note, &strings_held, &active_frets)
         };
 
         if let Some(loc) = loc {
             let str_idx = (loc.string_index - 1) as usize;
-            let string = &mut self.strings[str_idx];
-            string.set_fret(loc.fret);
-            string.palm_mute_depth = self.palm_mute_depth;
-            string.pluck(&self.exciter, self.pluck_pos_ratio, velocity);
             self.active_notes_on_string[str_idx] = Some(midi_note);
+
+            if self.strummer.strum_speed_ms <= 1.0 {
+                // Instant direct pluck
+                let string = &mut self.strings[str_idx];
+                string.set_fret(loc.fret);
+                string.palm_mute_depth = self.palm_mute_depth;
+                string.pluck(&self.exciter, self.pluck_pos_ratio, velocity);
+            } else {
+                // Route to smart strummer for chord strumming and picking delays
+                self.strings[str_idx].set_fret(loc.fret);
+                self.strings[str_idx].palm_mute_depth = self.palm_mute_depth;
+                self.strummer.trigger_note(str_idx, loc.fret, velocity);
+            }
         }
     }
 
@@ -148,6 +171,19 @@ impl GuitarEngine {
         }
     }
 
+    /// Sets passive tone circuit knob [0.0 = dark, 1.0 = bright open].
+    pub fn set_tone(&mut self, tone: f64) {
+        self.pickup.set_tone(tone);
+    }
+
+    /// Sets fret buzz sensitivity [0.0 = clean, 1.0 = heavy buzz].
+    pub fn set_fret_buzz(&mut self, sensitivity: f64) {
+        let sens = sensitivity.clamp(0.0, 1.0);
+        for s in &mut self.strings {
+            s.fret_buzz_sensitivity = sens;
+        }
+    }
+
     /// Sets pluck style (Finger vs Plectrum).
     pub fn set_pluck_style(&mut self, style: PluckStyle) {
         self.exciter = PluckExciter::new(style);
@@ -157,6 +193,17 @@ impl GuitarEngine {
     /// Returns stereo audio frame `(left, right)`.
     #[inline(always)]
     pub fn process_sample(&mut self) -> (f64, f64) {
+        // Step smart strummer and pluck any ready strings
+        self.strummer.step_into(&mut self.ready_plucks);
+        for p in self.ready_plucks.drain(..) {
+            if p.string_index < 6 {
+                let s = &mut self.strings[p.string_index];
+                s.set_fret(p.fret);
+                s.palm_mute_depth = self.palm_mute_depth;
+                s.pluck(&self.exciter, self.pluck_pos_ratio, p.velocity);
+            }
+        }
+
         let mut total_bridge_t = 0.0;
         let mut pickup_mix = 0.0;
 
@@ -166,7 +213,6 @@ impl GuitarEngine {
 
             if self.mode == GuitarInstrumentMode::Electric {
                 let emf = self.pickup.sample_string(s);
-                // Slight stereo spread across the 6 strings
                 pickup_mix += emf;
             }
             // Auto release if energy drops below threshold
@@ -178,7 +224,10 @@ impl GuitarEngine {
 
         let mono_out = match self.mode {
             GuitarInstrumentMode::Acoustic => self.body.process(total_bridge_t * 0.35),
-            GuitarInstrumentMode::Electric => pickup_mix * 2.5,
+            GuitarInstrumentMode::Electric => {
+                let pre_amp = pickup_mix * 2.5;
+                self.amp_cab.process(pre_amp)
+            }
         };
 
         let sample = mono_out * self.master_volume;
