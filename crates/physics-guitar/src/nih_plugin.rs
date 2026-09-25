@@ -19,7 +19,7 @@ use crate::gui::{GuitarFretboardWidget, I18n, Language, setup_cjk_fonts};
 
 #[derive(Params)]
 pub struct PhysicsGuitarParams {
-    #[persist = "editor-state-v6"]
+    #[persist = "editor-state-v7"]
     pub editor_state: Arc<EguiState>,
 
     /// Instrument Mode: 0 = Electric, 1 = Acoustic
@@ -74,7 +74,7 @@ pub struct PhysicsGuitarParams {
 impl Default for PhysicsGuitarParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(1180, 560),
+            editor_state: EguiState::from_size(1020, 560),
 
             mode: IntParam::new("Instrument Mode", 0, IntRange::Linear { min: 0, max: 1 }),
             pluck_style: IntParam::new("Pluck Style", 0, IntRange::Linear { min: 0, max: 1 }),
@@ -442,43 +442,27 @@ impl Plugin for PhysicsGuitar {
                     ui.group(|ui| {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
-                            let total_spacing = 4.0 * 16.0 + 20.0;
-                            let section_width = ((ui.available_width() - total_spacing) / 5.0).max(180.0);
+                            let total_spacing = 3.0 * 16.0 + 20.0;
+                            let section_width = ((ui.available_width() - total_spacing) / 4.0).clamp(160.0, 260.0);
                             let slider_w = (section_width - 8.0).max(60.0);
 
-                            // Section 0: Instrument Mode & Pluck Style
+                            // Section 0: Instrument & Pickup (乐器与拾音)
                             ui.vertical(|ui| {
                                 ui.set_width(section_width);
+                                ui.set_max_width(section_width);
+
                                 ui.label(RichText::new(I18n::rack_instrument(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
                                 let mut mode_idx = params.mode.value();
-                                ui.radio_value(&mut mode_idx, 0, I18n::mode_electric(lang));
-                                ui.radio_value(&mut mode_idx, 1, I18n::mode_acoustic(lang));
+                                ui.horizontal(|ui| {
+                                    ui.radio_value(&mut mode_idx, 0, I18n::mode_electric(lang));
+                                    ui.radio_value(&mut mode_idx, 1, I18n::mode_acoustic(lang));
+                                });
                                 if mode_idx != params.mode.value() {
                                     setter.begin_set_parameter(&params.mode);
                                     setter.set_parameter(&params.mode, mode_idx);
                                     setter.end_set_parameter(&params.mode);
                                 }
 
-                                ui.add_space(4.0);
-                                ui.label(RichText::new(I18n::pluck_style(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                let mut style_idx = params.pluck_style.value();
-                                ui.horizontal(|ui| {
-                                    ui.radio_value(&mut style_idx, 0, I18n::pluck_plectrum(lang));
-                                    ui.radio_value(&mut style_idx, 1, I18n::pluck_finger(lang));
-                                });
-                                if style_idx != params.pluck_style.value() {
-                                    setter.begin_set_parameter(&params.pluck_style);
-                                    setter.set_parameter(&params.pluck_style, style_idx);
-                                    setter.end_set_parameter(&params.pluck_style);
-                                }
-                            });
-
-                            ui.separator();
-
-                            // Section 1: Pickup & Passive Tone
-                            ui.vertical(|ui| {
-                                ui.set_width(section_width);
-                                ui.label(RichText::new(I18n::rack_pickup(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
                                 ui.label(RichText::new(I18n::pickup_pos(lang)).color(Color32::from_rgb(160, 165, 180)));
                                 let mut pos_idx = params.pickup_pos.value();
                                 ui.horizontal_wrapped(|ui| {
@@ -511,9 +495,11 @@ impl Plugin for PhysicsGuitar {
 
                             ui.separator();
 
-                            // Section 2: Tube Amp & Cabinet
+                            // Section 1: Tube Amp & Cabinet (放大器与箱体)
                             ui.vertical(|ui| {
                                 ui.set_width(section_width);
+                                ui.set_max_width(section_width);
+
                                 ui.label(RichText::new(I18n::rack_amp(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
                                 ui.label(RichText::new(I18n::amp_drive(lang)).color(Color32::from_rgb(160, 165, 180)));
                                 ui.add(ParamSlider::for_param(&params.amp_drive, setter).with_width(slider_w));
@@ -531,10 +517,24 @@ impl Plugin for PhysicsGuitar {
 
                             ui.separator();
 
-                            // Section 3: Smart Strum & Action
+                            // Section 2: Strum & Technique (弹奏与扫弦)
                             ui.vertical(|ui| {
                                 ui.set_width(section_width);
+                                ui.set_max_width(section_width);
+
                                 ui.label(RichText::new(I18n::rack_strum(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
+                                ui.label(RichText::new(I18n::pluck_style(lang)).color(Color32::from_rgb(160, 165, 180)));
+                                let mut style_idx = params.pluck_style.value();
+                                ui.horizontal(|ui| {
+                                    ui.radio_value(&mut style_idx, 0, I18n::pluck_plectrum(lang));
+                                    ui.radio_value(&mut style_idx, 1, I18n::pluck_finger(lang));
+                                });
+                                if style_idx != params.pluck_style.value() {
+                                    setter.begin_set_parameter(&params.pluck_style);
+                                    setter.set_parameter(&params.pluck_style, style_idx);
+                                    setter.end_set_parameter(&params.pluck_style);
+                                }
+
                                 ui.label(RichText::new(I18n::strum_speed(lang)).color(Color32::from_rgb(160, 165, 180)));
                                 ui.add(ParamSlider::for_param(&params.strum_speed, setter).with_width(slider_w));
 
@@ -544,9 +544,11 @@ impl Plugin for PhysicsGuitar {
 
                             ui.separator();
 
-                            // Section 4: Master Output
+                            // Section 3: Master Output (总输出)
                             ui.vertical(|ui| {
                                 ui.set_width(section_width);
+                                ui.set_max_width(section_width);
+
                                 ui.label(RichText::new(I18n::rack_output(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
 
                                 ui.label(RichText::new(I18n::pluck_pos(lang)).color(Color32::from_rgb(160, 165, 180)));

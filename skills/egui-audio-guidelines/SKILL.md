@@ -48,24 +48,29 @@ ui.vertical(|ui| {
 ui.add(egui::Slider::new(&mut gain_db, -30.0..=6.0).text("Master Gain (dB)"));
 ```
 
-### Pitfall 2: `ui.columns` Overlap vs Sequential Horizontal Rack
+### Pitfall 2: `ui.columns` Overlap vs Sequential Horizontal Rack & Column Over-budgeting
 **The Problem:**
-In `egui`, `ui.columns(n, |cols| { ... })` allocates static coordinates for each column upfront ($x_i = x_0 + i \cdot (w + s)$). If any column's content expands (e.g., child groups, radio groups, sliders), or if `ui.set_width(...)` is called inside a column's `ui.group(...)`, egui paints that column's frame rectangle into adjacent columns, causing visual overlap (e.g., Column 2 overlapping Column 3).
+1. In `egui`, `ui.columns(n, |cols| { ... })` allocates static coordinates for each column upfront ($x_i = x_0 + i \cdot (w + s)$). If any column's content expands, egui paints that column's frame into adjacent columns, causing severe visual overlap.
+2. Even in a sequential `ui.horizontal` rack, calling `ui.set_width(w)` only sets `min_rect.max.x`. If a child widget (e.g. a long label, radio group, or checkbox) has an intrinsic minimum width $> w$, the column expands to the right!
+3. If too many columns are placed side-by-side (e.g. 5 columns each claiming $\ge 180\text{px} + \text{spacing} = 984\text{px}$), any window narrower than 1000px will push the rightmost section (e.g. Master Output) **completely outside the window boundary**, causing silent clipping.
 
-**Standard Solution: Unified Chassis with Sequential Horizontal Sections**
-Wrap the entire control rack in a single outer `ui.group`, and layout sections sequentially using `ui.horizontal` and `ui.separator()`:
+**Standard Solution: Unified Chassis with 4 Responsive Sections & Explicit `set_max_width`**
+Wrap the entire control rack in a single outer `ui.group`, limit horizontal sections to $\le 4$ columns per row, and strictly bound both minimum and maximum section widths:
 
 ```rust
-// ✅ CORRECT: Sequential placement guarantees ZERO possibility of overlap
+// ✅ CORRECT: Sequential placement + set_max_width guarantees ZERO clipping and ZERO overlap
 ui.group(|ui| {
     ui.set_width(ui.available_width());
     ui.horizontal(|ui| {
-        let total_spacing = 3.0 * 20.0 + 20.0;
-        let section_width = ((ui.available_width() - total_spacing) / 4.0).max(180.0);
+        let total_spacing = 3.0 * 16.0 + 20.0;
+        // Clamp dynamically to ensure the total width never overflows available space
+        let section_width = ((ui.available_width() - total_spacing) / 4.0).clamp(160.0, 260.0);
+        let slider_w = (section_width - 8.0).max(60.0);
 
         // Section 0
         ui.vertical(|ui| {
             ui.set_width(section_width);
+            ui.set_max_width(section_width); // Prevents child widgets from pushing column wider!
             // ...
         });
 
@@ -74,6 +79,7 @@ ui.group(|ui| {
         // Section 1
         ui.vertical(|ui| {
             ui.set_width(section_width);
+            ui.set_max_width(section_width);
             // ...
         });
 
@@ -82,15 +88,17 @@ ui.group(|ui| {
         // Section 2
         ui.vertical(|ui| {
             ui.set_width(section_width);
+            ui.set_max_width(section_width);
             // ...
         });
 
         ui.separator();
 
-        // Section 3
+        // Section 3 (Rightmost section - perfectly fits within window)
         ui.vertical(|ui| {
             ui.set_width(section_width);
-            // ...
+            ui.set_max_width(section_width);
+            ui.add(ParamSlider::for_param(&params.master_gain, setter).with_width(slider_w));
         });
     });
 });
