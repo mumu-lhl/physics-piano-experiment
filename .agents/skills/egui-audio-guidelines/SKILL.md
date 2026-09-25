@@ -40,7 +40,55 @@ ui.vertical(|ui| {
 ui.add(egui::Slider::new(&mut gain_db, -30.0..=6.0).text("Master Gain (dB)"));
 ```
 
-### Pitfall 2: NIH-Plug `ParamSlider` vs `egui::Slider`
+### Pitfall 2: `ui.columns` Overlap vs Sequential Horizontal Rack
+**The Problem:**
+In `egui`, `ui.columns(n, |cols| { ... })` allocates static coordinates for each column upfront ($x_i = x_0 + i \cdot (w + s)$). If any column's content expands (e.g., child groups, radio groups, sliders), or if `ui.set_width(...)` is called inside a column's `ui.group(...)`, egui paints that column's frame rectangle into adjacent columns, causing visual overlap (e.g., Column 2 overlapping Column 3).
+
+**Standard Solution: Unified Chassis with Sequential Horizontal Sections**
+Wrap the entire control rack in a single outer `ui.group`, and layout sections sequentially using `ui.horizontal` and `ui.separator()`:
+
+```rust
+// ✅ CORRECT: Sequential placement guarantees ZERO possibility of overlap
+ui.group(|ui| {
+    ui.set_width(ui.available_width());
+    ui.horizontal(|ui| {
+        let total_spacing = 3.0 * 20.0 + 20.0;
+        let section_width = ((ui.available_width() - total_spacing) / 4.0).max(180.0);
+
+        // Section 0
+        ui.vertical(|ui| {
+            ui.set_width(section_width);
+            // ...
+        });
+
+        ui.separator();
+
+        // Section 1
+        ui.vertical(|ui| {
+            ui.set_width(section_width);
+            // ...
+        });
+
+        ui.separator();
+
+        // Section 2
+        ui.vertical(|ui| {
+            ui.set_width(section_width);
+            // ...
+        });
+
+        ui.separator();
+
+        // Section 3
+        ui.vertical(|ui| {
+            ui.set_width(section_width);
+            // ...
+        });
+    });
+});
+```
+
+### Pitfall 3: NIH-Plug `ParamSlider` vs `egui::Slider`
 For audio plugin parameters connected to `nih_plug::prelude::*Param`:
 - **Prefer `nih_plug_egui::widgets::ParamSlider`**:
   - Automatically manages DAW parameter gestures (`setter.begin_set_parameter`, `setter.set_parameter`, `setter.end_set_parameter`).
@@ -48,15 +96,21 @@ For audio plugin parameters connected to `nih_plug::prelude::*Param`:
   - Supports double-click / right-click for direct numerical typing.
   - Supports `.with_width(w)` to guarantee zero overflow.
 
-### Pitfall 3: Stale Persisted Window Geometry
+### Pitfall 4: Stale Persisted Window Geometry
 When using `#[persist = "editor-state-vX"]` with `EguiState`:
 - DAWs and standalone wrappers cache the window width and height between sessions.
 - If you refactor a 3-column layout into a 4-column layout, existing host caches will open the plugin at the old smaller width, clipping the new UI!
 - **Rule:** Whenever you alter the default window width, minimum size, or rack layout, **bump the persistence key version**:
   ```rust
-  #[persist = "editor-state-v4"] // Incremented from v3
+  #[persist = "editor-state-v5"] // Incremented
   pub editor_state: Arc<EguiState>,
   ```
+
+### Pitfall 5: CJK Font Loading for Internationalization (i18n)
+When rendering non-Latin glyphs (Simplified Chinese, Japanese, Korean):
+- By default, egui's built-in fonts only include Latin characters. Any Chinese characters will render as tofu boxes (`□□□`).
+- **Solution:** In the `create_egui_editor` setup closure, scan system CJK font paths (`NotoSansCJK`, `DroidSansFallbackFull`, `wqy-microhei`, `LXGWWenKai`, `msyh.ttc`, `PingFang.ttc`) and insert the font bytes into `FontDefinitions::default().font_data` as a fallback for both `FontFamily::Proportional` and `FontFamily::Monospace`.
+- Provide a `Language` enum and language toggle button in the header banner.
 
 ---
 

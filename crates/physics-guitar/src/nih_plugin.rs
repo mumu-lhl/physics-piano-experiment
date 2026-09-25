@@ -15,11 +15,11 @@ use crate::engine::{GuitarEngine, GuitarInstrumentMode};
 use crate::params::GuitarStringSetType;
 use crate::core::pluck::PluckStyle;
 use crate::core::pickup::{PickupType, PickupPosition};
-use crate::gui::GuitarFretboardWidget;
+use crate::gui::{GuitarFretboardWidget, I18n, Language, setup_cjk_fonts};
 
 #[derive(Params)]
 pub struct PhysicsGuitarParams {
-    #[persist = "editor-state-v4"]
+    #[persist = "editor-state-v5"]
     pub editor_state: Arc<EguiState>,
 
     /// Instrument Mode: 0 = Electric, 1 = Acoustic
@@ -110,6 +110,7 @@ pub struct PhysicsGuitar {
     pub string_energies_shared: Arc<[AtomicU32; 6]>,
     // Thread-safe event queue from GUI clicks/releases into audio engine
     pub gui_event_queue: Arc<Mutex<Vec<GuiGuitarEvent>>>,
+    pub language: Arc<AtomicU8>,
 }
 
 impl Default for PhysicsGuitar {
@@ -120,6 +121,9 @@ impl Default for PhysicsGuitar {
             GuitarStringSetType::Electric010,
             GuitarInstrumentMode::Electric,
         );
+
+        let default_lang = Language::from_system_locale();
+        let lang_code = if default_lang == Language::SimplifiedChinese { 1 } else { 0 };
 
         let active_frets_shared = Arc::new([
             AtomicU8::new(255),
@@ -146,6 +150,7 @@ impl Default for PhysicsGuitar {
             active_frets_shared,
             string_energies_shared,
             gui_event_queue: Arc::new(Mutex::new(Vec::with_capacity(16))),
+            language: Arc::new(AtomicU8::new(lang_code)),
         }
     }
 }
@@ -303,113 +308,162 @@ impl Plugin for PhysicsGuitar {
         let active_frets_shared = self.active_frets_shared.clone();
         let string_energies_shared = self.string_energies_shared.clone();
         let gui_event_queue = self.gui_event_queue.clone();
+        let language_arc = self.language.clone();
 
         struct GuiGuitarState {
             held_mouse_fret: Option<(u8, u8)>,
+            language: Language,
         }
+
+        let initial_lang = if language_arc.load(Ordering::Relaxed) == 1 {
+            Language::SimplifiedChinese
+        } else {
+            Language::English
+        };
 
         create_egui_editor(
             self.params.editor_state.clone(),
             GuiGuitarState {
                 held_mouse_fret: None,
+                language: initial_lang,
             },
-            |_, _| {},
+            |egui_ctx, _gui_state| {
+                setup_cjk_fonts(egui_ctx);
+            },
             move |egui_ctx, setter, gui_state| {
+                let lang = gui_state.language;
                 egui::CentralPanel::default().show(egui_ctx, |ui| {
                     ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
 
-                    // Top Banner Header
+                    // Top Banner Header with Title and Language Toggle
                     ui.horizontal(|ui| {
                         ui.heading(
-                            RichText::new("PHYSICS GUITAR")
+                            RichText::new(I18n::title(lang))
                                 .font(FontId::proportional(22.0))
                                 .color(Color32::from_rgb(255, 195, 80))
                                 .strong(),
                         );
                         ui.label(
-                            RichText::new("FIRST-PRINCIPLES PHYSICAL MODELING VIRTUAL INSTRUMENT")
+                            RichText::new(I18n::subtitle(lang))
                                 .font(FontId::proportional(12.0))
                                 .color(Color32::from_rgb(170, 175, 190)),
                         );
+
+                        // Language Switcher Toggle Button (persists choice)
+                        let (btn_text, next_lang) = match lang {
+                            Language::English => ("🌐 中文", Language::SimplifiedChinese),
+                            Language::SimplifiedChinese => ("🌐 English", Language::English),
+                        };
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui
+                                .button(
+                                    RichText::new(btn_text)
+                                        .font(FontId::proportional(12.0))
+                                        .color(Color32::from_rgb(210, 220, 240)),
+                                )
+                                .clicked()
+                            {
+                                gui_state.language = next_lang;
+                                language_arc.store(
+                                    if next_lang == Language::SimplifiedChinese { 1 } else { 0 },
+                                    Ordering::Relaxed,
+                                );
+                            }
+                        });
                     });
 
                     ui.separator();
 
-                    // Mode & Performance Controls Rack (4 balanced responsive columns)
-                    ui.columns(4, |cols| {
-                        // Col 0: Instrument Mode
-                        cols[0].group(|ui| {
-                            ui.set_width(ui.available_width());
-                            ui.label(RichText::new("Instrument").strong());
-                            let mut mode_idx = params.mode.value();
-                            ui.radio_value(&mut mode_idx, 0, "Electric Guitar");
-                            ui.radio_value(&mut mode_idx, 1, "Acoustic Guitar");
-                            if mode_idx != params.mode.value() {
-                                setter.begin_set_parameter(&params.mode);
-                                setter.set_parameter(&params.mode, mode_idx);
-                                setter.end_set_parameter(&params.mode);
-                            }
-                        });
+                    // Mode & Performance Controls Rack (Sequential horizontal layout with zero overlap)
+                    ui.group(|ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            let total_spacing = 3.0 * 20.0 + 20.0;
+                            let section_width = ((ui.available_width() - total_spacing) / 4.0).max(180.0);
 
-                        // Col 1: Pickup Selector
-                        cols[1].group(|ui| {
-                            ui.set_width(ui.available_width());
-                            ui.label(RichText::new("Pickup Selector").strong());
-                            let mut pos_idx = params.pickup_pos.value();
-                            ui.horizontal(|ui| {
-                                ui.radio_value(&mut pos_idx, 0, "Bridge");
-                                ui.radio_value(&mut pos_idx, 1, "Mid");
-                                ui.radio_value(&mut pos_idx, 2, "Neck");
+                            // Section 0: Instrument Mode
+                            ui.vertical(|ui| {
+                                ui.set_width(section_width);
+                                ui.label(RichText::new(I18n::rack_instrument(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
+                                let mut mode_idx = params.mode.value();
+                                ui.radio_value(&mut mode_idx, 0, I18n::mode_electric(lang));
+                                ui.radio_value(&mut mode_idx, 1, I18n::mode_acoustic(lang));
+                                if mode_idx != params.mode.value() {
+                                    setter.begin_set_parameter(&params.mode);
+                                    setter.set_parameter(&params.mode, mode_idx);
+                                    setter.end_set_parameter(&params.mode);
+                                }
                             });
-                            if pos_idx != params.pickup_pos.value() {
-                                setter.begin_set_parameter(&params.pickup_pos);
-                                setter.set_parameter(&params.pickup_pos, pos_idx);
-                                setter.end_set_parameter(&params.pickup_pos);
-                            }
 
-                            let mut type_idx = params.pickup_type.value();
-                            ui.horizontal(|ui| {
-                                ui.radio_value(&mut type_idx, 0, "Single");
-                                ui.radio_value(&mut type_idx, 1, "Humbucker");
+                            ui.separator();
+
+                            // Section 1: Pickup Selector
+                            ui.vertical(|ui| {
+                                ui.set_width(section_width);
+                                ui.label(RichText::new(I18n::rack_pickup(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
+                                ui.label(RichText::new(I18n::pickup_pos(lang)).color(Color32::from_rgb(160, 165, 180)));
+                                let mut pos_idx = params.pickup_pos.value();
+                                ui.horizontal(|ui| {
+                                    ui.radio_value(&mut pos_idx, 0, I18n::pickup_bridge(lang));
+                                    ui.radio_value(&mut pos_idx, 1, I18n::pickup_mid(lang));
+                                    ui.radio_value(&mut pos_idx, 2, I18n::pickup_neck(lang));
+                                });
+                                if pos_idx != params.pickup_pos.value() {
+                                    setter.begin_set_parameter(&params.pickup_pos);
+                                    setter.set_parameter(&params.pickup_pos, pos_idx);
+                                    setter.end_set_parameter(&params.pickup_pos);
+                                }
+
+                                ui.label(RichText::new(I18n::pickup_type(lang)).color(Color32::from_rgb(160, 165, 180)));
+                                let mut type_idx = params.pickup_type.value();
+                                ui.horizontal(|ui| {
+                                    ui.radio_value(&mut type_idx, 0, I18n::pickup_single(lang));
+                                    ui.radio_value(&mut type_idx, 1, I18n::pickup_humbucker(lang));
+                                });
+                                if type_idx != params.pickup_type.value() {
+                                    setter.begin_set_parameter(&params.pickup_type);
+                                    setter.set_parameter(&params.pickup_type, type_idx);
+                                    setter.end_set_parameter(&params.pickup_type);
+                                }
                             });
-                            if type_idx != params.pickup_type.value() {
-                                setter.begin_set_parameter(&params.pickup_type);
-                                setter.set_parameter(&params.pickup_type, type_idx);
-                                setter.end_set_parameter(&params.pickup_type);
-                            }
-                        });
 
-                        // Col 2: Pluck & Tone
-                        cols[2].group(|ui| {
-                            ui.set_width(ui.available_width());
-                            ui.label(RichText::new("Pluck & Tone").strong());
-                            let mut style_idx = params.pluck_style.value();
-                            ui.horizontal(|ui| {
-                                ui.radio_value(&mut style_idx, 0, "Plectrum");
-                                ui.radio_value(&mut style_idx, 1, "Finger");
+                            ui.separator();
+
+                            // Section 2: Pluck & Tone
+                            ui.vertical(|ui| {
+                                ui.set_width(section_width);
+                                ui.label(RichText::new(I18n::rack_pluck(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
+                                ui.label(RichText::new(I18n::pluck_style(lang)).color(Color32::from_rgb(160, 165, 180)));
+                                let mut style_idx = params.pluck_style.value();
+                                ui.horizontal(|ui| {
+                                    ui.radio_value(&mut style_idx, 0, I18n::pluck_plectrum(lang));
+                                    ui.radio_value(&mut style_idx, 1, I18n::pluck_finger(lang));
+                                });
+                                if style_idx != params.pluck_style.value() {
+                                    setter.begin_set_parameter(&params.pluck_style);
+                                    setter.set_parameter(&params.pluck_style, style_idx);
+                                    setter.end_set_parameter(&params.pluck_style);
+                                }
+
+                                ui.label(RichText::new(I18n::palm_mute(lang)).color(Color32::from_rgb(160, 165, 180)));
+                                let slider_w = (section_width - 8.0).max(60.0);
+                                ui.add(ParamSlider::for_param(&params.palm_mute, setter).with_width(slider_w));
                             });
-                            if style_idx != params.pluck_style.value() {
-                                setter.begin_set_parameter(&params.pluck_style);
-                                setter.set_parameter(&params.pluck_style, style_idx);
-                                setter.end_set_parameter(&params.pluck_style);
-                            }
 
-                            let slider_w = (ui.available_width() - 4.0).max(60.0);
-                            ui.label(RichText::new("Palm Mute").color(Color32::from_rgb(180, 185, 200)));
-                            ui.add(ParamSlider::for_param(&params.palm_mute, setter).with_width(slider_w));
-                        });
+                            ui.separator();
 
-                        // Col 3: Master Output
-                        cols[3].group(|ui| {
-                            ui.set_width(ui.available_width());
-                            ui.label(RichText::new("Master Output").strong());
+                            // Section 3: Master Output
+                            ui.vertical(|ui| {
+                                ui.set_width(section_width);
+                                ui.label(RichText::new(I18n::rack_output(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
 
-                            let slider_w = (ui.available_width() - 4.0).max(60.0);
-                            ui.label(RichText::new("Master Gain").color(Color32::from_rgb(180, 185, 200)));
-                            ui.add(ParamSlider::for_param(&params.master_gain, setter).with_width(slider_w));
+                                let slider_w = (section_width - 8.0).max(60.0);
+                                ui.label(RichText::new(I18n::master_gain(lang)).color(Color32::from_rgb(160, 165, 180)));
+                                ui.add(ParamSlider::for_param(&params.master_gain, setter).with_width(slider_w));
 
-                            ui.label(RichText::new("Pluck Position").color(Color32::from_rgb(180, 185, 200)));
-                            ui.add(ParamSlider::for_param(&params.pluck_pos, setter).with_width(slider_w));
+                                ui.label(RichText::new(I18n::pluck_pos(lang)).color(Color32::from_rgb(160, 165, 180)));
+                                ui.add(ParamSlider::for_param(&params.pluck_pos, setter).with_width(slider_w));
+                            });
                         });
                     });
 
@@ -427,7 +481,7 @@ impl Plugin for PhysicsGuitar {
                     }
 
                     // Interactive Guitar Fretboard Widget
-                    ui.label(RichText::new("Interactive 6-String Fretboard (Click or Drag frets to play):").color(Color32::from_rgb(180, 185, 200)));
+                    ui.label(RichText::new(I18n::fretboard_hint(lang)).color(Color32::from_rgb(180, 185, 200)));
                     let fretboard_size = Vec2::new(ui.available_width(), 200.0);
 
                     let mut on_pressed = |str_clicked: u8, fret_clicked: u8| {
