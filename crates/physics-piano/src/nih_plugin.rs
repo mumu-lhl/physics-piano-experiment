@@ -43,6 +43,34 @@ pub struct PhysicsPianoParams {
     #[id = "phantom"]
     pub phantom_gain: FloatParam,
 
+    /// Keybed thump and escapement click noise level [0.0 ~ 2.0]
+    #[id = "keynoise"]
+    pub key_noise: FloatParam,
+
+    /// Damper lift whoosh and restrike buzz noise level [0.0 ~ 2.0]
+    #[id = "dampernoise"]
+    pub damper_noise: FloatParam,
+
+    /// Pedal trapwork shock impulse noise level [0.0 ~ 2.0]
+    #[id = "pedalnoise"]
+    pub pedal_noise: FloatParam,
+
+    /// Close Microphone Gain [-60 dB ~ +6 dB]
+    #[id = "mic_close"]
+    pub mic_close: FloatParam,
+
+    /// Player Seated Binaural Microphone Gain [-60 dB ~ +6 dB]
+    #[id = "mic_player"]
+    pub mic_player: FloatParam,
+
+    /// Ambient Hall Decca Tree Microphone Gain [-60 dB ~ +6 dB]
+    #[id = "mic_ambient"]
+    pub mic_ambient: FloatParam,
+
+    /// Grand Piano Continuous Lid Opening Angle [0.0 ~ 60.0 deg]
+    #[id = "lid_angle"]
+    pub lid_angle: FloatParam,
+
     /// Master Volume Gain [-30 dB ~ +6 dB]
     #[id = "gain"]
     pub master_gain: FloatParam,
@@ -51,7 +79,7 @@ pub struct PhysicsPianoParams {
 impl Default for PhysicsPianoParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(980, 480),
+            editor_state: EguiState::from_size(1080, 560),
 
             sustain_pedal: FloatParam::new(
                 "Sustain Pedal",
@@ -95,6 +123,62 @@ impl Default for PhysicsPianoParams {
             )
             .with_unit(" x")
             .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            key_noise: FloatParam::new(
+                "Key Action",
+                1.0,
+                FloatRange::Linear { min: 0.0, max: 2.0 },
+            )
+            .with_unit(" x")
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            damper_noise: FloatParam::new(
+                "Damper Noise",
+                1.0,
+                FloatRange::Linear { min: 0.0, max: 2.0 },
+            )
+            .with_unit(" x")
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            pedal_noise: FloatParam::new(
+                "Pedal Shock",
+                1.0,
+                FloatRange::Linear { min: 0.0, max: 2.0 },
+            )
+            .with_unit(" x")
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            mic_close: FloatParam::new(
+                "Close Mic",
+                0.0,
+                FloatRange::Linear { min: -60.0, max: 6.0 },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            mic_player: FloatParam::new(
+                "Player Mic",
+                -3.0,
+                FloatRange::Linear { min: -60.0, max: 6.0 },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            mic_ambient: FloatParam::new(
+                "Ambient Mic",
+                -6.0,
+                FloatRange::Linear { min: -60.0, max: 6.0 },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            lid_angle: FloatParam::new(
+                "Lid Angle",
+                45.0,
+                FloatRange::Linear { min: 0.0, max: 60.0 },
+            )
+            .with_unit("°")
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
 
             master_gain: FloatParam::new(
                 "Master Gain",
@@ -186,6 +270,7 @@ impl Plugin for PhysicsPiano {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         self.engine = PianoEngine::new(buffer_config.sample_rate as f64, 35, true);
+        self.engine.set_radiation_mode("multi_upols");
         let max_samples = buffer_config.max_buffer_size as usize;
         self.scratch_l = vec![0.0; max_samples];
         self.scratch_r = vec![0.0; max_samples];
@@ -256,6 +341,18 @@ impl Plugin for PhysicsPiano {
         let sustain_val = self.params.sustain_pedal.value();
         self.engine.set_sustain_pedal(sustain_val > 0.01, sustain_val as f64);
         self.engine.set_una_corda(self.params.una_corda.value());
+
+        // Tier 6: Micro-mechanical noise gains
+        self.engine.set_key_noise_gain(self.params.key_noise.value() as f64);
+        self.engine.set_damper_noise_gain(self.params.damper_noise.value() as f64);
+        self.engine.set_pedal_noise_gain(self.params.pedal_noise.value() as f64);
+
+        // Tier 7: Spatial Multi-Microphone gains & Lid Baffle
+        let close_g = util::db_to_gain(self.params.mic_close.value());
+        let player_g = util::db_to_gain(self.params.mic_player.value());
+        let amb_g = util::db_to_gain(self.params.mic_ambient.value());
+        self.engine.set_mic_gains(close_g as f64, player_g as f64, amb_g as f64);
+        self.engine.set_lid_angle(self.params.lid_angle.value() as f64);
 
         // 3. Step Physical Simulation
         self.engine.process_block(
@@ -381,59 +478,83 @@ fn soft_limit(x: f32) -> f32 {
 
                         ui.separator();
 
-                        // Voicing & Physical Parameter Rack
+                        // Voicing, Mechanics & Spatial Parameter Rack
                         ui.group(|ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal_wrapped(|ui| {
+                                // 1. Pedals & Micro-Mechanics (Tier 6)
                                 ui.vertical(|ui| {
-                                    ui.label(RichText::new("PEDALS").strong().color(Color32::from_rgb(200, 205, 220)));
-                                    ui.add(
-                                        nih_plug_egui::widgets::ParamSlider::for_param(&params.sustain_pedal, setter)
-                                            .with_width(120.0),
-                                    );
-                                    let mut una = params.una_corda.value();
-                                    if ui.checkbox(&mut una, "Una Corda (Soft)").changed() {
-                                        setter.set_parameter(&params.una_corda, una);
-                                    }
+                                    ui.label(RichText::new("PEDALS & MECHANICS").strong().color(Color32::from_rgb(200, 205, 220)));
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.label("Sustain:");
+                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.sustain_pedal, setter).with_width(85.0));
+                                            let mut una = params.una_corda.value();
+                                            if ui.checkbox(&mut una, "Una Corda").changed() {
+                                                setter.set_parameter(&params.una_corda, una);
+                                            }
+                                        });
+                                        ui.vertical(|ui| {
+                                            ui.label("Key Action:");
+                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.key_noise, setter).with_width(80.0));
+                                            ui.label("Damper Noise:");
+                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.damper_noise, setter).with_width(80.0));
+                                        });
+                                        ui.vertical(|ui| {
+                                            ui.label("Pedal Shock:");
+                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.pedal_noise, setter).with_width(80.0));
+                                        });
+                                    });
                                 });
 
                                 ui.separator();
 
+                                // 2. String & Hammer Physics
                                 ui.vertical(|ui| {
                                     ui.label(RichText::new("STRING & HAMMER").strong().color(Color32::from_rgb(200, 205, 220)));
                                     ui.horizontal(|ui| {
                                         ui.vertical(|ui| {
                                             ui.label("Inharmonicity B:");
-                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.inharmonicity_scale, setter).with_width(100.0));
-                                        });
-                                        ui.vertical(|ui| {
+                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.inharmonicity_scale, setter).with_width(88.0));
                                             ui.label("Hammer Hardness:");
-                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.hammer_hardness, setter).with_width(100.0));
+                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.hammer_hardness, setter).with_width(88.0));
                                         });
-                                    });
-                                });
-
-                                ui.separator();
-
-                                ui.vertical(|ui| {
-                                    ui.label(RichText::new("ACOUSTICS").strong().color(Color32::from_rgb(200, 205, 220)));
-                                    ui.horizontal(|ui| {
                                         ui.vertical(|ui| {
                                             ui.label("Unison Detune:");
-                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.unison_detuning, setter).with_width(100.0));
-                                        });
-                                        ui.vertical(|ui| {
+                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.unison_detuning, setter).with_width(88.0));
                                             ui.label("Phantom Partials:");
-                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.phantom_gain, setter).with_width(100.0));
+                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.phantom_gain, setter).with_width(88.0));
                                         });
                                     });
                                 });
 
                                 ui.separator();
 
+                                // 3. Spatial Multi-Mic & Lid Baffle (Tier 7)
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new("SPATIAL MICS & LID").strong().color(Color32::from_rgb(200, 205, 220)));
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            ui.label("Close Mic:");
+                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.mic_close, setter).with_width(80.0));
+                                            ui.label("Player Mic:");
+                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.mic_player, setter).with_width(80.0));
+                                        });
+                                        ui.vertical(|ui| {
+                                            ui.label("Ambient Mic:");
+                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.mic_ambient, setter).with_width(80.0));
+                                            ui.label("Lid Angle:");
+                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.lid_angle, setter).with_width(80.0));
+                                        });
+                                    });
+                                });
+
+                                ui.separator();
+
+                                // 4. Master Output
                                 ui.vertical(|ui| {
                                     ui.label(RichText::new("OUTPUT").strong().color(Color32::from_rgb(200, 205, 220)));
-                                    ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.master_gain, setter).with_width(120.0));
+                                    ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.master_gain, setter).with_width(110.0));
                                 });
                             });
                         });

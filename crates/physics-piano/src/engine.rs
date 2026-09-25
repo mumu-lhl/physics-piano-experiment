@@ -1,10 +1,11 @@
-//! High-Performance Physical Piano Simulation Coordinator and 4-Stage Audio Pipeline in Rust.
-
 use std::collections::{HashMap, HashSet};
 use crate::params::{generate_grand_piano_parameters, KeyParams};
 use crate::core::voice::PianoVoice;
 use crate::core::bridge::BridgeSoundboard;
-use crate::dsp::upols::UPOLSConvolver;
+use crate::core::action::KeyActionNoise;
+use crate::core::pedal::{DamperWhoosh, PlateShock, RestrikeBuzz};
+use crate::dsp::upols::{UPOLSConvolver, MultiPerspectiveUPOLS, generate_multi_perspective_soundboard_irs};
+use crate::dsp::lid::LidBaffle;
 
 #[derive(Debug, Clone)]
 pub enum EngineEvent {
@@ -32,11 +33,20 @@ pub struct PianoEngine {
 
     pub bridge: BridgeSoundboard,
     pub upols: Option<UPOLSConvolver>,
+    pub multi_upols: Option<MultiPerspectiveUPOLS>,
+    pub lid_baffle: LidBaffle,
     pub radiation_mode: String,
 
     pub sustain_pedal: bool,
     pub pedal_depth: f64,
+    pub prev_pedal_depth: f64,
     pub una_corda: bool,
+
+    // Tier 6: Micro-Mechanical Action Noise Generators
+    pub action_noise: KeyActionNoise,
+    pub damper_whoosh: DamperWhoosh,
+    pub plate_shock: PlateShock,
+    pub restrike_buzz: RestrikeBuzz,
 
     // Peak energy monitor for -96dB note lifecycle garbage collection
     pub note_energy_peak: HashMap<u8, f64>,
@@ -61,6 +71,12 @@ impl PianoEngine {
             key_params.insert(kp.midi_note, kp);
         }
 
+        let action_noise = KeyActionNoise::new(sample_rate);
+        let damper_whoosh = DamperWhoosh::new(sample_rate);
+        let plate_shock = PlateShock::new(sample_rate);
+        let restrike_buzz = RestrikeBuzz::new(sample_rate);
+        let lid_baffle = LidBaffle::new(sample_rate);
+
         Self {
             sample_rate,
             dt,
@@ -71,10 +87,17 @@ impl PianoEngine {
             depressed_keys: HashSet::with_capacity(32),
             bridge: BridgeSoundboard::new(sample_rate),
             upols: None,
+            multi_upols: None,
+            lid_baffle,
             radiation_mode: "modal".to_string(),
             sustain_pedal: false,
-            pedal_depth: 1.0,
+            pedal_depth: 0.0,
+            prev_pedal_depth: 0.0,
             una_corda: false,
+            action_noise,
+            damper_whoosh,
+            plate_shock,
+            restrike_buzz,
             note_energy_peak: HashMap::with_capacity(88),
             f_react_t: 0.0,
             f_react_p: 0.0,
@@ -86,10 +109,38 @@ impl PianoEngine {
 
     pub fn set_radiation_mode(&mut self, mode: &str) {
         self.radiation_mode = mode.to_string();
-        if mode == "upols" && self.upols.is_none() {
+        if mode == "multi_upols" && self.multi_upols.is_none() {
+            let (close, player, ambient) = generate_multi_perspective_soundboard_irs(self.sample_rate, 0.6, 100);
+            self.multi_upols = Some(MultiPerspectiveUPOLS::new(&close, &player, &ambient, 128));
+        } else if mode == "upols" && self.upols.is_none() {
             let (ir_l, ir_r) = crate::dsp::upols::generate_orthotropic_soundboard_ir(self.sample_rate, 0.6, 100);
             self.upols = Some(UPOLSConvolver::new(&ir_l, &ir_r, 128));
         }
+    }
+
+    pub fn set_key_noise_gain(&mut self, gain: f64) {
+        self.action_noise.gain = gain;
+    }
+
+    pub fn set_damper_noise_gain(&mut self, gain: f64) {
+        self.damper_whoosh.gain = gain;
+        self.restrike_buzz.gain = gain;
+    }
+
+    pub fn set_pedal_noise_gain(&mut self, gain: f64) {
+        self.plate_shock.gain = gain;
+    }
+
+    pub fn set_mic_gains(&mut self, close: f64, player: f64, ambient: f64) {
+        if let Some(upols) = self.multi_upols.as_mut() {
+            upols.close_gain = close;
+            upols.player_gain = player;
+            upols.ambient_gain = ambient;
+        }
+    }
+
+    pub fn set_lid_angle(&mut self, angle_deg: f64) {
+        self.lid_baffle.set_angle_deg(angle_deg);
     }
 
     pub fn get_or_create_voice(&mut self, key: u8) -> &mut PianoVoice {
@@ -161,6 +212,7 @@ impl PianoEngine {
         if self.active_keys.len() >= self.max_active_voices && !self.active_keys.contains(&key) {
             self.steal_voice();
         }
+        self.action_noise.trigger_note_on(key, velocity);
         let cur_energy = {
             let v = self.get_or_create_voice(key);
             v.note_on(velocity);
@@ -173,6 +225,11 @@ impl PianoEngine {
     }
 
     pub fn note_off(&mut self, key: u8) {
+        self.action_noise.trigger_note_off(key, 0.5);
+        if let Some(v) = self.voices.get(&key) {
+            let cur_energy = v.get_energy();
+            self.restrike_buzz.trigger(key, cur_energy);
+        }
         self.depressed_keys.remove(&key);
         if let Some(v) = self.voices.get_mut(&key) {
             v.note_off(self.sustain_pedal);
@@ -186,6 +243,15 @@ impl PianoEngine {
     }
 
     pub fn set_sustain_pedal(&mut self, pedal_down: bool, depth: f64) {
+        let diff = depth - self.prev_pedal_depth;
+        if diff > 0.05 {
+            self.damper_whoosh.trigger(diff * 6.0);
+        }
+        if diff.abs() > 0.25 {
+            self.plate_shock.trigger(diff * 4.0);
+        }
+        self.prev_pedal_depth = depth;
+
         self.sustain_pedal = pedal_down;
         self.pedal_depth = depth.clamp(0.0, 1.0);
         for v in self.voices.values_mut() {
@@ -217,6 +283,7 @@ impl PianoEngine {
         }
 
         let mut event_idx = 0;
+        let use_multi_upols = self.radiation_mode == "multi_upols" && self.multi_upols.is_some();
         let use_upols = self.radiation_mode == "upols" && self.upols.is_some();
 
         for s in 0..num_samples {
@@ -272,16 +339,26 @@ impl PianoEngine {
             self.f_react_t = react_t;
             self.f_react_p = react_p;
 
-            // Stage 4: Soundboard radiation & stereo output
-            if use_upols {
-                let (l, r) = self.upols.as_mut().unwrap().process_sample(f_sb);
-                out_left[s] = l;
-                out_right[s] = r;
+            // Stage 4: Soundboard radiation, lid acoustic baffle & mechanical action noise
+            let (sb_l, sb_r) = if use_multi_upols {
+                self.multi_upols.as_mut().unwrap().process_sample(f_sb)
+            } else if use_upols {
+                self.upols.as_mut().unwrap().process_sample(f_sb)
             } else {
-                let (l, r) = self.bridge.step_soundboard(f_sb, 0.5);
-                out_left[s] = l;
-                out_right[s] = r;
-            }
+                self.bridge.step_soundboard(f_sb, 0.5)
+            };
+
+            // Apply continuous lid acoustic baffle
+            let (rad_l, rad_r) = self.lid_baffle.process(sb_l, sb_r);
+
+            // Tier 6: Micro-mechanical action noise
+            let (act_l, act_r) = self.action_noise.step();
+            let (whoosh_l, whoosh_r) = self.damper_whoosh.step();
+            let (shock_l, shock_r) = self.plate_shock.step();
+            let (buzz_l, buzz_r) = self.restrike_buzz.step();
+
+            out_left[s] = rad_l + act_l + whoosh_l + shock_l + buzz_l;
+            out_right[s] = rad_r + act_r + whoosh_r + shock_r + buzz_r;
         }
 
         // Stage 5: Voice lifecycle & polyphony management at block boundary
