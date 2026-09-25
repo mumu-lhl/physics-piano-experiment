@@ -1,0 +1,11 @@
+[workspace]
+members = [
+    "crates/physics-piano"
+]
+resolver = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"

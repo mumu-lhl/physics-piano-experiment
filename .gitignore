@@ -9,3 +9,4 @@ build/
 *.wav
 *.png
 .DS_Store
+target/
