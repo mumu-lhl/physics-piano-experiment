@@ -268,3 +268,45 @@ fn test_voicing_parameters_effect() {
     assert!(diff_detune > 0.05, "Unison detuning change must noticeably alter beating pattern, got diff {diff_detune}");
 }
 
+#[test]
+fn test_tier10_adaptive_modal_culling_and_high_polyphony() {
+    let mut engine = PianoEngine::new(48000.0, 35, true);
+
+    // 1. Check adaptive modal culling across keyboard
+    let bass_v = engine.get_or_create_voice(21); // A0 (27.5 Hz)
+    let bass_modes = bass_v.strings[0].num_modes;
+    println!("Bass A0 modal count: {}", bass_modes);
+    assert_eq!(bass_modes, 35, "Bass notes must retain full modal resolution");
+
+    let treble_c7 = engine.get_or_create_voice(96); // C7 (2093 Hz)
+    let c7_modes = treble_c7.strings[0].num_modes;
+    println!("Treble C7 modal count: {}", c7_modes);
+    assert!(c7_modes <= 12, "C7 modes must be culled by Nyquist hearing limit");
+
+    let treble_c8 = engine.get_or_create_voice(108); // C8 (4186 Hz)
+    let c8_modes = treble_c8.strings[0].num_modes;
+    println!("High treble C8 modal count: {}", c8_modes);
+    assert!(c8_modes <= 6, "C8 modes must be culled to 6 modes");
+
+    // 2. High-Polyphony Test: Trigger 32 simultaneous voices
+    for note in 40..72 {
+        engine.note_on(note, 0.7);
+    }
+    assert_eq!(engine.active_keys.len(), 32, "Engine must support 32 concurrent voices under Tier 10 architecture");
+
+    let block_size = 256;
+    let mut out_l = vec![0.0; block_size];
+    let mut out_r = vec![0.0; block_size];
+    let mut out_events = Vec::new();
+
+    // Step 20 blocks (~100ms) with 32 full polyphonic voices
+    for _ in 0..20 {
+        engine.process_block(block_size, &[], &mut out_events, &mut out_l, &mut out_r);
+        for s in 0..block_size {
+            assert!(!out_l[s].is_nan() && !out_r[s].is_nan());
+            assert!(!out_l[s].is_infinite() && !out_r[s].is_infinite());
+        }
+    }
+}
+
+

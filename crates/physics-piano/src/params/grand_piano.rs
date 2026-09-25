@@ -128,6 +128,12 @@ pub fn generate_grand_piano_parameters(num_modes: usize, stretch_tuning: bool) -
         let sigma1 = 5.0e-6 + (3.0e-5 * norm_key);
         let strike_ratio = 0.125 - (0.035 * norm_key);
 
+        // Tier 10: Register-Adaptive Modal Truncation (Psychoacoustic Nyquist Culling)
+        // Frequencies above human hearing range (20 kHz) are completely inaudible.
+        // Scale modes dynamically from 35 down to 6 in the high treble (slashing compute by up to 70%).
+        let max_audible_freq = 20000.0;
+        let adaptive_modes = ((max_audible_freq / f0).floor() as usize).clamp(6, num_modes);
+
         let string_params: Vec<StringPhysicalParams> = (0..num_unisons)
             .map(|_| StringPhysicalParams {
                 length,
@@ -138,7 +144,7 @@ pub fn generate_grand_piano_parameters(num_modes: usize, stretch_tuning: bool) -
                 sigma0,
                 sigma1,
                 strike_ratio,
-                num_modes,
+                num_modes: adaptive_modes,
                 polarization_mistuning: 0.0012 + (0.0008 * norm_key),
             })
             .collect();

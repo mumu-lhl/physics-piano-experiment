@@ -66,7 +66,7 @@ pub struct PianoEngine {
     pub keys_to_remove_scratch: Vec<u8>,
 }
 
-pub const MAX_ACTIVE_VOICES: usize = 16;
+pub const MAX_ACTIVE_VOICES: usize = 32;
 
 impl PianoEngine {
     pub fn new(sample_rate: f64, num_modes: usize, stretch_tuning: bool) -> Self {

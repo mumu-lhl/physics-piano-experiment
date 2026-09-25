@@ -1,0 +1,17 @@
+{
+  "midi_note": 69,
+  "target_f0": 440.0,
+  "initial_loss": 5.593866646427584,
+  "final_loss": 5.147160300542874,
+  "calibrated_params": {
+    "hammer_stiffness_multiplier": 1.0012779235839842,
+    "hammer_exponent_multiplier": 0.7865844726562499,
+    "inharmonicity_multiplier": 1.0787101745605454,
+    "damping_multiplier": 1.1320610046386712,
+    "calibrated_hammer_stiffness": 52659106526.4448,
+    "calibrated_hammer_exponent": 2.050544349407327,
+    "calibrated_youngs_modulus": 215742034912.10907,
+    "calibrated_sigma0": 0.6558146509630923,
+    "calibrated_sigma1": 2.4397866479281704e-05
+  }
+}
