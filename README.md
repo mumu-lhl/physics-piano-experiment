@@ -260,4 +260,53 @@ cargo test
   - Attack transient risetime measurement: $\Delta t_{10-90} \le 15\text{ ms}$.
   - Octave-band decay rate matching: $RMSE_{T60} \le 0.08$.
   - Multi-Resolution STFT Loss ($L_{MRSL}$) across multi-scale windows $M \in \{512, 1024, 2048, 4096\}$.
+  - Sample-accurate onset alignment via Dynamic Time Warping (DTW) for dataset benchmarking (MAPS / VSL).
+  - ITU-R BS.1387 (PEAQ) Objective Difference Grade (ODG) auditory model evaluation ($\text{ODG} \ge -1.2$).
+
+---
+
+## Future Evolution Roadmap (Elevating Fidelity from 85% to 98% Commercial Pinnacle)
+
+While the foundational physical mechanics and real-time DSP core are complete and verified, the following tiers delineate the roadmap toward achieving absolute parity with the world's most acclaimed commercial virtual pianos (e.g. Modartt Pianoteq, Vienna Synchron):
+
+### Tier 6: Micro-Mechanical Action Noise & Physical Articulations
+- [ ] **Key-Bottom Thump & Action Escapement Dynamics**:
+  - Model the non-linear collision between wooden key levers, balance pins, and felt punchings.
+  - Synthesize the subtle mechanical click of the escapement jack slipping off the roller during soft pianissimo playing.
+- [ ] **Damper Lift & Restrike Felt Friction**:
+  - Model the momentary "whoosh" sound of 88 dampers simultaneously lifting off the strings when depressing the sustain pedal.
+  - Restrike damping friction: capture the brief high-frequency buzzing when a descending damper touches a still-vibrating heavy bass string.
+- [ ] **Pedal Mechanism Physics**:
+  - Mechanical squeaks, trapwork lever spring resistance, and whole-iron-frame impulse shock resonance upon rapid pedal stomp.
+
+### Tier 7: Spatial Multi-Microphone Soundboard Radiation & True IR Profiler
+- [ ] **Multi-Channel Concurrent UPOLS Convolution Engine**:
+  - Expand the zero-latency UPOLS convolver to 4~8 concurrent channels to drive multi-microphone mixing consoles.
+  - Three distinct listening perspectives: **Close** (hammer rail), **Player** (head-related binaural transfer function HRTF), and **Ambient / Room** (Decca tree).
+- [ ] **Concert Grand Acoustic Profiling (Steinway D-274 / Yamaha CFX)**:
+  - Ingest high-resolution calibrated impulse responses recorded in anechoic and scoring stages.
+  - Non-parametric acoustic radiation modeling capturing rib cross-grain diffraction and bridge horn radiation.
+- [ ] **Continuous Lid Position & Baffle Geometry**:
+  - Acoustic shadow and spectral dispersion filter continuously adjustable from Closed, Half-stick, Full-stick, to Lid Removed.
+
+### Tier 8: Native Hardware-Accelerated GUI & Cross-Platform Packaging
+- [ ] **Native CLAP GUI (`clap_plugin_gui`)**:
+  - Hardware-accelerated 2D/3D interface implemented in Rust (using egui / Vello / Webview) with zero runtime GC pauses.
+  - Real-time visualization of string transverse orbital motion ($u_T$ vs $u_P$ Lissajous curves) and bridge force spectra.
+- [ ] **Visual Piano Tuner & Master Voicing Editor**:
+  - Interactive graphical Railsback stretch tuning curve editor with octave-by-octave stretch control.
+  - Physical voicing sliders: hammer felt hardness gradient ($K_h, p$), unison detuning spread, bridge mobility scalar, and longitudinal phantom partial gain.
+- [ ] **Automated Multi-Platform Release CI/CD**:
+  - GitHub Actions matrix workflow generating:
+    - Linux: `.clap` bundle and standalone CLI.
+    - macOS: Universal Binary (Apple Silicon M1-M4 + Intel x86_64) `.clap` and `.vst3` bundle.
+    - Windows: 64-bit `.clap` and `.vst3` DLL with NSIS installer.
+
+### Tier 9: Differentiable Physics & Neural-Hybrid Auto-Voicing
+- [ ] **Differentiable Physical Simulation Loop**:
+  - Backpropagate gradients through the modal synthesis and SAV contact loop using automatic differentiation.
+  - Automatically calibrate physical parameters (Young's modulus $E$, tension $T_0$, hammer exponent $p$, bridge mobility matrix $\mathbf{Y}$) against arbitrary user-provided audio recordings of acoustic pianos.
+- [ ] **Physics-Informed Neural Operators (PINO)**:
+  - Fast surrogate neural operators for pre-computing highly non-linear 3D plate resonances and boundary impedances without sacrificing hard real-time execution budgets.
+
 
