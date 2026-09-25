@@ -374,6 +374,7 @@ impl PianoEngine {
             let num_active = self.active_keys_vec.len();
             let coupling_t = self.f_react_t / num_active.max(1) as f64;
             let coupling_p = self.f_react_p / num_active.max(1) as f64;
+            let phantom_scale = 0.28 * self.phantom_gain;
 
             for &key in &self.active_keys_vec {
                 if let Some(v) = self.voices.get_mut(&key) {
@@ -382,12 +383,9 @@ impl PianoEngine {
                     total_bridge_p += fb_p;
                     total_bridge_l += fb_l;
 
-                    let f_k = 0.82 * fb_t + 0.15 * fb_p + (0.28 * self.phantom_gain) * fb_l;
-                    let pan = v.pan.clamp(0.05, 0.95);
-                    let pan_l = ((1.0 - pan) * std::f64::consts::PI * 0.5).sin();
-                    let pan_r = (pan * std::f64::consts::PI * 0.5).sin();
-                    f_sb_l += f_k * pan_l;
-                    f_sb_r += f_k * pan_r;
+                    let f_k = 0.82 * fb_t + 0.15 * fb_p + phantom_scale * fb_l;
+                    f_sb_l += f_k * v.pan_l;
+                    f_sb_r += f_k * v.pan_r;
                 }
             }
 

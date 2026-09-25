@@ -356,5 +356,37 @@ fn test_melody_voice_accumulation_and_crackling() {
     }
 }
 
+#[test]
+fn test_una_corda_soft_pedal_dynamics() {
+    // Compare regular strike vs Una Corda strike on middle C (key 60)
+    let mut engine_normal = PianoEngine::new(48000.0, 30, false);
+    engine_normal.note_on(60, 0.8);
+    let (norm_l, norm_r) = engine_normal.render(0.3);
+    let norm_peak = norm_l.iter().chain(norm_r.iter()).fold(0.0f64, |acc, &x| acc.max(x.abs()));
+
+    let mut engine_una = PianoEngine::new(48000.0, 30, false);
+    engine_una.set_una_corda(true);
+    engine_una.note_on(60, 0.8);
+
+    // Verify voice internal state: the 3rd string was NOT directly struck, but gets excited via bridge
+    let voice = engine_una.get_voice(60).unwrap();
+    assert_eq!(voice.strings.len(), 3);
+    assert!(voice.hammer.una_corda);
+
+    let (una_l, una_r) = engine_una.render(0.3);
+    let una_peak = una_l.iter().chain(una_r.iter()).fold(0.0f64, |acc, &x| acc.max(x.abs()));
+
+    println!("Normal peak: {norm_peak:.4}, Una Corda peak: {una_peak:.4}");
+    // Una corda must reduce initial attack peak due to softer felt and 2-string strike
+    assert!(una_peak < norm_peak, "Una corda strike must be softer than normal strike");
+    assert!(una_peak > 0.01, "Una corda must still produce clear musical tone");
+
+    // Check that the 3rd un-struck string has picked up energy from the bridge!
+    let voice_after = engine_una.get_voice(60).unwrap();
+    let e_str2 = voice_after.strings[2].get_energy();
+    println!("Una Corda un-struck string 3 energy via bridge coupling: {e_str2:.6}");
+    assert!(e_str2 > 1e-6, "3rd string must be sympathetically driven by bridge coupling");
+}
+
 
 

@@ -10,6 +10,8 @@ pub struct PianoVoice {
     pub pitch_name: String,
     pub target_f0: f64,
     pub pan: f64,
+    pub pan_l: f64,
+    pub pan_r: f64,
 
     pub strings: Vec<StiffStringModal>,
     pub hammer: HuntCrossleyHammer,
@@ -23,7 +25,9 @@ impl PianoVoice {
         let midi_note = key_params.midi_note;
         let pitch_name = key_params.pitch_name.clone();
         let target_f0 = key_params.target_f0;
-        let pan = (midi_note as f64 - 21.0) / (108.0 - 21.0) * 0.8 + 0.1;
+        let pan = ((midi_note as f64 - 21.0) / (108.0 - 21.0) * 0.8 + 0.1).clamp(0.05, 0.95);
+        let pan_l = ((1.0 - pan) * std::f64::consts::PI * 0.5).sin();
+        let pan_r = (pan * std::f64::consts::PI * 0.5).sin();
 
         let has_damper = midi_note < 89;
         let mut strings = Vec::with_capacity(key_params.num_unisons);
@@ -56,6 +60,8 @@ impl PianoVoice {
             pitch_name,
             target_f0,
             pan,
+            pan_l,
+            pan_r,
             strings,
             hammer,
             is_key_down: false,
@@ -166,17 +172,24 @@ impl PianoVoice {
     #[inline]
     pub fn step(&mut self, f_coupling_t: f64, f_coupling_p: f64) -> (f64, f64, f64) {
         let num_str = self.strings.len() as f64;
+        let is_una_corda = self.hammer.una_corda;
+        // Physical shift: for multi-string unisons (triplets/bichords), shift drops one string
+        let num_struck = if is_una_corda && self.strings.len() >= 2 {
+            self.strings.len() - 1
+        } else {
+            self.strings.len()
+        };
 
         let f_hammer = if self.hammer.is_active {
             let mut u_avg = 0.0;
             let mut v_avg = 0.0;
-            for s in &self.strings {
+            for s in &self.strings[..num_struck] {
                 let (u, v) = s.get_strike_displacement_and_velocity();
                 u_avg += u;
                 v_avg += v;
             }
-            u_avg /= num_str;
-            v_avg /= num_str;
+            u_avg /= num_struck as f64;
+            v_avg /= num_struck as f64;
 
             let f_h = self.hammer.compute_force(u_avg, v_avg);
             self.hammer.advance(f_h);
@@ -185,7 +198,7 @@ impl PianoVoice {
             0.0
         };
 
-        let f_hammer_per_string = f_hammer / num_str;
+        let f_hammer_per_struck = f_hammer / num_struck as f64;
         let coupling_per_string_t = f_coupling_t / num_str;
         let coupling_per_string_p = f_coupling_p / num_str;
 
@@ -193,8 +206,9 @@ impl PianoVoice {
         let mut total_bridge_p = 0.0;
         let mut total_bridge_l = 0.0;
 
-        for s in &mut self.strings {
-            let (fb_t, fb_p, fb_l) = s.step(f_hammer_per_string, coupling_per_string_t, coupling_per_string_p);
+        for (i, s) in self.strings.iter_mut().enumerate() {
+            let f_h_i = if i < num_struck { f_hammer_per_struck } else { 0.0 };
+            let (fb_t, fb_p, fb_l) = s.step(f_h_i, coupling_per_string_t, coupling_per_string_p);
             total_bridge_t += fb_t;
             total_bridge_p += fb_p;
             total_bridge_l += fb_l;

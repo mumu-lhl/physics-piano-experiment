@@ -19,6 +19,15 @@ fn main() {
             args.push("-b".to_string());
             args.push("alsa".to_string());
         }
+
+        // Set period size to 1024 (21.3ms @ 48kHz) by default to prevent ALSA underruns (xruns)
+        let has_period = args
+            .iter()
+            .any(|arg| arg == "-p" || arg == "--period-size" || arg.starts_with("--period-size="));
+        if !has_period && !is_help {
+            args.push("-p".to_string());
+            args.push("1024".to_string());
+        }
     }
 
     nih_export_standalone_with_args::<PhysicsPiano, _>(args);
