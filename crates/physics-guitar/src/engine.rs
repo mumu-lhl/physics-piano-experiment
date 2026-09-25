@@ -115,6 +115,15 @@ impl GuitarEngine {
         }
     }
 
+    /// Releases a specific string (1..=6) directly.
+    pub fn release_string(&mut self, string_index: u8) {
+        if (1..=6).contains(&string_index) {
+            let str_idx = (string_index - 1) as usize;
+            self.strings[str_idx].release();
+            self.active_notes_on_string[str_idx] = None;
+        }
+    }
+
     /// Handles Pitch Bend (e.g. string bending or vibrato).
     pub fn pitch_bend(&mut self, channel: u8, semitones: f64) {
         if (2..=7).contains(&channel) {
@@ -161,7 +170,7 @@ impl GuitarEngine {
                 pickup_mix += emf;
             }
             // Auto release if energy drops below threshold
-            if s.is_held && s.total_energy() < 1e-9 {
+            if s.is_held && s.total_energy() < 1e-6 {
                 s.is_held = false;
                 self.active_notes_on_string[i] = None;
             }

@@ -93,6 +93,12 @@ impl Default for PhysicsGuitarParams {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum GuiGuitarEvent {
+    NoteOn { string_index: u8, fret: u8 },
+    NoteOff { string_index: u8, fret: u8 },
+}
+
 pub struct PhysicsGuitar {
     pub params: Arc<PhysicsGuitarParams>,
     pub engine: GuitarEngine,
@@ -101,8 +107,8 @@ pub struct PhysicsGuitar {
     // Shared state for GUI animation (atomic / lock-free)
     pub active_frets_shared: Arc<[AtomicU8; 6]>,
     pub string_energies_shared: Arc<[AtomicU32; 6]>,
-    // Thread-safe trigger queue from GUI clicks into audio engine
-    pub gui_trigger_queue: Arc<Mutex<Vec<(u8, u8)>>>, // (string 1..=6, fret 0..=24)
+    // Thread-safe event queue from GUI clicks/releases into audio engine
+    pub gui_event_queue: Arc<Mutex<Vec<GuiGuitarEvent>>>,
 }
 
 impl Default for PhysicsGuitar {
@@ -138,7 +144,7 @@ impl Default for PhysicsGuitar {
             sample_rate: sample_rate as f32,
             active_frets_shared,
             string_energies_shared,
-            gui_trigger_queue: Arc::new(Mutex::new(Vec::with_capacity(16))),
+            gui_event_queue: Arc::new(Mutex::new(Vec::with_capacity(16))),
         }
     }
 }
@@ -187,20 +193,28 @@ impl Plugin for PhysicsGuitar {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        // 1. Process GUI manual fret clicks from queue
+        // 1. Process GUI manual fret events from queue
         {
-            let mut queue = self.gui_trigger_queue.lock();
-            for &(str_idx, fret) in queue.iter() {
-                if (1..=6).contains(&str_idx) {
-                    let s_i = (str_idx - 1) as usize;
-                    let open_note = self.engine.router.open_notes[s_i];
-                    let midi_note = open_note + fret;
-                    self.engine.strings[s_i].set_fret(fret);
-                    self.engine.strings[s_i].pluck(&self.engine.exciter, self.engine.pluck_pos_ratio, 0.85);
-                    self.engine.active_notes_on_string[s_i] = Some(midi_note);
+            let mut queue = self.gui_event_queue.lock();
+            for event in queue.drain(..) {
+                match event {
+                    GuiGuitarEvent::NoteOn { string_index, fret } => {
+                        if (1..=6).contains(&string_index) {
+                            let s_i = (string_index - 1) as usize;
+                            let open_note = self.engine.router.open_notes[s_i];
+                            let midi_note = open_note + fret;
+                            self.engine.strings[s_i].set_fret(fret);
+                            self.engine.strings[s_i].pluck(&self.engine.exciter, self.engine.pluck_pos_ratio, 0.85);
+                            self.engine.active_notes_on_string[s_i] = Some(midi_note);
+                        }
+                    }
+                    GuiGuitarEvent::NoteOff { string_index, .. } => {
+                        if (1..=6).contains(&string_index) {
+                            self.engine.release_string(string_index);
+                        }
+                    }
                 }
             }
-            queue.clear();
         }
 
         // 2. Sync plugin parameters to engine
@@ -287,13 +301,19 @@ impl Plugin for PhysicsGuitar {
         let params = self.params.clone();
         let active_frets_shared = self.active_frets_shared.clone();
         let string_energies_shared = self.string_energies_shared.clone();
-        let gui_trigger_queue = self.gui_trigger_queue.clone();
+        let gui_event_queue = self.gui_event_queue.clone();
+
+        struct GuiGuitarState {
+            held_mouse_fret: Option<(u8, u8)>,
+        }
 
         create_egui_editor(
             self.params.editor_state.clone(),
-            (),
+            GuiGuitarState {
+                held_mouse_fret: None,
+            },
             |_, _| {},
-            move |egui_ctx, setter, _state| {
+            move |egui_ctx, setter, gui_state| {
                 egui::CentralPanel::default().show(egui_ctx, |ui| {
                     ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
 
@@ -404,13 +424,26 @@ impl Plugin for PhysicsGuitar {
                     ui.label(RichText::new("Interactive 6-String Fretboard (Click or Drag frets to play):").color(Color32::from_rgb(180, 185, 200)));
                     let fretboard_size = Vec2::new(ui.available_width(), 200.0);
 
-                    let mut click_handler = |str_clicked: u8, fret_clicked: u8| {
-                        gui_trigger_queue.lock().push((str_clicked, fret_clicked));
+                    let mut on_pressed = |str_clicked: u8, fret_clicked: u8| {
+                        gui_event_queue.lock().push(GuiGuitarEvent::NoteOn {
+                            string_index: str_clicked,
+                            fret: fret_clicked,
+                        });
                     };
 
-                    GuitarFretboardWidget::new(&active_frets, &string_energies)
-                        .with_callback(&mut click_handler)
+                    let mut on_released = |str_clicked: u8, fret_clicked: u8| {
+                        gui_event_queue.lock().push(GuiGuitarEvent::NoteOff {
+                            string_index: str_clicked,
+                            fret: fret_clicked,
+                        });
+                    };
+
+                    GuitarFretboardWidget::new(&active_frets, &string_energies, &mut gui_state.held_mouse_fret)
+                        .with_callbacks(&mut on_pressed, &mut on_released)
                         .show(ui, fretboard_size);
+
+                    // Continuous repaint for smooth real-time animation
+                    egui_ctx.request_repaint();
                 });
             },
         )

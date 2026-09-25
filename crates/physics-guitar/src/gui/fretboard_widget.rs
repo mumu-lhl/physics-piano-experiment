@@ -1,5 +1,5 @@
 //! Interactive 6-string guitar fretboard widget with realistic fret spacing,
-//! inlays, string thickness, and active note illumination.
+//! inlays, string thickness, active note illumination, and mouse press/release tracking.
 
 use nih_plug_egui::egui::{
     Color32, Pos2, Rect, Response, Sense, Stroke, Ui, Vec2,
@@ -10,27 +10,36 @@ pub struct GuitarFretboardWidget<'a> {
     pub active_frets: &'a [Option<u8>; 6],
     /// Energy levels for each string [String 1..=6] in range [0.0, 1.0]
     pub string_energies: &'a [f32; 6],
-    /// Callback when user clicks a string and fret: (string_index 1..=6, fret 0..=24)
-    pub on_fret_clicked: Option<&'a mut dyn FnMut(u8, u8)>,
+    /// Currently held mouse position: Some((string 1..=6, fret 0..=24))
+    pub held_mouse_fret: &'a mut Option<(u8, u8)>,
+    /// Callback when user presses a string and fret: (string_index 1..=6, fret 0..=24)
+    pub on_fret_pressed: Option<&'a mut dyn FnMut(u8, u8)>,
+    /// Callback when user releases a string and fret: (string_index 1..=6, fret 0..=24)
+    pub on_fret_released: Option<&'a mut dyn FnMut(u8, u8)>,
 }
 
 impl<'a> GuitarFretboardWidget<'a> {
     pub fn new(
         active_frets: &'a [Option<u8>; 6],
         string_energies: &'a [f32; 6],
+        held_mouse_fret: &'a mut Option<(u8, u8)>,
     ) -> Self {
         Self {
             active_frets,
             string_energies,
-            on_fret_clicked: None,
+            held_mouse_fret,
+            on_fret_pressed: None,
+            on_fret_released: None,
         }
     }
 
-    pub fn with_callback(
+    pub fn with_callbacks(
         mut self,
-        callback: &'a mut dyn FnMut(u8, u8),
+        on_pressed: &'a mut dyn FnMut(u8, u8),
+        on_released: &'a mut dyn FnMut(u8, u8),
     ) -> Self {
-        self.on_fret_clicked = Some(callback);
+        self.on_fret_pressed = Some(on_pressed);
+        self.on_fret_released = Some(on_released);
         self
     }
 
@@ -111,8 +120,8 @@ impl<'a> GuitarFretboardWidget<'a> {
             };
 
             // String vibration glow if energetic
-            if energy > 0.05 {
-                let glow_alpha = (energy * 180.0).clamp(0.0, 180.0) as u8;
+            if energy > 0.02 {
+                let glow_alpha = (energy * 200.0).clamp(0.0, 200.0) as u8;
                 let glow_stroke = Stroke::new(thickness + 3.0_f32, Color32::from_rgba_unmultiplied(255, 210, 120, glow_alpha));
                 painter.line_segment([Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y)], glow_stroke);
             }
@@ -123,6 +132,7 @@ impl<'a> GuitarFretboardWidget<'a> {
             );
 
             // 5. Draw Active Pressed Note Indicator on Fretboard
+            // Only draw if active_frets is Some and string has active held state or detectable vibration
             if let Some(fret) = self.active_frets[str_idx] {
                 let note_x = if fret == 0 {
                     rect.min.x + nut_width * 0.5
@@ -135,34 +145,55 @@ impl<'a> GuitarFretboardWidget<'a> {
                 let radius = 6.0;
                 let note_pos = Pos2::new(note_x, y);
                 // Glowing illuminated fingered note
-                painter.circle_filled(note_pos, radius + 2.0, Color32::from_rgba_unmultiplied(255, 180, 50, 220));
-                painter.circle_filled(note_pos, radius, Color32::from_rgb(255, 240, 190));
+                painter.circle_filled(note_pos, radius + 2.0, Color32::from_rgba_unmultiplied(255, 180, 50, 230));
+                painter.circle_filled(note_pos, radius, Color32::from_rgb(255, 245, 200));
             }
         }
 
-        // 6. Handle Mouse Click / Touch Input to trigger notes
-        if response.clicked() || (response.dragged() && ui.input(|i| i.pointer.primary_down())) {
-            if let Some(click_pos) = response.interact_pointer_pos() {
-                if rect.contains(click_pos) {
-                    // Determine which string was clicked (1..=6)
-                    let rel_y = click_pos.y - rect.min.y;
-                    let str_clicked = ((rel_y / string_y_spacing).round() as u8).clamp(1, 6);
+        // 6. Robust Mouse / Touch Interaction with Press and Release tracking
+        let is_primary_down = ui.input(|i| i.pointer.primary_down());
+        let is_primary_released = ui.input(|i| i.pointer.primary_released());
+        let pointer_pos = ui.input(|i| i.pointer.latest_pos());
 
-                    // Determine which fret was clicked (0..=24)
-                    let mut fret_clicked = 0;
-                    for f in 1..=fret_count {
-                        if click_pos.x <= get_fret_x(f) {
-                            fret_clicked = f;
-                            break;
-                        }
-                    }
+        let mut hovered_target: Option<(u8, u8)> = None;
 
-                    if let Some(ref mut cb) = self.on_fret_clicked {
-                        cb(str_clicked, fret_clicked);
+        if let Some(pos) = pointer_pos {
+            if rect.contains(pos) {
+                let rel_y = pos.y - rect.min.y;
+                let str_clicked = ((rel_y / string_y_spacing).round() as u8).clamp(1, 6);
+
+                let mut fret_clicked = 0;
+                for f in 1..=fret_count {
+                    if pos.x <= get_fret_x(f) {
+                        fret_clicked = f;
+                        break;
                     }
-                    response.mark_changed();
+                }
+                hovered_target = Some((str_clicked, fret_clicked));
+            }
+        }
+
+        let target_held = if is_primary_down && !is_primary_released {
+            hovered_target
+        } else {
+            None
+        };
+
+        if *self.held_mouse_fret != target_held {
+            // Note released
+            if let Some((old_str, old_fret)) = self.held_mouse_fret.take() {
+                if let Some(ref mut cb) = self.on_fret_released {
+                    cb(old_str, old_fret);
                 }
             }
+            // Note pressed
+            if let Some((new_str, new_fret)) = target_held {
+                if let Some(ref mut cb) = self.on_fret_pressed {
+                    cb(new_str, new_fret);
+                }
+                *self.held_mouse_fret = Some((new_str, new_fret));
+            }
+            response.mark_changed();
         }
 
         response
