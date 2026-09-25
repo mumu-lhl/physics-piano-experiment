@@ -281,7 +281,7 @@ impl PianoEngine {
         }
         self.depressed_keys.remove(&key);
         if let Some(v) = self.voices.get_mut(&key) {
-            v.note_off(self.sustain_pedal);
+            v.note_off(self.sustain_pedal, self.pedal_depth);
         }
     }
 

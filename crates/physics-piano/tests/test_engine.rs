@@ -388,5 +388,54 @@ fn test_una_corda_soft_pedal_dynamics() {
     assert!(e_str2 > 1e-6, "3rd string must be sympathetically driven by bridge coupling");
 }
 
+#[test]
+fn test_sustain_pedal_and_key_hold_independence() {
+    let mut engine = PianoEngine::new(48000.0, 30, false);
+    let block_size = 256;
+    let mut out_l = vec![0.0; block_size];
+    let mut out_r = vec![0.0; block_size];
+    let mut out_events = Vec::new();
+
+    // 1. Set sustain pedal slider to 0.5 (half-pedal value that previously caused premature damping)
+    engine.set_sustain_pedal(true, 0.5);
+
+    // 2. Play note 60 with NoteOn (holding the key down)
+    engine.note_on(60, 0.8);
+
+    // 3. Process for 0.5 seconds (about 94 blocks) WHILE HOLDING KEY DOWN
+    for _ in 0..94 {
+        engine.process_block(block_size, &[], &mut out_events, &mut out_l, &mut out_r);
+    }
+
+    // Voice must STILL be vibrating and NOT extinguished!
+    let voice = engine.get_voice(60).unwrap();
+    assert!(voice.is_key_down, "Key must be held down");
+    let energy_held = voice.get_energy();
+    println!("Energy while holding key down after 500ms with pedal=0.5: {energy_held:.6}");
+    assert!(energy_held > 1e-3, "Held key must NEVER be prematurely damped by pedal adjustments");
+
+    // 4. Test sustain pedal hold after release:
+    // With pedal at 0.8 (full sustain), releasing the key should CONTINUE ringing
+    engine.set_sustain_pedal(true, 0.8);
+    engine.note_off(60);
+
+    for _ in 0..50 {
+        engine.process_block(block_size, &[], &mut out_events, &mut out_l, &mut out_r);
+    }
+    let energy_sustained = engine.get_voice(60).unwrap().get_energy();
+    println!("Energy after release with pedal=0.8: {energy_sustained:.6}");
+    assert!(energy_sustained > 1e-4, "Released key must sustain when pedal is down");
+
+    // 5. Release pedal completely: dampers must drop and extinguish note
+    engine.set_sustain_pedal(false, 0.0);
+    for _ in 0..60 { // ~320ms
+        engine.process_block(block_size, &[], &mut out_events, &mut out_l, &mut out_r);
+    }
+    let energy_damped = engine.get_voice(60).map(|v| v.get_energy()).unwrap_or(0.0);
+    println!("Energy after pedal released: {energy_damped:.8}");
+    assert!(energy_damped < 1e-6, "Releasing pedal must promptly extinguish string vibration");
+}
+
+
 
 

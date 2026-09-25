@@ -141,32 +141,56 @@ impl PianoVoice {
         self.hammer.strike(velocity, u_avg);
     }
 
-    pub fn note_off(&mut self, sustain_pedal: bool) {
-        self.is_key_down = false;
-        if !sustain_pedal {
+    pub fn update_damper_state(&mut self, sustain_pedal: bool, pedal_depth: f64) {
+        // 1. If key is physically held down by pianist's finger,
+        // the whippen/damper lever keeps the damper 100% lifted off the string!
+        if self.is_key_down {
+            for s in &mut self.strings {
+                s.set_damper(false, 0.0);
+            }
+            return;
+        }
+
+        // 2. Key is released: damper position is governed by sustain pedal
+        // Acoustic Grand Piano damper lift curve:
+        // - depth in [0.0, 0.20]: Lost motion (pedal clearance), dampers remain fully seated (effective damping = 1.0)
+        // - depth in [0.20, 0.70]: Half-pedal zone, dampers gradually lift off string
+        // - depth in [0.70, 1.00]: Dampers completely clear off string (effective damping = 0.0, fully sustained)
+        if sustain_pedal && pedal_depth > 0.20 {
+            if pedal_depth >= 0.70 {
+                // Fully lifted: sustain
+                for s in &mut self.strings {
+                    s.set_damper(false, 0.0);
+                }
+            } else {
+                // Half-pedal zone: progressive damping
+                let norm = (pedal_depth - 0.20) / 0.50; // 0.0 to 1.0
+                let effective_damping = (1.0 - norm).powi(2);
+                if effective_damping < 0.02 {
+                    for s in &mut self.strings {
+                        s.set_damper(false, 0.0);
+                    }
+                } else {
+                    for s in &mut self.strings {
+                        s.set_damper(true, effective_damping);
+                    }
+                }
+            }
+        } else {
+            // Pedal released: full damping
             for s in &mut self.strings {
                 s.set_damper(true, 1.0);
             }
         }
     }
 
+    pub fn note_off(&mut self, sustain_pedal: bool, pedal_depth: f64) {
+        self.is_key_down = false;
+        self.update_damper_state(sustain_pedal, pedal_depth);
+    }
+
     pub fn set_sustain_pedal(&mut self, pedal_down: bool, depth: f64) {
-        if pedal_down {
-            if depth >= 0.99 {
-                for s in &mut self.strings {
-                    s.set_damper(false, 0.0);
-                }
-            } else {
-                let effective_damping = 1.0 - depth;
-                for s in &mut self.strings {
-                    s.set_damper(true, effective_damping);
-                }
-            }
-        } else if !self.is_key_down {
-            for s in &mut self.strings {
-                s.set_damper(true, 1.0);
-            }
-        }
+        self.update_damper_state(pedal_down, depth);
     }
 
     #[inline]
