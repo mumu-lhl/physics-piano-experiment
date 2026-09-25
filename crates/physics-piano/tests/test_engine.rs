@@ -199,7 +199,7 @@ fn test_clap_plugin_c_abi_and_extensions() {
         let desc_fn = factory.get_plugin_descriptor.unwrap();
         let desc = &*desc_fn(factory, 0);
         let id_str = CStr::from_ptr(desc.id).to_str().unwrap();
-        assert_eq!(id_str, "com.mumu.physics-piano");
+        assert_eq!(id_str, "org.eu.mumulhl.physics-piano");
 
         // 3. Create plugin instance
         let create_fn = factory.create_plugin.unwrap();
@@ -251,4 +251,36 @@ fn test_clap_plugin_c_abi_and_extensions() {
         deinit_fn();
     }
 }
+
+#[test]
+fn test_polyphonic_stability_and_headroom() {
+    let mut engine = PianoEngine::new(48000.0, 35, true);
+    engine.set_sustain_pedal(true, 1.0);
+
+    let chord = [36, 43, 48, 52, 55, 60, 64, 67, 71, 72]; // 10-note massive chord
+    for &note in &chord {
+        engine.note_on(note, 0.95);
+    }
+
+    let block_size = 512;
+    let mut out_l = vec![0.0; block_size];
+    let mut out_r = vec![0.0; block_size];
+    let mut out_events = Vec::new();
+
+    let mut max_abs = 0.0f64;
+
+    for _ in 0..100 { // ~1.06 seconds
+        engine.process_block(block_size, &[], &mut out_events, &mut out_l, &mut out_r);
+        for s in 0..block_size {
+            assert!(!out_l[s].is_nan(), "Left channel is NaN!");
+            assert!(!out_r[s].is_nan(), "Right channel is NaN!");
+            assert!(!out_l[s].is_infinite(), "Left channel is Infinite!");
+            assert!(!out_r[s].is_infinite(), "Right channel is Infinite!");
+            max_abs = max_abs.max(out_l[s].abs()).max(out_r[s].abs());
+        }
+    }
+
+    println!("10-Note Chord Peak Absolute Amplitude: {}", max_abs);
+}
+
 

@@ -43,9 +43,9 @@ fn copy_to_c_arr(dest: &mut [c_char], src: &str) {
 
 pub static PLUGIN_DESCRIPTOR: clap_plugin_descriptor = clap_plugin_descriptor {
     clap_version: CLAP_VERSION,
-    id: b"com.mumu.physics-piano\0".as_ptr() as *const c_char,
+    id: b"org.eu.mumulhl.physics-piano\0".as_ptr() as *const c_char,
     name: b"Physics Piano\0".as_ptr() as *const c_char,
-    vendor: b"mumu-lhl\0".as_ptr() as *const c_char,
+    vendor: b"Mumulhl\0".as_ptr() as *const c_char,
     url: b"https://github.com/mumu-lhl/physics-piano-experiment\0".as_ptr() as *const c_char,
     manual_url: b"\0".as_ptr() as *const c_char,
     support_url: b"\0".as_ptr() as *const c_char,
@@ -556,7 +556,7 @@ unsafe extern "C" fn factory_create_plugin(
         return ptr::null();
     }
     let id_str = CStr::from_ptr(plugin_id);
-    if id_str.to_bytes() != b"com.mumu.physics-piano" {
+    if id_str.to_bytes() != b"org.eu.mumulhl.physics-piano" {
         return ptr::null();
     }
 

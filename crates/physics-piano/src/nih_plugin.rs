@@ -158,9 +158,9 @@ impl Default for PhysicsPiano {
 
 impl Plugin for PhysicsPiano {
     const NAME: &'static str = "Physics Piano";
-    const VENDOR: &'static str = "mumu-lhl";
+    const VENDOR: &'static str = "Mumulhl";
     const URL: &'static str = "https://github.com/mumu-lhl/physics-piano-experiment";
-    const EMAIL: &'static str = "info@example.com";
+    const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
@@ -266,8 +266,21 @@ impl Plugin for PhysicsPiano {
             &mut self.scratch_r[..num_samples],
         );
 
-        // 4. Mix to output buffer with master gain
-        let gain = self.params.master_gain.value();
+/// Transparent tanh-based soft limiter ensuring output never exceeds 0.99 (0.0 dBFS)
+#[inline]
+fn soft_limit(x: f32) -> f32 {
+    if x.abs() <= 0.82 {
+        x
+    } else {
+        let sign = x.signum();
+        let mag = x.abs();
+        let excess = mag - 0.82;
+        sign * (0.82 + 0.17 * (excess / 0.17).tanh())
+    }
+}
+
+        // 4. Mix to output buffer with master gain, polyphony headroom scale (0.08), and soft limiter
+        let total_gain = self.params.master_gain.value() * 0.08f32;
         let mut max_l = 0.0f32;
         let mut max_r = 0.0f32;
 
@@ -277,8 +290,8 @@ impl Plugin for PhysicsPiano {
         let right_out = &mut ch_right[0];
 
         for s in 0..num_samples {
-            let out_l = (self.scratch_l[s] as f32) * gain;
-            let out_r = (self.scratch_r[s] as f32) * gain;
+            let out_l = soft_limit((self.scratch_l[s] as f32) * total_gain);
+            let out_r = soft_limit((self.scratch_r[s] as f32) * total_gain);
             left_out[s] = out_l;
             right_out[s] = out_r;
             max_l = max_l.max(out_l.abs());
@@ -499,12 +512,13 @@ impl Plugin for PhysicsPiano {
 }
 
 impl ClapPlugin for PhysicsPiano {
-    const CLAP_ID: &'static str = "com.mumu.physics-piano";
+    const CLAP_ID: &'static str = "org.eu.mumulhl.physics-piano";
     const CLAP_DESCRIPTION: Option<&'static str> =
         Some("First-principles physical modeling acoustic piano synthesizer");
     const CLAP_MANUAL_URL: Option<&'static str> =
-        Some("https://github.com/mumu-lhl/physics-piano-experiment");
-    const CLAP_SUPPORT_URL: Option<&'static str> = None;
+        Some("https://github.com/mumu-lhl/physics-piano-experiment#readme");
+    const CLAP_SUPPORT_URL: Option<&'static str> =
+        Some("https://github.com/mumu-lhl/physics-piano-experiment/issues");
     const CLAP_FEATURES: &'static [ClapFeature] =
         &[ClapFeature::Instrument, ClapFeature::Synthesizer];
 }

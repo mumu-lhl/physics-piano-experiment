@@ -2,7 +2,7 @@
 name = "physics-piano"
 version = "0.1.0"
 edition = "2021"
-authors = ["mumu-lhl"]
+authors = ["Mumulhl"]
 description = "First-principles physical modeling acoustic piano synthesizer and native CLAP plugin in Rust"
 
 [lib]
