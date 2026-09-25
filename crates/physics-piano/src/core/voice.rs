@@ -82,6 +82,29 @@ impl PianoVoice {
         self.hammer.set_una_corda(enabled);
     }
 
+    pub fn set_hammer_hardness(&mut self, scale: f64) {
+        let s = scale.clamp(0.4, 3.0);
+        self.hammer.k_h = self.key_params.hammer.stiffness * s.powf(2.0);
+        self.hammer.p = (self.key_params.hammer.exponent * s.sqrt()).clamp(1.5, 3.5);
+    }
+
+    pub fn set_unison_detuning(&mut self, detune_scale: f64) {
+        for (i, s) in self.strings.iter_mut().enumerate() {
+            let base_cents = if i < self.key_params.detuning_cents.len() {
+                self.key_params.detuning_cents[i]
+            } else {
+                0.0
+            };
+            s.set_tuning_offset(base_cents * detune_scale);
+        }
+    }
+
+    pub fn set_inharmonicity_scale(&mut self, inharm_scale: f64) {
+        for s in &mut self.strings {
+            s.set_inharmonicity_scale(inharm_scale);
+        }
+    }
+
     pub fn set_damper_depth(&mut self, depth: f64) {
         let active = depth > 0.0;
         for s in &mut self.strings {

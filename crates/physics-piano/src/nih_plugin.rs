@@ -343,6 +343,12 @@ impl Plugin for PhysicsPiano {
         self.engine.set_sustain_pedal(sustain_val > 0.01, sustain_val as f64);
         self.engine.set_una_corda(self.params.una_corda.value());
 
+        // Voicing & Physical parameters
+        self.engine.set_inharmonicity_scale(self.params.inharmonicity_scale.value() as f64);
+        self.engine.set_hammer_hardness(self.params.hammer_hardness.value() as f64);
+        self.engine.set_unison_detuning(self.params.unison_detuning.value() as f64);
+        self.engine.set_phantom_gain(self.params.phantom_gain.value() as f64);
+
         // Tier 6: Micro-mechanical noise gains
         self.engine.set_key_noise_gain(self.params.key_noise.value() as f64);
         self.engine.set_damper_noise_gain(self.params.damper_noise.value() as f64);

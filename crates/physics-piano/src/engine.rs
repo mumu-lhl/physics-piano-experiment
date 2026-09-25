@@ -42,6 +42,12 @@ pub struct PianoEngine {
     pub prev_pedal_depth: f64,
     pub una_corda: bool,
 
+    // Core voicing parameters
+    pub inharmonicity_scale: f64,
+    pub hammer_hardness: f64,
+    pub unison_detuning: f64,
+    pub phantom_gain: f64,
+
     // Tier 6: Micro-Mechanical Action Noise Generators
     pub action_noise: KeyActionNoise,
     pub damper_whoosh: DamperWhoosh,
@@ -94,6 +100,10 @@ impl PianoEngine {
             pedal_depth: 0.0,
             prev_pedal_depth: 0.0,
             una_corda: false,
+            inharmonicity_scale: 1.0,
+            hammer_hardness: 1.0,
+            unison_detuning: 1.0,
+            phantom_gain: 1.0,
             action_noise,
             damper_whoosh,
             plate_shock,
@@ -105,6 +115,37 @@ impl PianoEngine {
             active_keys_vec: Vec::with_capacity(32),
             keys_to_remove_scratch: Vec::with_capacity(32),
         }
+    }
+
+    pub fn set_inharmonicity_scale(&mut self, scale: f64) {
+        if (self.inharmonicity_scale - scale).abs() > 1e-4 {
+            self.inharmonicity_scale = scale;
+            for v in self.voices.values_mut() {
+                v.set_inharmonicity_scale(scale);
+            }
+        }
+    }
+
+    pub fn set_hammer_hardness(&mut self, hardness: f64) {
+        if (self.hammer_hardness - hardness).abs() > 1e-4 {
+            self.hammer_hardness = hardness;
+            for v in self.voices.values_mut() {
+                v.set_hammer_hardness(hardness);
+            }
+        }
+    }
+
+    pub fn set_unison_detuning(&mut self, detune: f64) {
+        if (self.unison_detuning - detune).abs() > 1e-4 {
+            self.unison_detuning = detune;
+            for v in self.voices.values_mut() {
+                v.set_unison_detuning(detune);
+            }
+        }
+    }
+
+    pub fn set_phantom_gain(&mut self, gain: f64) {
+        self.phantom_gain = gain;
     }
 
     pub fn set_radiation_mode(&mut self, mode: &str) {
@@ -148,11 +189,18 @@ impl PianoEngine {
         let sr = self.sample_rate;
         let una_corda = self.una_corda;
         let kp = self.key_params.get(&key).expect("Key out of 88-key piano range");
+        let hardness = self.hammer_hardness;
+        let detune = self.unison_detuning;
+        let inharm = self.inharmonicity_scale;
+
         self.voices.entry(key).or_insert_with(|| {
             let mut v = PianoVoice::new(kp.clone(), sr);
             if una_corda {
                 v.set_una_corda(true);
             }
+            v.set_hammer_hardness(hardness);
+            v.set_unison_detuning(detune);
+            v.set_inharmonicity_scale(inharm);
             v
         })
     }
@@ -320,6 +368,9 @@ impl PianoEngine {
             let mut total_bridge_p = 0.0;
             let mut total_bridge_l = 0.0;
 
+            let mut f_sb_l = 0.0;
+            let mut f_sb_r = 0.0;
+
             let num_active = self.active_keys_vec.len();
             let coupling_t = self.f_react_t / num_active.max(1) as f64;
             let coupling_p = self.f_react_p / num_active.max(1) as f64;
@@ -330,6 +381,13 @@ impl PianoEngine {
                     total_bridge_t += fb_t;
                     total_bridge_p += fb_p;
                     total_bridge_l += fb_l;
+
+                    let f_k = 0.82 * fb_t + 0.15 * fb_p + (0.28 * self.phantom_gain) * fb_l;
+                    let pan = v.pan.clamp(0.05, 0.95);
+                    let pan_l = ((1.0 - pan) * std::f64::consts::PI * 0.5).sin();
+                    let pan_r = (pan * std::f64::consts::PI * 0.5).sin();
+                    f_sb_l += f_k * pan_l;
+                    f_sb_r += f_k * pan_r;
                 }
             }
 
@@ -346,7 +404,7 @@ impl PianoEngine {
             } else if use_upols {
                 self.upols.as_mut().unwrap().process_sample(f_sb)
             } else {
-                self.bridge.step_soundboard(f_sb, 0.5)
+                self.bridge.step_soundboard_stereo(f_sb_l, f_sb_r)
             };
 
             // Apply continuous lid acoustic baffle

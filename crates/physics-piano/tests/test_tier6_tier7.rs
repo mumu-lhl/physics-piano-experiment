@@ -182,3 +182,89 @@ fn test_tier6_and_tier7_engine_integration() {
         assert!(!out_l[s].is_nan() && !out_r[s].is_nan());
     }
 }
+
+#[test]
+fn test_stereo_spatial_soundstage_bass_vs_treble() {
+    // 1. Bass note A0 (key 21) - should be panned towards Left
+    let mut engine_bass = PianoEngine::new(48000.0, 30, false);
+    engine_bass.set_pedal_noise_gain(0.0);
+    engine_bass.set_key_noise_gain(0.0);
+    engine_bass.set_damper_noise_gain(0.0);
+    engine_bass.note_on(21, 0.8);
+
+    let (bass_l, bass_r) = engine_bass.render(0.3);
+    let bass_energy_l: f64 = bass_l.iter().map(|x| x * x).sum();
+    let bass_energy_r: f64 = bass_r.iter().map(|x| x * x).sum();
+
+    println!("Bass A0 energy L: {bass_energy_l:.6}, R: {bass_energy_r:.6}");
+    assert!(bass_energy_l > bass_energy_r * 1.5, "Bass notes must have significantly more Left channel energy than Right");
+
+    // 2. Treble note C8 (key 108) - should be panned towards Right
+    let mut engine_treble = PianoEngine::new(48000.0, 30, false);
+    engine_treble.set_pedal_noise_gain(0.0);
+    engine_treble.set_key_noise_gain(0.0);
+    engine_treble.set_damper_noise_gain(0.0);
+    engine_treble.note_on(108, 0.8);
+
+    let (treble_l, treble_r) = engine_treble.render(0.3);
+    let treble_energy_l: f64 = treble_l.iter().map(|x| x * x).sum();
+    let treble_energy_r: f64 = treble_r.iter().map(|x| x * x).sum();
+
+    println!("Treble C8 energy L: {treble_energy_l:.6}, R: {treble_energy_r:.6}");
+    assert!(treble_energy_r > treble_energy_l * 1.5, "Treble notes must have significantly more Right channel energy than Left");
+}
+
+#[test]
+fn test_voicing_parameters_effect() {
+    // Test Hammer Hardness: soft vs hard hammer must produce noticeably different timbre/energy
+    let mut engine_soft = PianoEngine::new(48000.0, 30, false);
+    engine_soft.set_hammer_hardness(0.5);
+    engine_soft.note_on(60, 0.8);
+    let (soft_l, _) = engine_soft.render(0.2);
+
+    let mut engine_hard = PianoEngine::new(48000.0, 30, false);
+    engine_hard.set_hammer_hardness(2.5);
+    engine_hard.note_on(60, 0.8);
+    let (hard_l, _) = engine_hard.render(0.2);
+
+    let mut diff_hammer = 0.0f64;
+    for (s, h) in soft_l.iter().zip(hard_l.iter()) {
+        diff_hammer += (s - h).abs();
+    }
+    assert!(diff_hammer > 0.05, "Hammer hardness change must noticeably alter acoustic response, got diff {diff_hammer}");
+
+    // Test Inharmonicity Scale: 0.2 vs 2.5 must produce noticeably shifted partials
+    let mut engine_inharm1 = PianoEngine::new(48000.0, 30, false);
+    engine_inharm1.set_inharmonicity_scale(0.2);
+    engine_inharm1.note_on(40, 0.8);
+    let (inh1_l, _) = engine_inharm1.render(0.2);
+
+    let mut engine_inharm2 = PianoEngine::new(48000.0, 30, false);
+    engine_inharm2.set_inharmonicity_scale(2.5);
+    engine_inharm2.note_on(40, 0.8);
+    let (inh2_l, _) = engine_inharm2.render(0.2);
+
+    let mut diff_inharm = 0.0f64;
+    for (a, b) in inh1_l.iter().zip(inh2_l.iter()) {
+        diff_inharm += (a - b).abs();
+    }
+    assert!(diff_inharm > 0.05, "Inharmonicity scale change must noticeably alter modal dispersion, got diff {diff_inharm}");
+
+    // Test Unison Detuning: 0.0 (pure) vs 3.0 (wide detune)
+    let mut engine_detune0 = PianoEngine::new(48000.0, 30, false);
+    engine_detune0.set_unison_detuning(0.0);
+    engine_detune0.note_on(60, 0.8);
+    let (det0_l, _) = engine_detune0.render(0.3);
+
+    let mut engine_detune3 = PianoEngine::new(48000.0, 30, false);
+    engine_detune3.set_unison_detuning(3.0);
+    engine_detune3.note_on(60, 0.8);
+    let (det3_l, _) = engine_detune3.render(0.3);
+
+    let mut diff_detune = 0.0f64;
+    for (a, b) in det0_l.iter().zip(det3_l.iter()) {
+        diff_detune += (a - b).abs();
+    }
+    assert!(diff_detune > 0.05, "Unison detuning change must noticeably alter beating pattern, got diff {diff_detune}");
+}
+

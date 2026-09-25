@@ -67,6 +67,9 @@ pub struct StiffStringModal {
 
     // Microtonal expression tuning (cents)
     pub tuning_offset_cents: f64,
+
+    // Inharmonicity stiffness scale [0.1 ~ 5.0]
+    pub inharmonicity_scale: f64,
 }
 
 impl StiffStringModal {
@@ -185,6 +188,7 @@ impl StiffStringModal {
             damper_lift_rate,
             damper_modal_rates,
             tuning_offset_cents: 0.0,
+            inharmonicity_scale: 1.0,
         };
 
         string.recompute_transition_matrices();
@@ -198,11 +202,19 @@ impl StiffStringModal {
         }
     }
 
+    pub fn set_inharmonicity_scale(&mut self, scale: f64) {
+        let s = scale.clamp(0.1, 5.0);
+        if (s - self.inharmonicity_scale).abs() > 1e-4 {
+            self.inharmonicity_scale = s;
+            self.recompute_transition_matrices();
+        }
+    }
+
     pub fn recompute_transition_matrices(&mut self) {
         let freq_ratio = 2.0f64.powf(self.tuning_offset_cents / 1200.0);
         let eff_t0 = self.tension * freq_ratio.powi(2);
         let eff_omega_0 = (PI / self.length) * (eff_t0 / self.mu).sqrt();
-        let eff_b = (PI.powi(3) * self.youngs_modulus * self.radius.powi(4)) / (4.0 * eff_t0 * self.length.powi(2));
+        let eff_b = ((PI.powi(3) * self.youngs_modulus * self.radius.powi(4)) / (4.0 * eff_t0 * self.length.powi(2))) * self.inharmonicity_scale;
 
         self.phi_t.clear();
         self.gamma_t.clear();
