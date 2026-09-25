@@ -4,7 +4,8 @@ description: >-
   Standard engineering guidelines and pitfall prevention for immediate-mode GUI (egui)
   in real-time audio plugins and synthesizers (CLAP, VST3, Standalone). Covers layout budgeting,
   column expansion clipping, slider sizing, lock-free audio/GUI synchronization, 60fps frame budgeting,
-  and state lifecycle management.
+  and state lifecycle management. This skill is a living document; agents and developers are explicitly
+  permitted and encouraged to modify, refine, and expand it whenever additions or corrections are needed.
 ---
 
 # Egui Audio Plugin Development Guidelines & Pitfalls
@@ -12,6 +13,13 @@ description: >-
 Immediate-mode GUI (`egui`) renders UI procedurally every frame from application state rather than maintaining a persistent widget hierarchy. While this offers unparalleled iteration speed and eliminates complex GUI state-binding boilerplate, it introduces subtle layout and concurrency traps—especially in real-time audio plugins (NIH-plug, CLAP, VST3).
 
 This guide documents the core pitfalls, rules of thumb, and standard code patterns required for all audio plugins in this repository.
+
+> [!IMPORTANT]
+> **Living Document & Modification Policy (文档动态演进与修改许可)**
+> 本 Skill 是持续演进的动态工程规范。任何 AI Agent 或开发人员在开发、调试或重构 egui 界面时：
+> - **允许并鼓励自由修改**：如果发现本 Skill 存在遗漏、描述不准确、与新版本 egui/NIH-plug 不兼容，或在实践中摸索出了更优的排版与并发解决方案，**无需额外申请许可，直接修改并更新此 Skill 文档**。
+> - **持续扩充常见陷阱**：遇到任何新的 egui 疑难杂症（如 DPI 缩放异常、文本折行裁切、焦点捕获陷阱、高刷屏卡顿等），请将“问题复现、底层机制、标准修复代码”沉淀到本文档中。
+> - **双向镜像同步**：修改后请确保 `.agents/skills/egui-audio-guidelines/SKILL.md` 与 `skills/egui-audio-guidelines/SKILL.md` 保持完全一致。
 
 ---
 
@@ -212,3 +220,26 @@ Calling `ctx.request_repaint()` unconditionally every frame forces the GUI to re
       egui_ctx.request_repaint();
   }
   ```
+
+---
+
+## 6. Skill Maintenance, Refinement & Permission to Modify (规范维护与动态修订指南)
+
+### 明确修改授权 (Explicit Permission to Modify)
+本 Skill 绝非一成不变的僵化教条。**项目允许并明确授权所有协作者与 AI Agent 在遇到以下情况时直接修改、纠错或扩充本 Skill 文件**：
+
+1. **发现新陷阱 (New Pitfalls Discovered)**:
+   - 在开发新的物理建模合成器控件（如包络绘制器、LFO 曲线面板、3D 空间声相网格、滤波频谱图等）时，踩到了新的 egui 布局、渲染或事件处理陷阱，并在解决后提炼出了通用解法。
+2. **规范存在问题或边缘漏洞 (Issues or Incomplete Rules)**:
+   - 现存的某项建议或规避策略在特定宿主（DAW，如 Reaper, Bitwig, Ableton, FL Studio, Logic）或操作系统（Linux Wayland vs X11, macOS Retina 缩放, Windows HiDPI 缩放）下表现不完美，需要修正、补充例外条件或调整推荐方案。
+3. **上游框架版本迭代 (Upstream API & Framework Updates)**:
+   - 依赖的 `egui` 或 `nih_plug_egui` 版本升级，引入了更优秀的原生布局机制（如自适应 Grid、改良的 ScrollArea 行为、更轻量级的动画回调）或弃用了旧 API。
+
+### 修订工作流规范 (Editing Workflow)
+- **分析机制并给出根因**：记录陷阱时，需阐明其在即时模式（immediate-mode）单遍渲染机制下的深层原因，而非仅仅贴出一段临时补丁。
+- **保留正反代码对照**：始终保留清晰的 `// ✅ CORRECT` 与 `// ❌ WRONG` 代码段，供未来的开发者与 AI Agent 快速检索学习。
+- **双向同步更新**：本仓库遵循双路径技能发现规范，修改后必须同步两处副本：
+  ```bash
+  cp .agents/skills/egui-audio-guidelines/SKILL.md skills/egui-audio-guidelines/SKILL.md
+  ```
+
