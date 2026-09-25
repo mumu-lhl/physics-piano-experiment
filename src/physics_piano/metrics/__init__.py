@@ -17,6 +17,8 @@ from physics_piano.metrics.dynamic_centroid import measure_dynamic_centroid_slop
 from physics_piano.metrics.transient import analyze_transient_onset
 from physics_piano.metrics.mrsl import compute_mrsl
 from physics_piano.metrics.octave_decay import analyze_octave_t60
+from physics_piano.metrics.alignment import align_audio_onsets, compute_dtw_distance
+from physics_piano.metrics.peaq import estimate_peaq_odg
 
 __all__ = [
     "estimate_inharmonicity_from_audio",
@@ -28,4 +30,8 @@ __all__ = [
     "analyze_transient_onset",
     "compute_mrsl",
     "analyze_octave_t60",
+    "align_audio_onsets",
+    "compute_dtw_distance",
+    "estimate_peaq_odg",
 ]
+

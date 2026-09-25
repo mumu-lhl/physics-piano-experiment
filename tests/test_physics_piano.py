@@ -302,6 +302,26 @@ class TestObjectiveMetricsSuite(unittest.TestCase):
         self.assertIn("rmse_t60", res)
         self.assertGreater(len(res["band_details"]), 0)
 
+    def test_dtw_alignment(self):
+        from physics_piano.metrics.alignment import align_audio_onsets, compute_dtw_distance
+        audio1 = self.synth.render_note("A4", velocity=0.8, duration=0.15, sustain=False)
+        # Shift audio2 by 100 samples of zero padding
+        audio2 = np.pad(audio1, ((100, 0), (0, 0)))
+        aligned1, aligned2 = align_audio_onsets(audio1, audio2)
+        self.assertEqual(len(aligned1), len(aligned2))
+        res = compute_dtw_distance(audio1, audio2)
+        self.assertIn("dtw_normalized_cost", res)
+
+    def test_peaq_odg_score(self):
+        from physics_piano.metrics.peaq import estimate_peaq_odg
+        audio = self.synth.render_note("A4", velocity=0.8, duration=0.15, sustain=False)
+        # Identical audio should achieve near 0.0 ODG
+        res = estimate_peaq_odg(audio, audio, sample_rate=48000.0)
+        self.assertIn("odg", res)
+        self.assertGreater(res["odg"], -0.1)
+        self.assertTrue(res["passed"])
+
 
 if __name__ == "__main__":
     unittest.main()
+
