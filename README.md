@@ -165,24 +165,33 @@ The high-performance real-time engine is implemented in Rust (`crates/physics-pi
   - Dynamic voice lifecycle management: monitors total modal energy $E_{total} \le -96\text{ dB}$ to release silent voices and emit `CLAP_EVENT_NOTE_END`.
 - **High Throughput**: **RTF $\approx 0.06\times$** (~16x faster than real-time) with 35 modes per string and 3 strings per trichord.
 
-### Building & Running the Rust Engine
+### Building & Running the Rust Engine, Standalone App & CLAP Plugin
 
 ```bash
-# 1. Run automated test suite
-cargo test
+# 1. Run automated test suite (all engine and unit tests)
+cargo test --workspace
 
-# 2. Build optimized release binary & shared library
-cargo build --release
+# 2. Run the Standalone Playable Desktop Application (with hardware-accelerated GUI)
+cargo run --release -p physics-piano --bin physics-piano-standalone
 
-# The CLAP shared library is generated at:
-# target/release/libphysics_piano.so (rename to physics_piano.clap for DAW hosts)
+# 3. Bundle the official release CLAP plugin (outputs target/bundled/physics-piano.clap)
+cargo xtask bundle physics-piano --release
 
-# 3. Run high-throughput performance benchmark
-target/release/physics-piano-rs benchmark 35
+# 4. Synthesize a note via the headless Rust CLI
+cargo run --release -p physics-piano --bin physics-piano-rs -- render A4 3.0 rust_a4.wav 0.85
 
-# 4. Synthesize a note via the Rust CLI
-target/release/physics-piano-rs render A4 3.0 rust_a4.wav 0.85
+# 5. Run high-throughput performance benchmark
+cargo run --release -p physics-piano --bin physics-piano-rs -- benchmark 35
 ```
+
+---
+
+## Continuous Integration & Release (GitHub Actions)
+
+The project includes an automated matrix CI/CD pipeline (`.github/workflows/ci.yml`):
+- **Cross-Platform Matrix**: Automated compile and test passes on Linux (`ubuntu-latest`), macOS (`macos-latest`), and Windows (`windows-latest`) on every push and PR.
+- **CLAP Plugin Bundles**: Cross-compiles and packages native `.clap` virtual instruments across all platforms.
+- **Automated Releases**: Pushing a version tag (`git tag v0.1.0 && git push origin v0.1.0`) triggers a GitHub Release with multi-platform `.clap` archive downloads.
 
 ---
 
@@ -193,9 +202,9 @@ target/release/physics-piano-rs render A4 3.0 rust_a4.wav 0.85
 uv run python -m unittest discover tests
 ```
 
-### Rust Test Suite (6 Integration Tests)
+### Rust Test Suite (7 Integration & Synthesis Tests)
 ```bash
-cargo test
+cargo test --workspace
 ```
 
 ---
@@ -289,18 +298,17 @@ While the foundational physical mechanics and real-time DSP core are complete an
 - [ ] **Continuous Lid Position & Baffle Geometry**:
   - Acoustic shadow and spectral dispersion filter continuously adjustable from Closed, Half-stick, Full-stick, to Lid Removed.
 
-### Tier 8: Native Hardware-Accelerated GUI & Cross-Platform Packaging
-- [ ] **Native CLAP GUI (`clap_plugin_gui`)**:
-  - Hardware-accelerated 2D/3D interface implemented in Rust (using egui / Vello / Webview) with zero runtime GC pauses.
-  - Real-time visualization of string transverse orbital motion ($u_T$ vs $u_P$ Lissajous curves) and bridge force spectra.
-- [ ] **Visual Piano Tuner & Master Voicing Editor**:
-  - Interactive graphical Railsback stretch tuning curve editor with octave-by-octave stretch control.
-  - Physical voicing sliders: hammer felt hardness gradient ($K_h, p$), unison detuning spread, bridge mobility scalar, and longitudinal phantom partial gain.
-- [ ] **Automated Multi-Platform Release CI/CD**:
-  - GitHub Actions matrix workflow generating:
-    - Linux: `.clap` bundle and standalone CLI.
-    - macOS: Universal Binary (Apple Silicon M1-M4 + Intel x86_64) `.clap` and `.vst3` bundle.
-    - Windows: 64-bit `.clap` and `.vst3` DLL with NSIS installer.
+### Tier 8: Native Hardware-Accelerated GUI & Standalone App - [COMPLETED]
+- [x] **Native CLAP GUI (`clap_plugin_gui`)**:
+  - Hardware-accelerated 2D interface implemented in Rust (`nih-plug` + `egui 0.31`) with zero runtime GC pauses.
+  - Real-time visualization of bridge dual-polarization orbital motion ($u_T$ vs $u_P$ Lissajous curves) and peak VU meters.
+  - Interactive 88-key piano keyboard with velocity-sensitive clicking/dragging and active key illumination.
+- [x] **Standalone Playable Desktop App (`physics-piano-standalone`)**:
+  - Playable desktop application with ALSA, JACK, CoreAudio, and WASAPI audio & MIDI driver support, allowing standalone playing with mouse or MIDI keyboard without a DAW.
+- [x] **Physical Parameter & Voicing Rack**:
+  - Real-time parameter sliders: sustain pedal (half-pedaling), una corda, inharmonicity scale, hammer hardness, unison detuning, phantom partial gain, and master volume.
+- [x] **Automated Multi-Platform Release CI/CD**:
+  - GitHub Actions matrix workflow (`.github/workflows/ci.yml`) compiling, testing, bundling `.clap` plugins, and publishing release artifacts across Linux, macOS, and Windows.
 
 ### Tier 9: Differentiable Physics & Neural-Hybrid Auto-Voicing
 - [ ] **Differentiable Physical Simulation Loop**:

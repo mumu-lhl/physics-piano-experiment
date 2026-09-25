@@ -178,17 +178,17 @@ fn test_clap_plugin_c_abi_and_extensions() {
     use clap_sys::ext::note_ports::{clap_plugin_note_ports, CLAP_EXT_NOTE_PORTS};
     use clap_sys::ext::params::{clap_plugin_params, CLAP_EXT_PARAMS};
     use clap_sys::ext::thread_pool::CLAP_EXT_THREAD_POOL;
-    use physics_piano::clap_entry;
+    use physics_piano::raw_clap_entry;
     use std::ffi::CStr;
     use std::ptr;
 
     unsafe {
         // 1. Entry init
-        let init_fn = clap_entry.init.expect("init must be defined");
+        let init_fn = raw_clap_entry.init.expect("init must be defined");
         assert!(init_fn(ptr::null()));
 
         // 2. Factory lookup
-        let get_factory_fn = clap_entry.get_factory.expect("get_factory must be defined");
+        let get_factory_fn = raw_clap_entry.get_factory.expect("get_factory must be defined");
         let factory_ptr = get_factory_fn(CLAP_PLUGIN_FACTORY_ID.as_ptr());
         assert!(!factory_ptr.is_null());
 
@@ -247,7 +247,7 @@ fn test_clap_plugin_c_abi_and_extensions() {
         destroy_p(plugin);
 
         // 6. Entry deinit
-        let deinit_fn = clap_entry.deinit.expect("deinit must be defined");
+        let deinit_fn = raw_clap_entry.deinit.expect("deinit must be defined");
         deinit_fn();
     }
 }

@@ -1,0 +1,6 @@
+[alias]
+xtask = "run --package xtask --"
+
+[env]
+PKG_CONFIG_PATH = { value = "scripts/pkgconfig", relative = true }
+

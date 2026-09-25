@@ -595,8 +595,8 @@ static PLUGIN_FACTORY: clap_plugin_factory = clap_plugin_factory {
     create_plugin: Some(factory_create_plugin),
 };
 
-#[no_mangle]
-pub static clap_entry: clap_plugin_entry = clap_plugin_entry {
+#[allow(non_upper_case_globals)]
+pub static raw_clap_entry: clap_plugin_entry = clap_plugin_entry {
     clap_version: CLAP_VERSION,
     init: Some(entry_init),
     deinit: Some(entry_deinit),
