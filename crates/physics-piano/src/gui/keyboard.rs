@@ -71,11 +71,17 @@ impl<'a> PianoKeyboardWidget<'a> {
             }
         }
 
-        // Check mouse interactions
+        // Mouse interaction state tracking via egui temporary ID memory
+        let mouse_held_id = ui.id().with("piano_mouse_held_key");
+        let prev_held: Option<u8> = ui.data(|d| d.get_temp(mouse_held_id));
+
+        let is_primary_down = ui.input(|i| i.pointer.primary_down());
+        let pointer_pos = ui.input(|i| i.pointer.interact_pos());
+
         let mut hovered_key = None;
         let mut click_vel = 0.8f32;
 
-        if let Some(mouse_pos) = response.hover_pos() {
+        if let Some(mouse_pos) = pointer_pos {
             if rect.contains(mouse_pos) {
                 // Check black keys first (top layer)
                 for (i, r) in black_key_rects.iter().enumerate() {
@@ -100,21 +106,27 @@ impl<'a> PianoKeyboardWidget<'a> {
             }
         }
 
-        if response.drag_started() || (response.clicked() && hovered_key.is_some()) {
-            if let Some(key) = hovered_key {
-                self.pressed_keys.push((key, click_vel));
+        // The key is currently held if the primary mouse button is actively down AND pointer is in rect
+        let current_held = if is_primary_down && (response.hovered() || response.dragged()) {
+            hovered_key
+        } else {
+            None
+        };
+
+        if prev_held != current_held {
+            if let Some(old_k) = prev_held {
+                self.released_keys.push(old_k);
             }
-        } else if response.drag_stopped() {
-            if let Some(key) = hovered_key {
-                self.released_keys.push(key);
+            if let Some(new_k) = current_held {
+                self.pressed_keys.push((new_k, click_vel));
             }
+            ui.data_mut(|d| d.insert_temp(mouse_held_id, current_held));
         }
 
         // Draw White Keys
         for (i, r) in white_key_rects.iter().enumerate() {
             let midi = white_key_midis[i];
-            let is_active = self.active_keys.contains(&midi)
-                || (response.dragged() && hovered_key == Some(midi));
+            let is_active = self.active_keys.contains(&midi) || current_held == Some(midi);
 
             let fill = if is_active {
                 Color32::from_rgb(255, 215, 110) // Warm active glow
@@ -148,8 +160,7 @@ impl<'a> PianoKeyboardWidget<'a> {
         // Draw Black Keys on top
         for (i, r) in black_key_rects.iter().enumerate() {
             let midi = black_key_midis[i];
-            let is_active = self.active_keys.contains(&midi)
-                || (response.dragged() && hovered_key == Some(midi));
+            let is_active = self.active_keys.contains(&midi) || current_held == Some(midi);
 
             let fill = if is_active {
                 Color32::from_rgb(230, 160, 40) // Amber active glow

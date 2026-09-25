@@ -28,6 +28,7 @@ pub struct PianoEngine {
     pub key_params: HashMap<u8, KeyParams>,
     pub voices: HashMap<u8, PianoVoice>,
     pub active_keys: HashSet<u8>,
+    pub depressed_keys: HashSet<u8>,
 
     pub bridge: BridgeSoundboard,
     pub upols: Option<UPOLSConvolver>,
@@ -61,6 +62,7 @@ impl PianoEngine {
             key_params,
             voices: HashMap::with_capacity(88),
             active_keys: HashSet::with_capacity(32),
+            depressed_keys: HashSet::with_capacity(32),
             bridge: BridgeSoundboard::new(sample_rate),
             upols: None,
             radiation_mode: "modal".to_string(),
@@ -101,10 +103,12 @@ impl PianoEngine {
             v.get_energy()
         };
         self.active_keys.insert(key);
+        self.depressed_keys.insert(key);
         self.note_energy_peak.insert(key, cur_energy.max(1e-6));
     }
 
     pub fn note_off(&mut self, key: u8) {
+        self.depressed_keys.remove(&key);
         if let Some(v) = self.voices.get_mut(&key) {
             v.note_off(self.sustain_pedal);
         }

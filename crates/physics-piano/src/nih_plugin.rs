@@ -291,11 +291,11 @@ impl Plugin for PhysicsPiano {
         self.peak_l.store(prev_l * 0.92 + max_l * 0.08, std::sync::atomic::Ordering::Relaxed);
         self.peak_r.store(prev_r * 0.92 + max_r * 0.08, std::sync::atomic::Ordering::Relaxed);
 
-        // Sync active keys for GUI visualization
+        // Sync physically depressed keys for GUI keyboard visualization
         {
             let mut keys = self.active_keys.write();
             keys.clear();
-            for &k in &self.engine.active_keys {
+            for &k in &self.engine.depressed_keys {
                 keys.insert(k);
             }
         }
@@ -443,6 +443,41 @@ impl Plugin for PhysicsPiano {
                                     time: 0,
                                     key: note,
                                 });
+                            }
+                        });
+
+                        // Handle QWERTY laptop keyboard input (C4 to C5 octave)
+                        const QWERTY_KEYS: &[(egui::Key, u8)] = &[
+                            (egui::Key::A, 60), // C4
+                            (egui::Key::W, 61), // C#4
+                            (egui::Key::S, 62), // D4
+                            (egui::Key::E, 63), // D#4
+                            (egui::Key::D, 64), // E4
+                            (egui::Key::F, 65), // F4
+                            (egui::Key::T, 66), // F#4
+                            (egui::Key::G, 67), // G4
+                            (egui::Key::Y, 68), // G#4
+                            (egui::Key::H, 69), // A4
+                            (egui::Key::U, 70), // A#4
+                            (egui::Key::J, 71), // B4
+                            (egui::Key::K, 72), // C5
+                        ];
+
+                        egui_ctx.input(|i| {
+                            for &(key, midi) in QWERTY_KEYS {
+                                if i.key_pressed(key) {
+                                    let _ = gui_tx.send(EngineEvent::NoteOn {
+                                        time: 0,
+                                        key: midi,
+                                        velocity: 0.85,
+                                    });
+                                }
+                                if i.key_released(key) {
+                                    let _ = gui_tx.send(EngineEvent::NoteOff {
+                                        time: 0,
+                                        key: midi,
+                                    });
+                                }
                             }
                         });
 
