@@ -106,7 +106,8 @@ impl<'a> PianoKeyboardWidget<'a> {
         }
 
         // Target key to hold down: primary button actively down, not released this frame, pointer in rect
-        let target_held = if is_primary_down && !is_primary_released && (response.hovered() || response.dragged()) {
+        let is_in_keyboard = pointer_pos.map_or(false, |pos| rect.contains(pos));
+        let target_held = if is_primary_down && !is_primary_released && is_in_keyboard {
             hovered_key
         } else {
             None

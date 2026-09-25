@@ -338,11 +338,17 @@ fn soft_limit(x: f32) -> f32 {
         let orbit_p_arc = self.recent_orbit_p.clone();
         let gui_tx = self.gui_event_tx.clone();
 
+        #[derive(Default)]
+        struct GuiKeyboardState {
+            held_mouse_key: Option<u8>,
+            held_qwerty_keys: HashSet<egui::Key>,
+        }
+
         create_egui_editor(
             self.params.editor_state.clone(),
-            Option::<u8>::None,
+            GuiKeyboardState::default(),
             |_, _| {},
-            move |egui_ctx, setter, held_mouse_key| {
+            move |egui_ctx, setter, gui_state| {
                 egui::CentralPanel::default()
                     .frame(egui::Frame::NONE.fill(Color32::from_rgb(18, 19, 24)))
                     .show(egui_ctx, |ui| {
@@ -437,7 +443,7 @@ fn soft_limit(x: f32) -> f32 {
                         // 88-Key Interactive Piano Keyboard
                         ui.group(|ui| {
                             let keys_read = active_keys_arc.read();
-                            let mut kb = PianoKeyboardWidget::new(&*keys_read, held_mouse_key);
+                            let mut kb = PianoKeyboardWidget::new(&*keys_read, &mut gui_state.held_mouse_key);
 
                             let avail_w = ui.available_width();
                             let kb_h = 135.0f32;
@@ -460,6 +466,8 @@ fn soft_limit(x: f32) -> f32 {
                         });
 
                         // Handle QWERTY laptop keyboard input (C4 to C5 octave)
+                        // Uses stateful tracking (gui_state.held_qwerty_keys) to strictly suppress
+                        // OS auto-repeat events when holding keys down.
                         const QWERTY_KEYS: &[(egui::Key, u8)] = &[
                             (egui::Key::A, 60), // C4
                             (egui::Key::W, 61), // C#4
@@ -478,14 +486,18 @@ fn soft_limit(x: f32) -> f32 {
 
                         egui_ctx.input(|i| {
                             for &(key, midi) in QWERTY_KEYS {
-                                if i.key_pressed(key) {
+                                let is_down = i.key_down(key);
+                                let was_down = gui_state.held_qwerty_keys.contains(&key);
+
+                                if is_down && !was_down {
+                                    gui_state.held_qwerty_keys.insert(key);
                                     let _ = gui_tx.send(EngineEvent::NoteOn {
                                         time: 0,
                                         key: midi,
                                         velocity: 0.85,
                                     });
-                                }
-                                if i.key_released(key) {
+                                } else if !is_down && was_down {
+                                    gui_state.held_qwerty_keys.remove(&key);
                                     let _ = gui_tx.send(EngineEvent::NoteOff {
                                         time: 0,
                                         key: midi,
