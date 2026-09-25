@@ -327,9 +327,9 @@ impl Plugin for PhysicsPiano {
 
         create_egui_editor(
             self.params.editor_state.clone(),
-            (),
+            Option::<u8>::None,
             |_, _| {},
-            move |egui_ctx, setter, _state| {
+            move |egui_ctx, setter, held_mouse_key| {
                 egui::CentralPanel::default()
                     .frame(egui::Frame::NONE.fill(Color32::from_rgb(18, 19, 24)))
                     .show(egui_ctx, |ui| {
@@ -424,7 +424,7 @@ impl Plugin for PhysicsPiano {
                         // 88-Key Interactive Piano Keyboard
                         ui.group(|ui| {
                             let keys_read = active_keys_arc.read();
-                            let mut kb = PianoKeyboardWidget::new(&*keys_read);
+                            let mut kb = PianoKeyboardWidget::new(&*keys_read, held_mouse_key);
 
                             let avail_w = ui.available_width();
                             let kb_h = 135.0f32;

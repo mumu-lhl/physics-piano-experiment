@@ -7,14 +7,16 @@ use std::collections::HashSet;
 
 pub struct PianoKeyboardWidget<'a> {
     pub active_keys: &'a HashSet<u8>,
+    pub held_mouse_key: &'a mut Option<u8>,
     pub pressed_keys: Vec<(u8, f32)>, // (midi_key, velocity) triggered this frame
     pub released_keys: Vec<u8>,       // midi_key released this frame
 }
 
 impl<'a> PianoKeyboardWidget<'a> {
-    pub fn new(active_keys: &'a HashSet<u8>) -> Self {
+    pub fn new(active_keys: &'a HashSet<u8>, held_mouse_key: &'a mut Option<u8>) -> Self {
         Self {
             active_keys,
+            held_mouse_key,
             pressed_keys: Vec::new(),
             released_keys: Vec::new(),
         }
@@ -71,12 +73,9 @@ impl<'a> PianoKeyboardWidget<'a> {
             }
         }
 
-        // Mouse interaction state tracking via egui temporary ID memory
-        let mouse_held_id = ui.id().with("piano_mouse_held_key");
-        let prev_held: Option<u8> = ui.data(|d| d.get_temp(mouse_held_id));
-
         let is_primary_down = ui.input(|i| i.pointer.primary_down());
-        let pointer_pos = ui.input(|i| i.pointer.interact_pos());
+        let is_primary_released = ui.input(|i| i.pointer.primary_released());
+        let pointer_pos = ui.input(|i| i.pointer.latest_pos());
 
         let mut hovered_key = None;
         let mut click_vel = 0.8f32;
@@ -106,27 +105,33 @@ impl<'a> PianoKeyboardWidget<'a> {
             }
         }
 
-        // The key is currently held if the primary mouse button is actively down AND pointer is in rect
-        let current_held = if is_primary_down && (response.hovered() || response.dragged()) {
+        // Target key to hold down: primary button actively down, not released this frame, pointer in rect
+        let target_held = if is_primary_down && !is_primary_released && (response.hovered() || response.dragged()) {
             hovered_key
         } else {
             None
         };
 
-        if prev_held != current_held {
-            if let Some(old_k) = prev_held {
+        if *self.held_mouse_key != target_held {
+            if let Some(old_k) = self.held_mouse_key.take() {
                 self.released_keys.push(old_k);
             }
-            if let Some(new_k) = current_held {
+            if let Some(new_k) = target_held {
                 self.pressed_keys.push((new_k, click_vel));
+                *self.held_mouse_key = Some(new_k);
             }
-            ui.data_mut(|d| d.insert_temp(mouse_held_id, current_held));
+        } else if is_primary_released {
+            if let Some(old_k) = self.held_mouse_key.take() {
+                self.released_keys.push(old_k);
+            }
         }
+
+        let currently_held = *self.held_mouse_key;
 
         // Draw White Keys
         for (i, r) in white_key_rects.iter().enumerate() {
             let midi = white_key_midis[i];
-            let is_active = self.active_keys.contains(&midi) || current_held == Some(midi);
+            let is_active = self.active_keys.contains(&midi) || currently_held == Some(midi);
 
             let fill = if is_active {
                 Color32::from_rgb(255, 215, 110) // Warm active glow
@@ -160,7 +165,7 @@ impl<'a> PianoKeyboardWidget<'a> {
         // Draw Black Keys on top
         for (i, r) in black_key_rects.iter().enumerate() {
             let midi = black_key_midis[i];
-            let is_active = self.active_keys.contains(&midi) || current_held == Some(midi);
+            let is_active = self.active_keys.contains(&midi) || currently_held == Some(midi);
 
             let fill = if is_active {
                 Color32::from_rgb(230, 160, 40) // Amber active glow
