@@ -8,6 +8,7 @@ use nih_plug_egui::{
 };
 use std::collections::HashSet;
 use std::num::NonZeroU32;
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use crate::engine::{EngineEvent, EngineOutEvent, PianoEngine};
@@ -207,12 +208,18 @@ pub struct PhysicsPiano {
     gui_event_tx: crossbeam_channel::Sender<EngineEvent>,
     gui_event_rx: crossbeam_channel::Receiver<EngineEvent>,
 
-    // Real-time visualization state shared with GUI
+    // Real-time visualization state shared with GUI (lock-free atomics)
     peak_l: Arc<AtomicF32>,
     peak_r: Arc<AtomicF32>,
-    active_keys: Arc<parking_lot::RwLock<HashSet<u8>>>,
+    active_keys_low: Arc<AtomicU64>,   // Bitset for MIDI 21..84 (64 keys)
+    active_keys_high: Arc<AtomicU64>,  // Bitset for MIDI 85..108 (24 keys)
     recent_orbit_t: Arc<parking_lot::RwLock<Vec<f32>>>,
     recent_orbit_p: Arc<parking_lot::RwLock<Vec<f32>>>,
+    language: Arc<AtomicU8>,           // 0: English, 1: SimplifiedChinese
+
+    // Edge-triggered parameter tracking to prevent overwriting MIDI CC
+    prev_sustain: f32,
+    prev_una_corda: bool,
 
     // Scratch buffers
     events_scratch: Vec<EngineEvent>,
@@ -224,6 +231,9 @@ pub struct PhysicsPiano {
 impl Default for PhysicsPiano {
     fn default() -> Self {
         let (tx, rx) = crossbeam_channel::unbounded();
+        let default_lang = Language::from_system_locale();
+        let lang_code = if default_lang == Language::SimplifiedChinese { 1 } else { 0 };
+
         Self {
             params: Arc::new(PhysicsPianoParams::default()),
             engine: PianoEngine::new(48000.0, 35, true),
@@ -231,9 +241,13 @@ impl Default for PhysicsPiano {
             gui_event_rx: rx,
             peak_l: Arc::new(AtomicF32::new(0.0)),
             peak_r: Arc::new(AtomicF32::new(0.0)),
-            active_keys: Arc::new(parking_lot::RwLock::new(HashSet::with_capacity(32))),
+            active_keys_low: Arc::new(AtomicU64::new(0)),
+            active_keys_high: Arc::new(AtomicU64::new(0)),
             recent_orbit_t: Arc::new(parking_lot::RwLock::new(vec![0.0; 64])),
             recent_orbit_p: Arc::new(parking_lot::RwLock::new(vec![0.0; 64])),
+            language: Arc::new(AtomicU8::new(lang_code)),
+            prev_sustain: 0.0,
+            prev_una_corda: false,
             events_scratch: Vec::with_capacity(64),
             out_events_scratch: Vec::with_capacity(64),
             scratch_l: vec![0.0; 512],
@@ -275,13 +289,19 @@ impl Plugin for PhysicsPiano {
         let max_samples = buffer_config.max_buffer_size as usize;
         self.scratch_l = vec![0.0; max_samples];
         self.scratch_r = vec![0.0; max_samples];
+
+        // Seed initial parameters
+        self.prev_sustain = self.params.sustain_pedal.value();
+        self.prev_una_corda = self.params.una_corda.value();
+        self.engine.set_sustain_pedal(self.prev_sustain > 0.01, self.prev_sustain as f64);
+        self.engine.set_una_corda(self.prev_una_corda);
         true
     }
 
     fn reset(&mut self) {
-        self.engine.active_keys.clear();
-        self.engine.voices.clear();
-        self.active_keys.write().clear();
+        self.engine.reset();
+        self.active_keys_low.store(0, Ordering::Relaxed);
+        self.active_keys_high.store(0, Ordering::Relaxed);
     }
 
     fn process(
@@ -338,10 +358,18 @@ impl Plugin for PhysicsPiano {
             self.events_scratch.push(gui_ev);
         }
 
-        // Sync parameter changes
+        // Sync parameter changes only on change to avoid overriding incoming MIDI CC 64/67
         let sustain_val = self.params.sustain_pedal.value();
-        self.engine.set_sustain_pedal(sustain_val > 0.01, sustain_val as f64);
-        self.engine.set_una_corda(self.params.una_corda.value());
+        if (sustain_val - self.prev_sustain).abs() > 1e-4 {
+            self.prev_sustain = sustain_val;
+            self.engine.set_sustain_pedal(sustain_val > 0.01, sustain_val as f64);
+        }
+
+        let una_val = self.params.una_corda.value();
+        if una_val != self.prev_una_corda {
+            self.prev_una_corda = una_val;
+            self.engine.set_una_corda(una_val);
+        }
 
         // Voicing & Physical parameters
         self.engine.set_inharmonicity_scale(self.params.inharmonicity_scale.value() as f64);
@@ -408,14 +436,18 @@ fn soft_limit(x: f32) -> f32 {
         self.peak_l.store(prev_l * 0.92 + max_l * 0.08, std::sync::atomic::Ordering::Relaxed);
         self.peak_r.store(prev_r * 0.92 + max_r * 0.08, std::sync::atomic::Ordering::Relaxed);
 
-        // Sync physically depressed keys for GUI keyboard visualization
-        {
-            let mut keys = self.active_keys.write();
-            keys.clear();
-            for &k in &self.engine.depressed_keys {
-                keys.insert(k);
+        // Sync physically depressed keys for GUI keyboard visualization using lock-free atomics
+        let mut low_mask = 0u64;
+        let mut high_mask = 0u64;
+        for &k in &self.engine.depressed_keys {
+            if (21..85).contains(&k) {
+                low_mask |= 1u64 << (k - 21);
+            } else if (85..=108).contains(&k) {
+                high_mask |= 1u64 << (k - 85);
             }
         }
+        self.active_keys_low.store(low_mask, Ordering::Relaxed);
+        self.active_keys_high.store(high_mask, Ordering::Relaxed);
 
         // Sync bridge dual-polarization orbit for oscilloscope visualizer
         if let Some(mut orb_t) = self.recent_orbit_t.try_write() {
@@ -437,9 +469,11 @@ fn soft_limit(x: f32) -> f32 {
         let params = self.params.clone();
         let peak_l = self.peak_l.clone();
         let peak_r = self.peak_r.clone();
-        let active_keys_arc = self.active_keys.clone();
+        let keys_low_arc = self.active_keys_low.clone();
+        let keys_high_arc = self.active_keys_high.clone();
         let orbit_t_arc = self.recent_orbit_t.clone();
         let orbit_p_arc = self.recent_orbit_p.clone();
+        let language_arc = self.language.clone();
         let gui_tx = self.gui_event_tx.clone();
 
         struct GuiKeyboardState {
@@ -448,19 +482,19 @@ fn soft_limit(x: f32) -> f32 {
             language: Language,
         }
 
-        impl Default for GuiKeyboardState {
-            fn default() -> Self {
-                Self {
-                    held_mouse_key: None,
-                    held_qwerty_keys: HashSet::new(),
-                    language: Language::from_system_locale(),
-                }
-            }
-        }
+        let initial_lang = if self.language.load(Ordering::Relaxed) == 1 {
+            Language::SimplifiedChinese
+        } else {
+            Language::English
+        };
 
         create_egui_editor(
             self.params.editor_state.clone(),
-            GuiKeyboardState::default(),
+            GuiKeyboardState {
+                held_mouse_key: None,
+                held_qwerty_keys: HashSet::new(),
+                language: initial_lang,
+            },
             |egui_ctx, _gui_state| {
                 setup_cjk_fonts(egui_ctx);
             },
@@ -485,7 +519,7 @@ fn soft_limit(x: f32) -> f32 {
                                     .color(Color32::from_rgb(150, 155, 170)),
                             );
 
-                            // Language Switcher Toggle Button
+                            // Language Switcher Toggle Button (persists choice)
                             let (btn_text, next_lang) = match lang {
                                 Language::English => ("🌐 中文", Language::SimplifiedChinese),
                                 Language::SimplifiedChinese => ("🌐 English", Language::English),
@@ -499,6 +533,10 @@ fn soft_limit(x: f32) -> f32 {
                                 .clicked()
                             {
                                 gui_state.language = next_lang;
+                                language_arc.store(
+                                    if next_lang == Language::SimplifiedChinese { 1 } else { 0 },
+                                    Ordering::Relaxed,
+                                );
                             }
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -527,7 +565,9 @@ fn soft_limit(x: f32) -> f32 {
                                             ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.sustain_pedal, setter).with_width(85.0));
                                             let mut una = params.una_corda.value();
                                             if ui.checkbox(&mut una, I18n::una_corda(lang)).changed() {
+                                                setter.begin_set_parameter(&params.una_corda);
                                                 setter.set_parameter(&params.una_corda, una);
+                                                setter.end_set_parameter(&params.una_corda);
                                             }
                                         });
                                         ui.vertical(|ui| {
@@ -598,10 +638,21 @@ fn soft_limit(x: f32) -> f32 {
 
                         ui.add_space(8.0);
 
-                        // 88-Key Interactive Piano Keyboard
+                        // 88-Key Interactive Piano Keyboard (100% Lock-Free query)
                         ui.group(|ui| {
-                            let keys_read = active_keys_arc.read();
-                            let mut kb = PianoKeyboardWidget::new(&*keys_read, &mut gui_state.held_mouse_key);
+                            let low = keys_low_arc.load(Ordering::Relaxed);
+                            let high = keys_high_arc.load(Ordering::Relaxed);
+                            let is_active = move |k: u8| -> bool {
+                                if (21..85).contains(&k) {
+                                    (low & (1u64 << (k - 21))) != 0
+                                } else if (85..=108).contains(&k) {
+                                    (high & (1u64 << (k - 85))) != 0
+                                } else {
+                                    false
+                                }
+                            };
+
+                            let mut kb = PianoKeyboardWidget::new(&is_active, &mut gui_state.held_mouse_key);
 
                             let avail_w = ui.available_width();
                             let kb_h = 135.0f32;

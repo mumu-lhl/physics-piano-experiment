@@ -468,4 +468,22 @@ impl PianoEngine {
 
         (out_left, out_right)
     }
+
+    /// Full DSP and voice state reset on transport stop / seek / restart.
+    pub fn reset(&mut self) {
+        self.voices.clear();
+        self.active_keys.clear();
+        self.depressed_keys.clear();
+        self.active_keys_vec.clear();
+        self.note_energy_peak.clear();
+        self.f_react_t = 0.0;
+        self.f_react_p = 0.0;
+        self.bridge = BridgeSoundboard::new(self.sample_rate);
+        self.lid_baffle = LidBaffle::new(self.sample_rate);
+        self.action_noise = KeyActionNoise::new(self.sample_rate);
+        self.damper_whoosh = DamperWhoosh::new(self.sample_rate);
+        self.plate_shock = PlateShock::new(self.sample_rate);
+        self.restrike_buzz = RestrikeBuzz::new(self.sample_rate);
+    }
 }
+

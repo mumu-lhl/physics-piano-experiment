@@ -3,19 +3,18 @@
 use nih_plug_egui::egui::{
     self, Color32, Pos2, Rect, Response, Sense, Stroke, Ui, Vec2,
 };
-use std::collections::HashSet;
 
 pub struct PianoKeyboardWidget<'a> {
-    pub active_keys: &'a HashSet<u8>,
+    pub is_key_active: &'a dyn Fn(u8) -> bool,
     pub held_mouse_key: &'a mut Option<u8>,
     pub pressed_keys: Vec<(u8, f32)>, // (midi_key, velocity) triggered this frame
     pub released_keys: Vec<u8>,       // midi_key released this frame
 }
 
 impl<'a> PianoKeyboardWidget<'a> {
-    pub fn new(active_keys: &'a HashSet<u8>, held_mouse_key: &'a mut Option<u8>) -> Self {
+    pub fn new(is_key_active: &'a dyn Fn(u8) -> bool, held_mouse_key: &'a mut Option<u8>) -> Self {
         Self {
-            active_keys,
+            is_key_active,
             held_mouse_key,
             pressed_keys: Vec::new(),
             released_keys: Vec::new(),
@@ -132,7 +131,7 @@ impl<'a> PianoKeyboardWidget<'a> {
         // Draw White Keys
         for (i, r) in white_key_rects.iter().enumerate() {
             let midi = white_key_midis[i];
-            let is_active = self.active_keys.contains(&midi) || currently_held == Some(midi);
+            let is_active = (self.is_key_active)(midi) || currently_held == Some(midi);
 
             let fill = if is_active {
                 Color32::from_rgb(255, 215, 110) // Warm active glow
@@ -166,7 +165,7 @@ impl<'a> PianoKeyboardWidget<'a> {
         // Draw Black Keys on top
         for (i, r) in black_key_rects.iter().enumerate() {
             let midi = black_key_midis[i];
-            let is_active = self.active_keys.contains(&midi) || currently_held == Some(midi);
+            let is_active = (self.is_key_active)(midi) || currently_held == Some(midi);
 
             let fill = if is_active {
                 Color32::from_rgb(230, 160, 40) // Amber active glow
