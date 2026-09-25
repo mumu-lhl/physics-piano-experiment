@@ -104,13 +104,33 @@ ui.group(|ui| {
 });
 ```
 
-### Pitfall 3: NIH-Plug `ParamSlider` vs `egui::Slider`
-For audio plugin parameters connected to `nih_plug::prelude::*Param`:
-- **Prefer `nih_plug_egui::widgets::ParamSlider`**:
-  - Automatically manages DAW parameter gestures (`setter.begin_set_parameter`, `setter.set_parameter`, `setter.end_set_parameter`).
-  - Displays the formatted parameter value and units (e.g., `-6.0 dB`, `15 %`, `440.0 Hz`) **inside** the slider bar.
-  - Supports double-click / right-click for direct numerical typing.
-  - Supports `.with_width(w)` to guarantee zero overflow.
+### Pitfall 3: NIH-Plug `ParamSlider` Internal Width & Value Box Offset
+**The Trap:**
+In `nih_plug_egui::widgets::ParamSlider`, `.with_width(w)` sets **only the width of the draggable slider bar**, NOT the total widget width!
+Internally, `ParamSlider::ui` is implemented as:
+```rust
+ui.horizontal(|ui| {
+    // 1. Draggable slider bar of width `w`
+    ui.vertical(|ui| { ui.allocate_response(vec2(slider_width, height), ...); });
+    // 2. Value display box (e.g. "0.0 dB", "15 %", "440.0 Hz") appended to the RIGHT!
+    if self.draw_value {
+        self.value_ui(ui); // Consumes an additional ~55px - 65px!
+    }
+});
+```
+If you set `let slider_w = (column_width - 8.0)`, the total widget width becomes `column_width + 55px`, which silently overflows the column! In the rightmost column of a rack (e.g. Master Output), this pushes the value box and the slider handle **completely off the right screen border**.
+
+**Standard Sizing Rule:**
+Always reserve at least `70.0px` for the value box and internal padding:
+```rust
+// ✅ CORRECT: Total widget width (slider_w + 60px) fits perfectly within section_width
+let slider_w = (section_width - 70.0).clamp(60.0, 160.0);
+ui.add(ParamSlider::for_param(&params.master_gain, setter).with_width(slider_w));
+
+// ❌ WRONG: Value box overflows column by ~50px, causing right-side clipping
+let slider_w = (section_width - 8.0).max(60.0);
+ui.add(ParamSlider::for_param(&params.master_gain, setter).with_width(slider_w));
+```
 
 ### Pitfall 4: Stale Persisted Window Geometry
 When using `#[persist = "editor-state-vX"]` with `EguiState`:

@@ -15,11 +15,13 @@ use crate::engine::{GuitarEngine, GuitarInstrumentMode};
 use crate::params::GuitarStringSetType;
 use crate::core::pluck::PluckStyle;
 use crate::core::pickup::{PickupType, PickupSelector};
+use crate::core::groove::GroovePattern;
+use crate::presets::FactoryPreset;
 use crate::gui::{GuitarFretboardWidget, I18n, Language, setup_cjk_fonts};
 
 #[derive(Params)]
 pub struct PhysicsGuitarParams {
-    #[persist = "editor-state-v7"]
+    #[persist = "editor-state-v9"]
     pub editor_state: Arc<EguiState>,
 
     /// Instrument Mode: 0 = Electric, 1 = Acoustic
@@ -66,6 +68,18 @@ pub struct PhysicsGuitarParams {
     #[id = "fret_buzz"]
     pub fret_buzz: FloatParam,
 
+    /// Wound String Finger Squeak / Slide Noise [0.0 ~ 1.0]
+    #[id = "finger_squeak"]
+    pub finger_squeak: FloatParam,
+
+    /// Groove Accompaniment Pattern [0 = Off, 1 = Folk 4/4, 2 = Ballad 6/8, 3 = Funk 16th, 4 = Rock 8th]
+    #[id = "groove_pattern"]
+    pub groove_pattern: IntParam,
+
+    /// Groove Accompaniment Manual BPM [40.0 ~ 240.0]
+    #[id = "groove_bpm"]
+    pub groove_bpm: FloatParam,
+
     /// Master Output Gain [-30 dB ~ +6 dB]
     #[id = "gain"]
     pub master_gain: FloatParam,
@@ -74,7 +88,7 @@ pub struct PhysicsGuitarParams {
 impl Default for PhysicsGuitarParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(1020, 560),
+            editor_state: EguiState::from_size(1100, 580),
 
             mode: IntParam::new("Instrument Mode", 0, IntRange::Linear { min: 0, max: 1 }),
             pluck_style: IntParam::new("Pluck Style", 0, IntRange::Linear { min: 0, max: 1 }),
@@ -134,6 +148,25 @@ impl Default for PhysicsGuitarParams {
             .with_unit(" %")
             .with_value_to_string(formatters::v2s_f32_percentage(0))
             .with_string_to_value(formatters::s2v_f32_percentage()),
+
+            finger_squeak: FloatParam::new(
+                "Finger Squeak",
+                0.40,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_unit(" %")
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
+
+            groove_pattern: IntParam::new("Groove Pattern", 0, IntRange::Linear { min: 0, max: 4 }),
+
+            groove_bpm: FloatParam::new(
+                "Groove BPM",
+                120.0,
+                FloatRange::Linear { min: 40.0, max: 240.0 },
+            )
+            .with_unit(" BPM")
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
 
             master_gain: FloatParam::new(
                 "Master Gain",
@@ -315,6 +348,13 @@ impl Plugin for PhysicsGuitar {
         self.engine.set_palm_mute(self.params.palm_mute.value() as f64);
         self.engine.set_fret_buzz(self.params.fret_buzz.value() as f64);
         self.engine.strummer.set_strum_speed_ms(self.params.strum_speed.value() as f64);
+        self.engine.squeak.squeak_level = self.params.finger_squeak.value() as f64;
+        self.engine.groove.set_pattern(GroovePattern::from_index(self.params.groove_pattern.value()));
+        if let Some(tempo) = context.transport().tempo {
+            self.engine.groove.set_bpm(tempo);
+        } else {
+            self.engine.groove.set_bpm(self.params.groove_bpm.value() as f64);
+        }
         self.engine.amp_cab.drive = self.params.amp_drive.value() as f64;
         self.engine.amp_cab.cab_enabled = self.params.cab_enabled.value();
         self.engine.pluck_pos_ratio = self.params.pluck_pos.value() as f64;
@@ -377,6 +417,7 @@ impl Plugin for PhysicsGuitar {
         struct GuiGuitarState {
             held_mouse_fret: Option<(u8, u8)>,
             language: Language,
+            selected_preset: Option<usize>,
         }
 
         let initial_lang = if language_arc.load(Ordering::Relaxed) == 1 {
@@ -390,6 +431,7 @@ impl Plugin for PhysicsGuitar {
             GuiGuitarState {
                 held_mouse_fret: None,
                 language: initial_lang,
+                selected_preset: Some(0),
             },
             |egui_ctx, _gui_state| {
                 setup_cjk_fonts(egui_ctx);
@@ -399,7 +441,7 @@ impl Plugin for PhysicsGuitar {
                 egui::CentralPanel::default().show(egui_ctx, |ui| {
                     ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
 
-                    // Top Banner Header with Title and Language Toggle
+                    // Top Banner Header with Title, Presets, and Language Toggle
                     ui.horizontal(|ui| {
                         ui.heading(
                             RichText::new(I18n::title(lang))
@@ -409,16 +451,16 @@ impl Plugin for PhysicsGuitar {
                         );
                         ui.label(
                             RichText::new(I18n::subtitle(lang))
-                                .font(FontId::proportional(12.0))
+                                .font(FontId::proportional(11.0))
                                 .color(Color32::from_rgb(170, 175, 190)),
                         );
 
-                        // Language Switcher Toggle Button (persists choice)
-                        let (btn_text, next_lang) = match lang {
-                            Language::English => ("🌐 中文", Language::SimplifiedChinese),
-                            Language::SimplifiedChinese => ("🌐 English", Language::English),
-                        };
+                        // Right-aligned controls: Language Switcher & Preset Selector
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let (btn_text, next_lang) = match lang {
+                                Language::English => ("🌐 中文", Language::SimplifiedChinese),
+                                Language::SimplifiedChinese => ("🌐 English", Language::English),
+                            };
                             if ui
                                 .button(
                                     RichText::new(btn_text)
@@ -433,6 +475,79 @@ impl Plugin for PhysicsGuitar {
                                     Ordering::Relaxed,
                                 );
                             }
+
+                            // Preset Selector Dropdown
+                            let current_preset_name = match gui_state.selected_preset {
+                                Some(idx) => FactoryPreset::from_index(idx).name(lang),
+                                None => FactoryPreset::MartinD28Fingerstyle.name(lang),
+                            };
+
+                            egui::ComboBox::from_id_salt("preset_selector_combo")
+                                .selected_text(current_preset_name)
+                                .width(180.0)
+                                .show_ui(ui, |ui| {
+                                    for (idx, &preset) in FactoryPreset::all().iter().enumerate() {
+                                        let is_sel = gui_state.selected_preset == Some(idx);
+                                        if ui.selectable_label(is_sel, preset.name(lang)).clicked() {
+                                            gui_state.selected_preset = Some(idx);
+                                            let v = preset.values();
+
+                                            setter.begin_set_parameter(&params.mode);
+                                            setter.set_parameter(&params.mode, v.mode);
+                                            setter.end_set_parameter(&params.mode);
+
+                                            setter.begin_set_parameter(&params.pluck_style);
+                                            setter.set_parameter(&params.pluck_style, v.pluck_style);
+                                            setter.end_set_parameter(&params.pluck_style);
+
+                                            setter.begin_set_parameter(&params.pickup_pos);
+                                            setter.set_parameter(&params.pickup_pos, v.pickup_pos);
+                                            setter.end_set_parameter(&params.pickup_pos);
+
+                                            setter.begin_set_parameter(&params.pickup_type);
+                                            setter.set_parameter(&params.pickup_type, v.pickup_type);
+                                            setter.end_set_parameter(&params.pickup_type);
+
+                                            setter.begin_set_parameter(&params.tone);
+                                            setter.set_parameter(&params.tone, v.tone);
+                                            setter.end_set_parameter(&params.tone);
+
+                                            setter.begin_set_parameter(&params.amp_drive);
+                                            setter.set_parameter(&params.amp_drive, v.amp_drive);
+                                            setter.end_set_parameter(&params.amp_drive);
+
+                                            setter.begin_set_parameter(&params.cab_enabled);
+                                            setter.set_parameter(&params.cab_enabled, v.cab_enabled);
+                                            setter.end_set_parameter(&params.cab_enabled);
+
+                                            setter.begin_set_parameter(&params.palm_mute);
+                                            setter.set_parameter(&params.palm_mute, v.palm_mute);
+                                            setter.end_set_parameter(&params.palm_mute);
+
+                                            setter.begin_set_parameter(&params.strum_speed);
+                                            setter.set_parameter(&params.strum_speed, v.strum_speed);
+                                            setter.end_set_parameter(&params.strum_speed);
+
+                                            setter.begin_set_parameter(&params.fret_buzz);
+                                            setter.set_parameter(&params.fret_buzz, v.fret_buzz);
+                                            setter.end_set_parameter(&params.fret_buzz);
+
+                                            setter.begin_set_parameter(&params.pluck_pos);
+                                            setter.set_parameter(&params.pluck_pos, v.pluck_pos);
+                                            setter.end_set_parameter(&params.pluck_pos);
+
+                                            setter.begin_set_parameter(&params.finger_squeak);
+                                            setter.set_parameter(&params.finger_squeak, v.finger_squeak);
+                                            setter.end_set_parameter(&params.finger_squeak);
+
+                                            setter.begin_set_parameter(&params.groove_pattern);
+                                            setter.set_parameter(&params.groove_pattern, v.groove_pattern);
+                                            setter.end_set_parameter(&params.groove_pattern);
+                                        }
+                                    }
+                                });
+
+                            ui.label(RichText::new(I18n::preset_label(lang)).color(Color32::from_rgb(180, 190, 210)));
                         });
                     });
 
@@ -442,9 +557,11 @@ impl Plugin for PhysicsGuitar {
                     ui.group(|ui| {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
-                            let total_spacing = 3.0 * 16.0 + 20.0;
-                            let section_width = ((ui.available_width() - total_spacing) / 4.0).clamp(160.0, 260.0);
-                            let slider_w = (section_width - 8.0).max(60.0);
+                            let total_spacing = 3.0 * 16.0 + 24.0;
+                            let section_width = ((ui.available_width() - total_spacing) / 4.0).clamp(160.0, 240.0);
+                            // CRITICAL: ParamSlider appends an internal ~60px value label box to the right of slider_width!
+                            // Therefore, slider bar width must be bounded to (section_width - 70.0) so the entire widget fits!
+                            let slider_w = (section_width - 70.0).clamp(60.0, 150.0);
 
                             // Section 0: Instrument & Pickup (乐器与拾音)
                             ui.vertical(|ui| {
@@ -465,10 +582,12 @@ impl Plugin for PhysicsGuitar {
 
                                 ui.label(RichText::new(I18n::pickup_pos(lang)).color(Color32::from_rgb(160, 165, 180)));
                                 let mut pos_idx = params.pickup_pos.value();
-                                ui.horizontal_wrapped(|ui| {
+                                ui.horizontal(|ui| {
                                     ui.radio_value(&mut pos_idx, 0, I18n::pickup_bridge(lang));
                                     ui.radio_value(&mut pos_idx, 1, I18n::pickup_mid(lang));
                                     ui.radio_value(&mut pos_idx, 2, I18n::pickup_neck(lang));
+                                });
+                                ui.horizontal(|ui| {
                                     ui.radio_value(&mut pos_idx, 3, I18n::pickup_bn(lang));
                                     ui.radio_value(&mut pos_idx, 4, I18n::pickup_bm(lang));
                                 });
@@ -517,7 +636,7 @@ impl Plugin for PhysicsGuitar {
 
                             ui.separator();
 
-                            // Section 2: Strum & Technique (弹奏与扫弦)
+                            // Section 2: Strum & Groove (弹奏与伴奏)
                             ui.vertical(|ui| {
                                 ui.set_width(section_width);
                                 ui.set_max_width(section_width);
@@ -538,13 +657,28 @@ impl Plugin for PhysicsGuitar {
                                 ui.label(RichText::new(I18n::strum_speed(lang)).color(Color32::from_rgb(160, 165, 180)));
                                 ui.add(ParamSlider::for_param(&params.strum_speed, setter).with_width(slider_w));
 
-                                ui.label(RichText::new(I18n::fret_buzz(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                ui.add(ParamSlider::for_param(&params.fret_buzz, setter).with_width(slider_w));
+                                ui.label(RichText::new(I18n::finger_squeak(lang)).color(Color32::from_rgb(160, 165, 180)));
+                                ui.add(ParamSlider::for_param(&params.finger_squeak, setter).with_width(slider_w));
+
+                                ui.label(RichText::new(I18n::groove_pattern(lang)).color(Color32::from_rgb(160, 165, 180)));
+                                let cur_groove = params.groove_pattern.value();
+                                egui::ComboBox::from_id_salt("groove_pattern_combo")
+                                    .selected_text(I18n::groove_name(cur_groove, lang))
+                                    .width(slider_w)
+                                    .show_ui(ui, |ui| {
+                                        for g_idx in 0..=4 {
+                                            if ui.selectable_label(cur_groove == g_idx, I18n::groove_name(g_idx, lang)).clicked() {
+                                                setter.begin_set_parameter(&params.groove_pattern);
+                                                setter.set_parameter(&params.groove_pattern, g_idx);
+                                                setter.end_set_parameter(&params.groove_pattern);
+                                            }
+                                        }
+                                    });
                             });
 
                             ui.separator();
 
-                            // Section 3: Master Output (总输出)
+                            // Section 3: Master Output (总输出 - safe, wide right margin)
                             ui.vertical(|ui| {
                                 ui.set_width(section_width);
                                 ui.set_max_width(section_width);
@@ -553,6 +687,9 @@ impl Plugin for PhysicsGuitar {
 
                                 ui.label(RichText::new(I18n::pluck_pos(lang)).color(Color32::from_rgb(160, 165, 180)));
                                 ui.add(ParamSlider::for_param(&params.pluck_pos, setter).with_width(slider_w));
+
+                                ui.label(RichText::new(I18n::fret_buzz(lang)).color(Color32::from_rgb(160, 165, 180)));
+                                ui.add(ParamSlider::for_param(&params.fret_buzz, setter).with_width(slider_w));
 
                                 ui.label(RichText::new(I18n::master_gain(lang)).color(Color32::from_rgb(160, 165, 180)));
                                 ui.add(ParamSlider::for_param(&params.master_gain, setter).with_width(slider_w));

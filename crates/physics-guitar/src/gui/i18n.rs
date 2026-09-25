@@ -52,15 +52,15 @@ impl I18n {
 
     pub fn mode_electric(lang: Language) -> &'static str {
         match lang {
-            Language::English => "Electric Guitar",
+            Language::English => "Electric",
             Language::SimplifiedChinese => "电吉他",
         }
     }
 
     pub fn mode_acoustic(lang: Language) -> &'static str {
         match lang {
-            Language::English => "Acoustic Guitar",
-            Language::SimplifiedChinese => "原声木吉他",
+            Language::English => "Acoustic",
+            Language::SimplifiedChinese => "木吉他",
         }
     }
 
@@ -243,6 +243,52 @@ impl I18n {
         match lang {
             Language::English => "Interactive 6-String Fretboard (Click or Drag frets to play):",
             Language::SimplifiedChinese => "6弦交互式物理指板 (鼠标点击或拖拽品位弹奏):",
+        }
+    }
+
+    pub fn preset_label(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Preset:",
+            Language::SimplifiedChinese => "出厂预设:",
+        }
+    }
+
+    pub fn finger_squeak(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Finger Squeak:",
+            Language::SimplifiedChinese => "指擦副噪声:",
+        }
+    }
+
+    pub fn groove_pattern(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Groove Style:",
+            Language::SimplifiedChinese => "伴奏切片风格:",
+        }
+    }
+
+    pub fn groove_name(idx: i32, lang: Language) -> &'static str {
+        match idx {
+            1 => match lang {
+                Language::English => "Folk 4/4 Basic",
+                Language::SimplifiedChinese => "民谣 4/4 扫弦",
+            },
+            2 => match lang {
+                Language::English => "Ballad 6/8 Arp",
+                Language::SimplifiedChinese => "慢摇 6/8 分解",
+            },
+            3 => match lang {
+                Language::English => "Funk 16th Mute",
+                Language::SimplifiedChinese => "放克 16分 切音",
+            },
+            4 => match lang {
+                Language::English => "Rock 8th Chug",
+                Language::SimplifiedChinese => "摇滚 8分 闷音",
+            },
+            _ => match lang {
+                Language::English => "Off (Manual)",
+                Language::SimplifiedChinese => "关闭 (自由演奏)",
+            },
         }
     }
 }

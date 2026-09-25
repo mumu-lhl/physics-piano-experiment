@@ -100,16 +100,18 @@ impl SmartStrummer {
         };
         self.last_direction_was_down = is_down;
 
-        let mut sorted = notes.to_vec();
+        let mut sorted = [(0usize, 0u8, 0.0f64); 6];
+        let num_strings = notes.len().min(6);
+        sorted[..num_strings].copy_from_slice(&notes[..num_strings]);
+        let slice = &mut sorted[..num_strings];
         if is_down {
             // Down-strum: low pitch string (index 5) down to high pitch string (index 0)
-            sorted.sort_by(|a, b| b.0.cmp(&a.0));
+            slice.sort_by(|a, b| b.0.cmp(&a.0));
         } else {
             // Up-strum: high pitch string (index 0) up to low pitch string (index 5)
-            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+            slice.sort_by(|a, b| a.0.cmp(&b.0));
         }
 
-        let num_strings = sorted.len();
         let total_delay_samples = (self.strum_speed_ms * 0.001 * self.sample_rate).max(1.0);
         let step_delay = if num_strings > 1 {
             total_delay_samples / (num_strings - 1) as f64
@@ -117,7 +119,7 @@ impl SmartStrummer {
             0.0
         };
 
-        for (i, &(s_idx, fret, base_vel)) in sorted.iter().enumerate() {
+        for (i, &(s_idx, fret, base_vel)) in slice.iter().enumerate() {
             // Pick resistance dynamics: subtle velocity drop along pick travel
             let vel_scale = 1.0 - 0.04 * (i as f64);
             let vel = (base_vel * vel_scale).clamp(0.1, 1.0);

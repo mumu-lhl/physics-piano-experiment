@@ -9,6 +9,8 @@ use crate::core::pickup::{MagneticPickup, PickupType, PickupSelector};
 use crate::core::body::AcousticGuitarBody;
 use crate::core::amp_cab::GuitarAmpCab;
 use crate::core::strummer::{SmartStrummer, StrumPluckEvent};
+use crate::core::squeak::FingerSqueakGenerator;
+use crate::core::groove::{GrooveEngine, GrooveAction};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuitarInstrumentMode {
@@ -36,6 +38,11 @@ pub struct GuitarEngine {
     // Smart strummer
     pub strummer: SmartStrummer,
     ready_plucks: Vec<StrumPluckEvent>,
+
+    // Physical acoustics: Finger squeak & Wound string friction
+    pub squeak: FingerSqueakGenerator,
+    // Accompaniment groove pattern engine
+    pub groove: GrooveEngine,
 
     // Performance parameters
     pub pluck_pos_ratio: f64,
@@ -73,6 +80,8 @@ impl GuitarEngine {
             body: AcousticGuitarBody::new(sample_rate),
             strummer: SmartStrummer::new(sample_rate),
             ready_plucks: Vec::with_capacity(16),
+            squeak: FingerSqueakGenerator::new(sample_rate),
+            groove: GrooveEngine::new(sample_rate),
             pluck_pos_ratio: 0.15,
             palm_mute_depth: 0.0,
             master_volume: 0.85,
@@ -105,6 +114,12 @@ impl GuitarEngine {
 
         if let Some(loc) = loc {
             let str_idx = (loc.string_index - 1) as usize;
+            let prev_fret = self.strings[str_idx].current_fret;
+            let delta = (loc.fret as i16 - prev_fret as i16).abs() as u8;
+            if delta >= 2 && str_idx >= 3 {
+                // Wound strings (D, A, low E) trigger acoustic squeak during position shifts
+                self.squeak.trigger_shift(str_idx, delta, 1.0);
+            }
             self.active_notes_on_string[str_idx] = Some(midi_note);
 
             if self.strummer.strum_speed_ms <= 1.0 {
@@ -193,6 +208,53 @@ impl GuitarEngine {
     /// Returns stereo audio frame `(left, right)`.
     #[inline(always)]
     pub fn process_sample(&mut self) -> (f64, f64) {
+        // Step groove accompaniment engine if active
+        let groove_act = self.groove.step_sample();
+        match groove_act {
+            GrooveAction::None => {}
+            GrooveAction::Strum { direction, velocity, palm_mute_override } => {
+                let mut count = 0;
+                let mut notes = [(0usize, 0u8, 0.0f64); 6];
+                for (i, s) in self.strings.iter().enumerate() {
+                    if s.is_held {
+                        notes[count] = (i, s.current_fret, velocity);
+                        count += 1;
+                    }
+                }
+                if count > 0 {
+                    if let Some(pm) = palm_mute_override {
+                        for s in &mut self.strings {
+                            s.palm_mute_depth = pm;
+                        }
+                    } else {
+                        for s in &mut self.strings {
+                            s.palm_mute_depth = self.palm_mute_depth;
+                        }
+                    }
+                    let prev_dir = self.strummer.direction;
+                    self.strummer.direction = direction;
+                    self.strummer.trigger_chord(&notes[..count]);
+                    self.strummer.direction = prev_dir;
+                }
+            }
+            GrooveAction::PluckString { string_rel_index, velocity } => {
+                let mut held = [0usize; 6];
+                let mut count = 0;
+                for (i, s) in self.strings.iter().enumerate() {
+                    if s.is_held {
+                        held[count] = i;
+                        count += 1;
+                    }
+                }
+                if count > 0 {
+                    let target_idx = held[string_rel_index % count];
+                    let s = &mut self.strings[target_idx];
+                    s.palm_mute_depth = self.palm_mute_depth;
+                    s.pluck(&self.exciter, self.pluck_pos_ratio, velocity);
+                }
+            }
+        }
+
         // Step smart strummer and pluck any ready strings
         self.strummer.step_into(&mut self.ready_plucks);
         for p in self.ready_plucks.drain(..) {
@@ -222,10 +284,13 @@ impl GuitarEngine {
             }
         }
 
+        // Tactile finger squeak noise across wound strings
+        let squeak_sample = self.squeak.process_sample();
+
         let mono_out = match self.mode {
-            GuitarInstrumentMode::Acoustic => self.body.process(total_bridge_t * 0.35),
+            GuitarInstrumentMode::Acoustic => self.body.process(total_bridge_t * 0.35) + squeak_sample * 0.5,
             GuitarInstrumentMode::Electric => {
-                let pre_amp = pickup_mix * 2.5;
+                let pre_amp = pickup_mix * 2.5 + squeak_sample * 0.35;
                 self.amp_cab.process(pre_amp)
             }
         };

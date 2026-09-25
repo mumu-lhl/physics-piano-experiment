@@ -5,6 +5,8 @@ pub mod pickup;
 pub mod body;
 pub mod strummer;
 pub mod amp_cab;
+pub mod squeak;
+pub mod groove;
 
 pub use guitar_string::*;
 pub use pluck::*;
@@ -13,3 +15,5 @@ pub use pickup::*;
 pub use body::*;
 pub use strummer::*;
 pub use amp_cab::*;
+pub use squeak::*;
+pub use groove::*;

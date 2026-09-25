@@ -56,6 +56,24 @@ impl BiquadFilter {
         }
     }
 
+    pub fn new_bandpass(fc: f64, q: f64, sample_rate: f64) -> Self {
+        let w0 = 2.0 * PI * (fc / sample_rate).clamp(0.001, 0.49);
+        let alpha = w0.sin() / (2.0 * q.max(0.01));
+        let cos_w0 = w0.cos();
+
+        let a0 = 1.0 + alpha;
+        let b0 = alpha / a0;
+        let b1 = 0.0;
+        let b2 = -alpha / a0;
+        let a1 = (-2.0 * cos_w0) / a0;
+        let a2 = (1.0 - alpha) / a0;
+
+        Self {
+            b0, b1, b2, a1, a2,
+            x1: 0.0, x2: 0.0, y1: 0.0, y2: 0.0,
+        }
+    }
+
     #[inline(always)]
     pub fn process(&mut self, input: f64) -> f64 {
         let out = self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2
