@@ -8,10 +8,13 @@ use physics_piano::engine::PianoEngine;
 fn print_usage() {
     println!("Physics Piano (Rust High-Performance Physical Modeling Engine)");
     println!("Usage:");
-    println!("  physics-piano-rs render <note> <duration_sec> <output.wav> [velocity]");
+    println!("  physics-piano-rs render <note> <duration_sec> <output.wav> [velocity] [--sustain] [--upols]");
+    println!("  physics-piano-rs chord <notes_comma_separated> <duration_sec> <output.wav> [velocity] [--sustain] [--upols]");
     println!("  physics-piano-rs benchmark [num_modes]");
     println!("Examples:");
     println!("  physics-piano-rs render A4 3.0 output_a4.wav 0.85");
+    println!("  physics-piano-rs render A0 4.0 bass_a0.wav 0.90");
+    println!("  physics-piano-rs chord \"C4,E4,G4,C5\" 4.0 chord.wav 0.85 --sustain");
     println!("  physics-piano-rs benchmark 35");
 }
 
@@ -30,26 +33,10 @@ fn note_to_midi(note: &str) -> u8 {
         _ => 9,
     };
     let oct: i32 = oct_str.parse().unwrap_or(4);
-    ((oct + 1) * 12 + base_idx) as u8
+    ((oct + 1) * 12 + base_idx).clamp(21, 108) as u8
 }
 
-fn cmd_render(note_name: &str, duration: f64, out_path: &str, velocity: f64) {
-    let sample_rate = 48000.0;
-    let mut engine = PianoEngine::new(sample_rate, 35, false);
-    let key = note_to_midi(note_name);
-
-    println!("[*] Rendering physical piano note: {} (MIDI {}) in Rust...", note_name, key);
-    println!("    Sample Rate: {} Hz, Duration: {:.2}s, Velocity: {:.2}", sample_rate, duration, velocity);
-
-    let t0 = Instant::now();
-    engine.note_on(key, velocity);
-    let (left, right) = engine.render(duration);
-    let elapsed = t0.elapsed().as_secs_f64();
-    let rtf = elapsed / duration;
-
-    println!("[+] Synthesis complete in {:.4}s (RTF: {:.2}x, {:.1}% of realtime)", elapsed, rtf, rtf * 100.0);
-
-    // Normalize audio
+fn save_wav(out_path: &str, sample_rate: f64, left: &[f64], right: &[f64]) {
     let mut peak = 1e-6f64;
     for (&l, &r) in left.iter().zip(right.iter()) {
         peak = peak.max(l.abs()).max(r.abs());
@@ -72,7 +59,59 @@ fn cmd_render(note_name: &str, duration: f64, out_path: &str, velocity: f64) {
         writer.write_sample(sample_r).unwrap();
     }
     writer.finalize().unwrap();
-    println!("[+] Saved 16-bit PCM WAV: {}", out_path);
+    println!("[+] Saved 16-bit PCM Stereo WAV: {}", out_path);
+}
+
+fn cmd_render(note_name: &str, duration: f64, out_path: &str, velocity: f64, sustain: bool, upols: bool) {
+    let sample_rate = 48000.0;
+    let mut engine = PianoEngine::new(sample_rate, 35, true);
+    if upols {
+        engine.set_radiation_mode("upols");
+    }
+    if sustain {
+        engine.set_sustain_pedal(true, 1.0);
+    }
+
+    let key = note_to_midi(note_name);
+    println!("[*] Rendering physical piano note: {} (MIDI {}) in Rust...", note_name, key);
+    println!("    Sample Rate: {} Hz, Duration: {:.2}s, Velocity: {:.2}, Sustain: {}", sample_rate, duration, velocity, sustain);
+
+    let t0 = Instant::now();
+    engine.note_on(key, velocity);
+    let (left, right) = engine.render(duration);
+    let elapsed = t0.elapsed().as_secs_f64();
+    let rtf = elapsed / duration;
+
+    println!("[+] Synthesis complete in {:.4}s (RTF: {:.2}x, {:.1}% of realtime)", elapsed, rtf, rtf * 100.0);
+    save_wav(out_path, sample_rate, &left, &right);
+}
+
+fn cmd_chord(chord_notes: &str, duration: f64, out_path: &str, velocity: f64, sustain: bool, upols: bool) {
+    let sample_rate = 48000.0;
+    let mut engine = PianoEngine::new(sample_rate, 35, true);
+    if upols {
+        engine.set_radiation_mode("upols");
+    }
+    if sustain {
+        engine.set_sustain_pedal(true, 1.0);
+    }
+
+    let notes: Vec<&str> = chord_notes.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let keys: Vec<u8> = notes.iter().map(|n| note_to_midi(n)).collect();
+
+    println!("[*] Rendering physical piano chord: {:?} in Rust...", notes);
+    println!("    Sample Rate: {} Hz, Duration: {:.2}s, Velocity: {:.2}, Sustain: {}", sample_rate, duration, velocity, sustain);
+
+    let t0 = Instant::now();
+    for &k in &keys {
+        engine.note_on(k, velocity);
+    }
+    let (left, right) = engine.render(duration);
+    let elapsed = t0.elapsed().as_secs_f64();
+    let rtf = elapsed / duration;
+
+    println!("[+] Synthesis complete in {:.4}s (RTF: {:.2}x, {:.1}% of realtime)", elapsed, rtf, rtf * 100.0);
+    save_wav(out_path, sample_rate, &left, &right);
 }
 
 fn cmd_benchmark(num_modes: usize) {
@@ -84,7 +123,7 @@ fn cmd_benchmark(num_modes: usize) {
 
     let mut total_time = 0.0;
     for &note in &test_keys {
-        let mut engine = PianoEngine::new(sample_rate, num_modes, false);
+        let mut engine = PianoEngine::new(sample_rate, num_modes, true);
         let key = note_to_midi(note);
         let t0 = Instant::now();
         engine.note_on(key, 0.85);
@@ -110,13 +149,28 @@ fn main() {
         return;
     }
 
+    let has_flag = |flag: &str| -> bool {
+        args.iter().any(|a| a == flag)
+    };
+
     match args[1].as_str() {
         "render" => {
             let note = if args.len() > 2 { &args[2] } else { "A4" };
             let duration: f64 = if args.len() > 3 { args[3].parse().unwrap_or(3.0) } else { 3.0 };
             let out_path = if args.len() > 4 { &args[4] } else { "rust_output.wav" };
             let velocity: f64 = if args.len() > 5 { args[5].parse().unwrap_or(0.85) } else { 0.85 };
-            cmd_render(note, duration, out_path, velocity);
+            let sustain = has_flag("--sustain");
+            let upols = has_flag("--upols");
+            cmd_render(note, duration, out_path, velocity, sustain, upols);
+        }
+        "chord" => {
+            let chord_str = if args.len() > 2 { &args[2] } else { "C4,E4,G4" };
+            let duration: f64 = if args.len() > 3 { args[3].parse().unwrap_or(4.0) } else { 4.0 };
+            let out_path = if args.len() > 4 { &args[4] } else { "rust_chord.wav" };
+            let velocity: f64 = if args.len() > 5 { args[5].parse().unwrap_or(0.85) } else { 0.85 };
+            let sustain = has_flag("--sustain");
+            let upols = has_flag("--upols");
+            cmd_chord(chord_str, duration, out_path, velocity, sustain, upols);
         }
         "benchmark" => {
             let modes: usize = if args.len() > 2 { args[2].parse().unwrap_or(35) } else { 35 };
