@@ -130,6 +130,35 @@ impl PresetManager {
         Ok(())
     }
 
+    /// Check if a preset is a user preset (and thus editable/overwritable)
+    pub fn is_user_preset(&self, id: &str) -> bool {
+        self.presets.iter().any(|p| p.id == id && !p.is_factory)
+    }
+
+    /// Overwrite an existing user preset's parameters with new parameter values
+    pub fn overwrite_user_preset(&mut self, id: &str, params: std::collections::HashMap<String, f32>) -> Result<bool, std::io::Error> {
+        if let Some(pos) = self.presets.iter().position(|p| p.id == id && !p.is_factory) {
+            self.presets[pos].params = params;
+            let preset = self.presets[pos].clone();
+            self.save_user_preset(preset)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Rename an existing user preset and persist change to disk
+    pub fn rename_user_preset(&mut self, id: &str, new_name: &str) -> Result<bool, std::io::Error> {
+        if let Some(pos) = self.presets.iter().position(|p| p.id == id && !p.is_factory) {
+            self.presets[pos].name = new_name.to_string();
+            let preset = self.presets[pos].clone();
+            self.save_user_preset(preset)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     /// Delete a user preset from disk and memory
     pub fn delete_user_preset(&mut self, id: &str) -> Result<bool, std::io::Error> {
         let is_user = self.presets.iter().any(|p| p.id == id && !p.is_factory);

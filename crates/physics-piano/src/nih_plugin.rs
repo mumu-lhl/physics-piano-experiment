@@ -3,6 +3,7 @@
 use atomic_float::AtomicF32;
 use nih_plug::prelude::*;
 use nih_plug_vizia::ViziaState;
+use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
@@ -235,6 +236,9 @@ pub struct PhysicsPiano {
     out_events_scratch: Vec<EngineOutEvent>,
     scratch_l: Vec<f64>,
     scratch_r: Vec<f64>,
+
+    // De-bounce/de-repeat for GUI virtual keyboard to prevent OS auto-repeat machine-gun re-strikes
+    pending_gui_note_offs: HashMap<u8, usize>,
 }
 
 impl Default for PhysicsPiano {
@@ -267,6 +271,7 @@ impl Default for PhysicsPiano {
             out_events_scratch: Vec::with_capacity(64),
             scratch_l: vec![0.0; 512],
             scratch_r: vec![0.0; 512],
+            pending_gui_note_offs: HashMap::new(),
         }
     }
 }
@@ -310,6 +315,7 @@ impl Plugin for PhysicsPiano {
         self.prev_una_corda = self.params.una_corda.value();
         self.engine.set_sustain_pedal(self.prev_sustain > 0.01, self.prev_sustain as f64);
         self.engine.set_una_corda(self.prev_una_corda);
+        self.pending_gui_note_offs.clear();
         true
     }
 
@@ -317,6 +323,7 @@ impl Plugin for PhysicsPiano {
         self.engine.reset();
         self.active_keys_low.store(0, Ordering::Relaxed);
         self.active_keys_high.store(0, Ordering::Relaxed);
+        self.pending_gui_note_offs.clear();
     }
 
     fn process(
@@ -388,17 +395,49 @@ impl Plugin for PhysicsPiano {
             }
         }
 
-        // 2. Consume events triggered by on-screen virtual keyboard
+        // 2. Consume events triggered by on-screen virtual keyboard or computer keyboard
         while let Ok(gui_ev) = self.gui_event_rx.try_recv() {
-            if let EngineEvent::NoteOn { key, velocity, .. } = gui_ev {
-                let key_idx = (key as i32 - 21) as usize;
-                if key_idx < 88 {
-                    if let Some(mut vels) = self.key_velocities.try_write() {
-                        vels[key_idx] = velocity as f32;
+            match gui_ev {
+                EngineEvent::NoteOn { key, velocity, .. } => {
+                    // If this key was pending release due to X11/OS auto-repeat, cancel release and suppress re-strike!
+                    if self.pending_gui_note_offs.remove(&key).is_some() {
+                        // Key remains held down; do not re-strike the string or accumulate energy!
+                        continue;
                     }
+
+                    let key_idx = (key as i32 - 21) as usize;
+                    if key_idx < 88 {
+                        if let Some(mut vels) = self.key_velocities.try_write() {
+                            vels[key_idx] = velocity as f32;
+                        }
+                    }
+                    self.events_scratch.push(gui_ev);
+                }
+                EngineEvent::NoteOff { key, .. } => {
+                    // Delay NoteOff by 45ms (~2160 samples at 48kHz) to filter out OS auto-repeat releases
+                    let debounce_samples = (self.engine.sample_rate * 0.045) as usize;
+                    self.pending_gui_note_offs.insert(key, debounce_samples);
+                }
+                _ => {
+                    self.events_scratch.push(gui_ev);
                 }
             }
-            self.events_scratch.push(gui_ev);
+        }
+
+        // Process pending NoteOff events whose debounce window has elapsed (finger actually released)
+        if !self.pending_gui_note_offs.is_empty() {
+            let mut expired_keys = Vec::new();
+            for (&k, remaining) in self.pending_gui_note_offs.iter_mut() {
+                if *remaining <= num_samples {
+                    expired_keys.push(k);
+                } else {
+                    *remaining -= num_samples;
+                }
+            }
+            for k in expired_keys {
+                self.pending_gui_note_offs.remove(&k);
+                self.events_scratch.push(EngineEvent::NoteOff { time: 0, key: k });
+            }
         }
 
         // Sync parameter changes only on change to avoid overriding incoming MIDI CC 64/67

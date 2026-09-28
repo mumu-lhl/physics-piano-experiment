@@ -12,7 +12,7 @@ use nih_plug_vizia::widgets::util::ModifiersExt;
 use nih_plug_vizia::widgets::*;
 use nih_plug_vizia::{create_vizia_editor, ViziaState, ViziaTheming};
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
@@ -26,6 +26,13 @@ use crate::nih_plugin::PhysicsPianoParams;
 
 pub const EDITOR_WIDTH: u32 = 1080;
 pub const EDITOR_HEIGHT: u32 = 620;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Data)]
+pub enum DialogMode {
+    None,
+    SaveNew,
+    Rename,
+}
 
 fn apply_param<P: Param>(cx: &mut EventContext, param: &P, val: P::Plain) {
     cx.emit(ParamEvent::BeginSetParameter(param).upcast());
@@ -102,6 +109,10 @@ pub struct PianoViziaData {
     pub language: Language,
     pub selected_preset_id: Option<String>,
     pub selected_preset_name: String,
+    pub is_user_preset: bool,
+    pub dialog_mode: DialogMode,
+    pub preset_input_text: String,
+    pub target_rename_id: String,
     pub preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     pub undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
     pub can_undo: bool,
@@ -109,6 +120,7 @@ pub struct PianoViziaData {
     pub gui_tx: Sender<EngineEvent>,
     pub octave_offset: i8,
     pub held_qwerty_keys: HashMap<Code, u8>,
+    pub held_nav_keys: HashSet<Code>,
     pub suppress_undo_gestures: Arc<AtomicU32>,
 }
 
@@ -173,8 +185,12 @@ pub enum PianoUiEvent {
     ToggleLanguage,
     SelectPreset(String),
     CyclePreset(bool),
-    PromptSavePreset,
-    SavePreset(String),
+    OpenSaveDialog,
+    OpenRenameDialog(String, String),
+    SetPresetInputText(String),
+    ConfirmDialog,
+    CancelDialog,
+    OverwriteCurrentPreset,
     DeletePreset(String),
     Undo,
     Redo,
@@ -218,6 +234,7 @@ impl Model for PianoViziaData {
                     }
                     self.selected_preset_id = Some(preset_id.clone());
                     self.selected_preset_name = preset.name.clone();
+                    self.is_user_preset = self.preset_manager.read().is_user_preset(&preset_id);
                     let (u, r) = {
                         let mgr = self.undo_manager.read();
                         (mgr.can_undo(), mgr.can_redo())
@@ -250,34 +267,71 @@ impl Model for PianoViziaData {
                     cx.emit(PianoUiEvent::SelectPreset(next_id));
                 }
             }
-            PianoUiEvent::PromptSavePreset => {
-                let preset_count = self.preset_manager.read().presets().len();
-                let new_id = format!("user_piano_preset_{}", preset_count + 1);
-                let new_name = format!("User Piano {}", preset_count + 1);
-                let params_map = snapshot_piano_params(&self.params);
-                let preset = Preset::new(new_id.clone(), new_name.clone(), "piano", params_map);
-                let mut mgr = self.preset_manager.write();
-                if let Ok(()) = mgr.save_user_preset(preset) {
-                    self.selected_preset_id = Some(new_id);
-                    self.selected_preset_name = new_name;
-                }
+            PianoUiEvent::OpenSaveDialog => {
+                self.dialog_mode = DialogMode::SaveNew;
+                self.preset_input_text = format!("{} Copy", self.selected_preset_name);
             }
-            PianoUiEvent::SavePreset(name) => {
-                let safe_id = name.to_lowercase().replace(' ', "_");
-                let params_map = snapshot_piano_params(&self.params);
-                let preset = Preset::new(safe_id.clone(), name.clone(), "piano", params_map);
-                let mut mgr = self.preset_manager.write();
-                if let Ok(()) = mgr.save_user_preset(preset) {
-                    self.selected_preset_id = Some(safe_id);
-                    self.selected_preset_name = name.clone();
+            PianoUiEvent::OpenRenameDialog(preset_id, current_name) => {
+                self.dialog_mode = DialogMode::Rename;
+                self.target_rename_id = preset_id.clone();
+                self.preset_input_text = current_name.clone();
+            }
+            PianoUiEvent::SetPresetInputText(text) => {
+                self.preset_input_text = text.clone();
+            }
+            PianoUiEvent::ConfirmDialog => {
+                match self.dialog_mode {
+                    DialogMode::SaveNew => {
+                        let trimmed = self.preset_input_text.trim();
+                        let name = if trimmed.is_empty() { "Custom Piano" } else { trimmed };
+                        let timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let safe_id = format!("user_{}_{}", name.to_lowercase().replace(|c: char| !c.is_alphanumeric(), "_"), timestamp);
+                        let params_map = snapshot_piano_params(&self.params);
+                        let preset = Preset::new(safe_id.clone(), name.to_string(), "piano", params_map);
+                        let mut mgr = self.preset_manager.write();
+                        if let Ok(()) = mgr.save_user_preset(preset) {
+                            self.selected_preset_id = Some(safe_id);
+                            self.selected_preset_name = name.to_string();
+                            self.is_user_preset = true;
+                        }
+                    }
+                    DialogMode::Rename => {
+                        let trimmed = self.preset_input_text.trim();
+                        if !trimmed.is_empty() {
+                            let mut mgr = self.preset_manager.write();
+                            if let Ok(true) = mgr.rename_user_preset(&self.target_rename_id, trimmed) {
+                                if self.selected_preset_id.as_deref() == Some(&self.target_rename_id) {
+                                    self.selected_preset_name = trimmed.to_string();
+                                }
+                            }
+                        }
+                    }
+                    DialogMode::None => {}
+                }
+                self.dialog_mode = DialogMode::None;
+            }
+            PianoUiEvent::CancelDialog => {
+                self.dialog_mode = DialogMode::None;
+            }
+            PianoUiEvent::OverwriteCurrentPreset => {
+                if self.is_user_preset {
+                    if let Some(ref id) = self.selected_preset_id {
+                        let params_map = snapshot_piano_params(&self.params);
+                        let mut mgr = self.preset_manager.write();
+                        let _ = mgr.overwrite_user_preset(id, params_map);
+                    }
                 }
             }
             PianoUiEvent::DeletePreset(preset_id) => {
                 let mut mgr = self.preset_manager.write();
                 let _ = mgr.delete_user_preset(&preset_id);
                 if self.selected_preset_id.as_deref() == Some(&preset_id) {
-                    self.selected_preset_id = None;
+                    self.selected_preset_id = Some("steinway_concert_d".to_string());
                     self.selected_preset_name = "Steinway Concert D".to_string();
+                    self.is_user_preset = false;
                 }
             }
             PianoUiEvent::Undo => {
@@ -352,6 +406,17 @@ impl Model for PianoViziaData {
         event.map(|window_event: &WindowEvent, meta| {
             match window_event {
                 WindowEvent::KeyDown(code, _) => {
+                    if self.dialog_mode != DialogMode::None {
+                        if *code == Code::Enter || *code == Code::NumpadEnter {
+                            cx.emit(PianoUiEvent::ConfirmDialog);
+                            meta.consume();
+                        } else if *code == Code::Escape {
+                            cx.emit(PianoUiEvent::CancelDialog);
+                            meta.consume();
+                        }
+                        return;
+                    }
+
                     if cx.modifiers().command() {
                         if *code == Code::KeyZ && !cx.modifiers().shift() {
                             cx.emit(PianoUiEvent::Undo);
@@ -365,15 +430,21 @@ impl Model for PianoViziaData {
 
                     // Octave Shift: Z = Octave Down (-12), X = Octave Up (+12)
                     if *code == Code::KeyZ {
-                        if self.octave_offset > -24 {
-                            self.octave_offset -= 12;
+                        if !self.held_nav_keys.contains(code) {
+                            self.held_nav_keys.insert(*code);
+                            if self.octave_offset > -24 {
+                                self.octave_offset -= 12;
+                            }
                         }
                         meta.consume();
                         return;
                     }
                     if *code == Code::KeyX {
-                        if self.octave_offset < 24 {
-                            self.octave_offset += 12;
+                        if !self.held_nav_keys.contains(code) {
+                            self.held_nav_keys.insert(*code);
+                            if self.octave_offset < 24 {
+                                self.octave_offset += 12;
+                            }
                         }
                         meta.consume();
                         return;
@@ -412,6 +483,7 @@ impl Model for PianoViziaData {
                     }
                 }
                 WindowEvent::KeyUp(code, _) => {
+                    self.held_nav_keys.remove(code);
                     if let Some(midi) = self.held_qwerty_keys.remove(code) {
                         self.release_note(midi);
                         cx.needs_redraw();
@@ -419,6 +491,7 @@ impl Model for PianoViziaData {
                     }
                 }
                 WindowEvent::FocusOut => {
+                    self.held_nav_keys.clear();
                     let keys: Vec<u8> = self.held_qwerty_keys.drain().map(|(_, k)| k).collect();
                     for k in keys {
                         self.release_note(k);
@@ -456,11 +529,13 @@ pub fn create_vizia_piano_editor(
         Language::English
     };
 
-    let initial_preset_name = {
+    let (initial_preset_name, initial_is_user) = {
         let mgr = preset_manager.read();
-        mgr.get_preset("steinway_concert_d")
+        let name = mgr.get_preset("steinway_concert_d")
             .map(|p| p.name.clone())
-            .unwrap_or_else(|| "Steinway Concert D".to_string())
+            .unwrap_or_else(|| "Steinway Concert D".to_string());
+        let is_user = mgr.is_user_preset("steinway_concert_d");
+        (name, is_user)
     };
 
     let data = PianoViziaData {
@@ -476,6 +551,10 @@ pub fn create_vizia_piano_editor(
         language: initial_lang,
         selected_preset_id: Some("steinway_concert_d".to_string()),
         selected_preset_name: initial_preset_name,
+        is_user_preset: initial_is_user,
+        dialog_mode: DialogMode::None,
+        preset_input_text: String::new(),
+        target_rename_id: String::new(),
         preset_manager,
         undo_manager,
         can_undo: false,
@@ -483,6 +562,7 @@ pub fn create_vizia_piano_editor(
         gui_tx,
         octave_offset: 0,
         held_qwerty_keys: HashMap::new(),
+        held_nav_keys: HashSet::new(),
         suppress_undo_gestures: Arc::new(AtomicU32::new(0)),
     };
 
@@ -496,7 +576,9 @@ pub fn create_vizia_piano_editor(
         data.clone().build(cx);
 
         let lang = data.language;
+        let gui_tx = data.gui_tx.clone();
 
+        ZStack::new(cx, move |cx| {
         VStack::new(cx, |cx| {
             // 1. Header Bar: Title, Compact Preset Selector, Undo/Redo, Language, Meter
             HStack::new(cx, |cx| {
@@ -504,9 +586,9 @@ pub fn create_vizia_piano_editor(
                     Label::new(cx, I18n::title(lang)).class("title");
                     Label::new(cx, I18n::subtitle(lang)).class("subtitle");
                 })
-                .width(Pixels(170.0));
+                .width(Pixels(160.0));
 
-                // Compact Preset Navigator: ◀ | Preset ▾ | ▶ | Save
+                // Compact Preset Navigator: < | Preset ▾ | > | Overwrite | Save As...
                 HStack::new(cx, |cx| {
                     Label::new(cx, I18n::preset(lang))
                         .class("param-label")
@@ -516,11 +598,11 @@ pub fn create_vizia_piano_editor(
                     Button::new(
                         cx,
                         |cx| cx.emit(PianoUiEvent::CyclePreset(false)),
-                        |cx| Label::new(cx, "◀"),
+                        |cx| Label::new(cx, "<").class("btn-cycle-arrow"),
                     )
                     .class("btn-cycle")
-                    .width(Pixels(26.0))
-                    .height(Pixels(24.0));
+                    .width(Pixels(30.0))
+                    .height(Pixels(28.0));
 
                     Dropdown::new(
                         cx,
@@ -533,11 +615,21 @@ pub fn create_vizia_piano_editor(
                             .top(Stretch(1.0))
                             .bottom(Stretch(1.0))
                         },
-                        |cx| {
-                            Binding::new(cx, PianoViziaData::preset_manager, |cx, mgr_lens| {
+                        move |cx| {
+                            Binding::new(cx, PianoViziaData::preset_manager, move |cx, mgr_lens| {
                                 let mgr_arc = mgr_lens.get(cx);
                                 let mgr = mgr_arc.read();
-                                for preset in mgr.presets() {
+                                let presets = mgr.presets();
+                                let factory: Vec<_> = presets.iter().filter(|p| p.is_factory).collect();
+                                let user: Vec<_> = presets.iter().filter(|p| !p.is_factory).collect();
+
+                                Label::new(cx, match lang {
+                                    Language::English => "── Factory Presets ──",
+                                    Language::SimplifiedChinese => "── 出厂预置 ──",
+                                })
+                                .class("preset-section-header");
+
+                                for preset in factory {
                                     let pid = preset.id.clone();
                                     let pname = preset.name.clone();
                                     Label::new(cx, &pname)
@@ -547,37 +639,113 @@ pub fn create_vizia_piano_editor(
                                             cx.emit(PopupEvent::Close);
                                         });
                                 }
+
+                                if !user.is_empty() {
+                                    Label::new(cx, match lang {
+                                        Language::English => "── User Presets ──",
+                                        Language::SimplifiedChinese => "── 用户自定义预设 ──",
+                                    })
+                                    .class("preset-section-header");
+
+                                    for preset in user {
+                                        let pid = preset.id.clone();
+                                        let pname = preset.name.clone();
+                                        let pid_del = pid.clone();
+                                        let pid_ren = pid.clone();
+                                        let pname_ren = pname.clone();
+
+                                        HStack::new(cx, move |cx| {
+                                            let pid_sel = pid.clone();
+                                            Label::new(cx, &pname)
+                                                .class("preset-item-name")
+                                                .width(Stretch(1.0))
+                                                .on_press(move |cx| {
+                                                    cx.emit(PianoUiEvent::SelectPreset(pid_sel.clone()));
+                                                    cx.emit(PopupEvent::Close);
+                                                });
+
+                                            Button::new(
+                                                cx,
+                                                move |cx| {
+                                                    cx.emit(PianoUiEvent::OpenRenameDialog(pid_ren.clone(), pname_ren.clone()));
+                                                    cx.emit(PopupEvent::Close);
+                                                },
+                                                |cx| Label::new(cx, "✎").class("btn-item-icon"),
+                                            )
+                                            .class("btn-item-action")
+                                            .width(Pixels(24.0))
+                                            .height(Pixels(22.0));
+
+                                            Button::new(
+                                                cx,
+                                                move |cx| {
+                                                    cx.emit(PianoUiEvent::DeletePreset(pid_del.clone()));
+                                                    cx.emit(PopupEvent::Close);
+                                                },
+                                                |cx| Label::new(cx, "×").class("btn-item-icon"),
+                                            )
+                                            .class("btn-item-action")
+                                            .width(Pixels(24.0))
+                                            .height(Pixels(22.0));
+                                        })
+                                        .class("preset-user-item-row")
+                                        .height(Pixels(26.0));
+                                    }
+                                }
                             });
                         },
                     )
                     .class("preset-dropdown")
-                    .height(Pixels(24.0))
-                    .width(Pixels(180.0));
+                    .height(Pixels(28.0))
+                    .width(Pixels(200.0));
 
                     Button::new(
                         cx,
                         |cx| cx.emit(PianoUiEvent::CyclePreset(true)),
-                        |cx| Label::new(cx, "▶"),
+                        |cx| Label::new(cx, ">").class("btn-cycle-arrow"),
                     )
                     .class("btn-cycle")
-                    .width(Pixels(26.0))
-                    .height(Pixels(24.0));
+                    .width(Pixels(30.0))
+                    .height(Pixels(28.0));
 
-                    Button::new(
-                        cx,
-                        |cx| cx.emit(PianoUiEvent::PromptSavePreset),
-                        |cx| {
-                            Label::new(
+                    Binding::new(cx, PianoViziaData::is_user_preset, move |cx, is_user_lens| {
+                        let is_user = is_user_lens.get(cx);
+                        if is_user {
+                            Button::new(
                                 cx,
-                                match lang {
-                                    Language::English => "Save",
-                                    Language::SimplifiedChinese => "保存",
+                                |cx| cx.emit(PianoUiEvent::OverwriteCurrentPreset),
+                                move |cx| {
+                                    Label::new(
+                                        cx,
+                                        match lang {
+                                            Language::English => "Overwrite",
+                                            Language::SimplifiedChinese => "覆盖保存",
+                                        },
+                                    )
                                 },
                             )
-                        },
-                    )
-                    .height(Pixels(24.0))
-                    .width(Pixels(52.0));
+                            .class("btn-action-gold")
+                            .height(Pixels(28.0))
+                            .width(Pixels(72.0));
+                        }
+
+                        Button::new(
+                            cx,
+                            |cx| cx.emit(PianoUiEvent::OpenSaveDialog),
+                            move |cx| {
+                                Label::new(
+                                    cx,
+                                    match lang {
+                                        Language::English => if is_user { "Save As..." } else { "Save As..." },
+                                        Language::SimplifiedChinese => if is_user { "另存为..." } else { "另存为预设..." },
+                                    },
+                                )
+                            },
+                        )
+                        .class("btn-action")
+                        .height(Pixels(28.0))
+                        .width(if is_user { Pixels(70.0) } else { Pixels(92.0) });
+                    });
                 })
                 .col_between(Pixels(4.0))
                 .top(Stretch(1.0))
@@ -770,7 +938,7 @@ pub fn create_vizia_piano_editor(
             // 4. Interactive 88-Key Keyboard with dynamic velocity travel sink
             PianoKeyboardWidget::new(
                 cx,
-                data.gui_tx.clone(),
+                gui_tx.clone(),
                 PianoViziaData::active_keys_low,
                 PianoViziaData::active_keys_high,
                 PianoViziaData::key_velocities,
@@ -787,6 +955,82 @@ pub fn create_vizia_piano_editor(
         .child_space(Pixels(10.0))
         .row_between(Pixels(8.0));
 
+        // Modal Dialog Overlay for Custom Presets (Save As / Rename)
+        Binding::new(cx, PianoViziaData::dialog_mode, move |cx, mode_lens| {
+            let mode = mode_lens.get(cx);
+            if mode != DialogMode::None {
+                VStack::new(cx, move |cx| {
+                    VStack::new(cx, move |cx| {
+                        Label::new(
+                            cx,
+                            if mode == DialogMode::SaveNew {
+                                match lang {
+                                    Language::English => "Save Preset As",
+                                    Language::SimplifiedChinese => "另存为预设",
+                                }
+                            } else {
+                                match lang {
+                                    Language::English => "Rename Preset",
+                                    Language::SimplifiedChinese => "重命名预设",
+                                }
+                            },
+                        )
+                        .class("modal-title");
+
+                        Textbox::new(cx, PianoViziaData::preset_input_text)
+                            .class("modal-textbox")
+                            .width(Stretch(1.0))
+                            .on_edit(|cx, text| cx.emit(PianoUiEvent::SetPresetInputText(text)));
+
+                        HStack::new(cx, move |cx| {
+                            Button::new(
+                                cx,
+                                |cx| cx.emit(PianoUiEvent::ConfirmDialog),
+                                move |cx| {
+                                    Label::new(
+                                        cx,
+                                        match lang {
+                                            Language::English => "Confirm",
+                                            Language::SimplifiedChinese => "确认",
+                                        },
+                                    )
+                                },
+                            )
+                            .class("btn-action-gold")
+                            .width(Pixels(80.0))
+                            .height(Pixels(26.0));
+
+                            Button::new(
+                                cx,
+                                |cx| cx.emit(PianoUiEvent::CancelDialog),
+                                move |cx| {
+                                    Label::new(
+                                        cx,
+                                        match lang {
+                                            Language::English => "Cancel",
+                                            Language::SimplifiedChinese => "取消",
+                                        },
+                                    )
+                                },
+                            )
+                            .class("btn-action")
+                            .width(Pixels(80.0))
+                            .height(Pixels(26.0));
+                        })
+                        .col_between(Pixels(12.0))
+                        .top(Stretch(1.0));
+                    })
+                    .class("modal-card")
+                    .width(Pixels(320.0))
+                    .height(Pixels(130.0));
+                })
+                .class("modal-backdrop")
+                .width(Stretch(1.0))
+                .height(Stretch(1.0));
+            }
+        });
+
         ResizeHandle::new(cx);
+        });
     })
 }

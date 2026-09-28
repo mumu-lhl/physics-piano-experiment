@@ -308,6 +308,104 @@ impl I18n {
             },
         }
     }
+
+    pub fn mode_param_label(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Mode:",
+            Language::SimplifiedChinese => "模式:",
+        }
+    }
+
+    pub fn pickup_pos_label(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Pickup:",
+            Language::SimplifiedChinese => "拾音位:",
+        }
+    }
+
+    pub fn pickup_type_label(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Coil:",
+            Language::SimplifiedChinese => "拾音结构:",
+        }
+    }
+
+    pub fn tone_label(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Tone:",
+            Language::SimplifiedChinese => "音色旋钮:",
+        }
+    }
+
+    pub fn amp_drive_label(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Overdrive:",
+            Language::SimplifiedChinese => "前级过载:",
+        }
+    }
+
+    pub fn palm_mute_label(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "PalmMute:",
+            Language::SimplifiedChinese => "掌心制音:",
+        }
+    }
+
+    pub fn pluck_pos_label(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "PluckPos:",
+            Language::SimplifiedChinese => "拨弦位置:",
+        }
+    }
+
+    pub fn pluck_style_label(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Style:",
+            Language::SimplifiedChinese => "拨弦方式:",
+        }
+    }
+
+    pub fn strum_speed_label(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Speed:",
+            Language::SimplifiedChinese => "扫弦速度:",
+        }
+    }
+
+    pub fn fret_buzz_label(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Buzz:",
+            Language::SimplifiedChinese => "打品碰撞:",
+        }
+    }
+
+    pub fn finger_squeak_label(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Squeak:",
+            Language::SimplifiedChinese => "指擦杂音:",
+        }
+    }
+
+    pub fn groove_pattern_label(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Pattern:",
+            Language::SimplifiedChinese => "伴奏风格:",
+        }
+    }
+
+    pub fn bpm_label(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "BPM:",
+            Language::SimplifiedChinese => "伴奏速度:",
+        }
+    }
+
+    pub fn master_gain_label(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Volume:",
+            Language::SimplifiedChinese => "主音量:",
+        }
+    }
 }
 
 /// Discovers available system CJK fonts and installs fallback font definitions into Vizia context.

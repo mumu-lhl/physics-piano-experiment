@@ -71,13 +71,54 @@ button:active {
 }
 
 .btn-cycle {
-    font-size: 11.0;
+    font-size: 12.0;
+    color: #ffaa55;
+    background-color: #242735;
+    border-color: #3d4256;
+    border-width: 1px;
+    border-radius: 4px;
+    child-space: 1s;
+}
+
+.btn-cycle:hover {
+    background-color: #383e54;
+    border-color: #ffaa55;
+}
+
+.btn-cycle-arrow {
+    font-weight: bold;
+    font-size: 13.0;
     color: #ffaa55;
 }
 
 .btn-action {
     font-size: 11.0;
     color: #dce0f0;
+    background-color: #242735;
+    border-color: #3d4256;
+    border-width: 1px;
+    border-radius: 4px;
+    child-space: 1s;
+}
+
+.btn-action:hover {
+    background-color: #32364a;
+    border-color: #555b74;
+}
+
+.btn-action-gold {
+    font-size: 11.0;
+    font-weight: bold;
+    color: #121318;
+    background-color: #ffaa55;
+    border-color: #e5933d;
+    border-width: 1px;
+    border-radius: 4px;
+    child-space: 1s;
+}
+
+.btn-action-gold:hover {
+    background-color: #ffbe7d;
 }
 
 .preset-dropdown {
@@ -86,6 +127,8 @@ button:active {
     border-width: 1px;
     border-radius: 4px;
     child-space: 4px;
+    child-left: 8px;
+    child-right: 8px;
 }
 
 .preset-dropdown:hover {
@@ -99,11 +142,25 @@ button:active {
     font-size: 11.5;
 }
 
+.preset-section-header {
+    color: #8c90a2;
+    font-size: 9.5;
+    font-weight: bold;
+    child-left: 8px;
+    child-top: 1s;
+    child-bottom: 1s;
+    height: 22px;
+}
+
 .preset-item {
-    child-space: 6px;
+    child-left: 10px;
+    child-top: 1s;
+    child-bottom: 1s;
     color: #dce0f0;
     font-size: 11.0;
     background-color: #181a24;
+    height: 26px;
+    border-radius: 3px;
 }
 
 .preset-item:hover {
@@ -111,12 +168,94 @@ button:active {
     color: #ffaa55;
 }
 
+.preset-user-item-row {
+    child-top: 1s;
+    child-bottom: 1s;
+    child-right: 4px;
+    height: 26px;
+    col-between: 4px;
+    background-color: #181a24;
+    border-radius: 3px;
+}
+
+.preset-user-item-row:hover {
+    background-color: #252838;
+}
+
+.preset-item-name {
+    child-left: 10px;
+    child-top: 1s;
+    child-bottom: 1s;
+    color: #e2e4ec;
+    font-size: 11.0;
+}
+
+.preset-item-name:hover {
+    color: #ffaa55;
+}
+
+.btn-item-action {
+    background-color: #242735;
+    border-color: #3d4256;
+    border-width: 1px;
+    border-radius: 3px;
+    child-space: 1s;
+}
+
+.btn-item-action:hover {
+    background-color: #444c68;
+    border-color: #ffaa55;
+}
+
+.btn-item-icon {
+    font-size: 11.0;
+    color: #dce0f0;
+}
+
 popup {
     background-color: #181a24;
     border-color: #383e54;
     border-width: 1px;
+    border-radius: 5px;
+    child-space: 4px;
+    row-between: 2px;
+}
+
+/* Modal Dialog Styles */
+.modal-backdrop {
+    background-color: #0b0c10b0;
+    child-space: 1s;
+    z-index: 100;
+}
+
+.modal-card {
+    background-color: #1a1c26;
+    border-color: #ffaa55;
+    border-width: 1px;
+    border-radius: 8px;
+    child-space: 16px;
+    row-between: 12px;
+}
+
+.modal-title {
+    font-size: 13.0;
+    font-weight: bold;
+    color: #ffaa55;
+}
+
+.modal-textbox {
+    height: 28px;
+    background-color: #12131a;
+    border-color: #3d4256;
+    border-width: 1px;
     border-radius: 4px;
-    child-space: 2px;
+    color: #ffffff;
+    font-size: 12.0;
+    child-space: 6px;
+}
+
+.modal-textbox:focus {
+    border-color: #ffaa55;
 }
 
 /* ParamSlider Dark Luxury Theme Overrides */

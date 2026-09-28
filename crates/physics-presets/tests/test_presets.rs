@@ -141,3 +141,33 @@ fn test_undo_manager_batch_param_preset() {
     assert_eq!(redo_restorations[0], ("hardness".to_string(), 1.55));
     assert_eq!(redo_restorations[1], ("lid_angle".to_string(), 60.0));
 }
+
+#[test]
+fn test_preset_manager_rename_and_overwrite() {
+    let temp_dir = std::env::temp_dir().join(format!("physics_presets_test_edit_{}", std::process::id()));
+    let factory = piano_factory_presets();
+    let mut mgr = PresetManager::with_custom_dir("piano", factory, temp_dir);
+
+    // Save a custom preset
+    let mut custom_params = HashMap::new();
+    custom_params.insert("inharm".to_string(), 1.0);
+    let custom = Preset::new("user_1", "Original Name", "piano", custom_params);
+    mgr.save_user_preset(custom).expect("Failed to save");
+
+    assert!(mgr.is_user_preset("user_1"));
+    assert!(!mgr.is_user_preset("steinway_concert_d"));
+
+    // Overwrite parameters
+    let mut new_params = HashMap::new();
+    new_params.insert("inharm".to_string(), 2.5);
+    assert!(mgr.overwrite_user_preset("user_1", new_params).expect("Failed to overwrite"));
+    assert_eq!(mgr.get_preset("user_1").unwrap().params.get("inharm"), Some(&2.5));
+
+    // Rename
+    assert!(mgr.rename_user_preset("user_1", "Renamed Piano").expect("Failed to rename"));
+    assert_eq!(mgr.get_preset("user_1").unwrap().name, "Renamed Piano");
+
+    // Clean up
+    let _ = mgr.delete_user_preset("user_1");
+}
+
