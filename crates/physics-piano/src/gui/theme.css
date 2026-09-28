@@ -1,0 +1,88 @@
+/* Physics Piano Dark Luxury Acoustic Instrument Theme */
+
+:root {
+    background-color: #121318;
+    color: #e2e4ec;
+    font-size: 11.5;
+}
+
+label {
+    color: #c4c7d4;
+}
+
+.title {
+    font-size: 19.0;
+    font-weight: bold;
+    color: #ffd778;
+}
+
+.subtitle {
+    font-size: 11.0;
+    color: #8c90a2;
+}
+
+.rack-title {
+    font-size: 11.5;
+    font-weight: bold;
+    color: #ffd778;
+    bottom: 4px;
+}
+
+.param-label {
+    font-size: 10.5;
+    color: #a4a8bc;
+    bottom: 2px;
+}
+
+.panel-box {
+    background-color: #191b24;
+    border-color: #2c3040;
+    border-width: 1px;
+    border-radius: 6px;
+    child-space: 8px;
+}
+
+.rack-box {
+    background-color: #181922;
+    border-color: #292d3c;
+    border-width: 1px;
+    border-radius: 5px;
+    child-space: 6px;
+}
+
+button {
+    background-color: #262936;
+    border-color: #3d4256;
+    border-width: 1px;
+    border-radius: 4px;
+    color: #dce0f0;
+    height: 24px;
+    child-space: 4px;
+}
+
+button:hover {
+    background-color: #34384a;
+    border-color: #555b74;
+}
+
+button:active {
+    background-color: #ffd778;
+    color: #121318;
+}
+
+.btn-active {
+    background-color: #3b3524;
+    border-color: #ffd778;
+    color: #ffd778;
+}
+
+.btn-icon {
+    width: 28px;
+    height: 24px;
+    font-size: 13.0;
+}
+
+.hint-text {
+    font-size: 10.0;
+    color: #727688;
+}

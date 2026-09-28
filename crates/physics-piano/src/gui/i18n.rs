@@ -1,8 +1,5 @@
 //! Internationalization (i18n) for Physics Piano GUI supporting English and Simplified Chinese.
 
-use nih_plug_egui::egui::{self, FontDefinitions, FontFamily, FontData};
-use std::sync::Arc;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
     English,
@@ -169,6 +166,20 @@ impl I18n {
         }
     }
 
+    pub fn velocity_curve(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Touch Curve:",
+            Language::SimplifiedChinese => "触键力度曲线:",
+        }
+    }
+
+    pub fn preset(lang: Language) -> &'static str {
+        match lang {
+            Language::English => "Preset:",
+            Language::SimplifiedChinese => "音色预设:",
+        }
+    }
+
     pub fn keyboard_hint(lang: Language) -> &'static str {
         match lang {
             Language::English => "Virtual 88-Key Keyboard (A0-C8) | Play via mouse or QWERTY keys (Z-M / Q-U)",
@@ -177,9 +188,11 @@ impl I18n {
     }
 }
 
-/// Discovers available system CJK fonts and installs fallback font definitions into egui context.
-pub fn setup_cjk_fonts(ctx: &egui::Context) {
-    let mut fonts = FontDefinitions::default();
+/// Discovers available system CJK fonts and installs fallback font definitions into Vizia context.
+pub fn setup_vizia_fonts(cx: &mut nih_plug_vizia::vizia::prelude::Context) {
+    nih_plug_vizia::assets::register_noto_sans_regular(cx);
+    nih_plug_vizia::assets::register_noto_sans_bold(cx);
+    nih_plug_vizia::assets::register_noto_sans_light(cx);
 
     // Priority list of common Chinese fonts on Linux, Windows, macOS
     let candidate_paths = [
@@ -200,27 +213,11 @@ pub fn setup_cjk_fonts(ctx: &egui::Context) {
         "/Library/Fonts/Songti.ttc",
     ];
 
-    let mut loaded = false;
     for &path in &candidate_paths {
         if let Ok(bytes) = std::fs::read(path) {
-            fonts.font_data.insert(
-                "cjk_fallback".to_owned(),
-                Arc::new(FontData::from_owned(bytes)),
-            );
-            fonts.families
-                .entry(FontFamily::Proportional)
-                .or_default()
-                .push("cjk_fallback".to_owned());
-            fonts.families
-                .entry(FontFamily::Monospace)
-                .or_default()
-                .push("cjk_fallback".to_owned());
-            loaded = true;
+            let static_bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+            cx.add_font_mem(static_bytes);
             break;
         }
-    }
-
-    if loaded {
-        ctx.set_fonts(fonts);
     }
 }

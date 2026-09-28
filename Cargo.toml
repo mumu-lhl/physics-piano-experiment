@@ -2,6 +2,7 @@
 members = [
     "crates/physics-piano",
     "crates/physics-guitar",
+    "crates/physics-presets",
     "xtask"
 ]
 resolver = "2"
@@ -11,3 +12,7 @@ opt-level = 3
 lto = true
 codegen-units = 1
 panic = "abort"
+
+[profile.dev]
+split-debuginfo = "unpacked"
+debug = 1

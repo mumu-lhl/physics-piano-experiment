@@ -1,0 +1,26 @@
+{
+  "id": "blues_overdrive_crunch",
+  "name": "Texas Blues Breakup",
+  "name_zh": "德州布鲁斯微过载",
+  "author": "Physics Soundlab",
+  "instrument": "guitar",
+  "category": "Blues Overdrive",
+  "description": "Warm neck pickup single-coil with harmonic tube breakup, subtle string fret buzz, and expressive finger vibrato response.",
+  "description_zh": "温暖醇厚的琴颈单线圈拾音，电子管平滑微过载，富有表现力的弦品擦碰质感。",
+  "params": {
+    "mode": 0.0,
+    "pluck_style": 1.0,
+    "pickup_pos": 2.0,
+    "pickup_type": 0.0,
+    "tone": 0.70,
+    "amp_drive": 0.58,
+    "cab_enabled": 1.0,
+    "palmmute": 0.08,
+    "strum_speed": 10.0,
+    "fret_buzz": 0.45,
+    "pluckpos": 0.18,
+    "finger_squeak": 0.35,
+    "groove_pattern": 0.0
+  },
+  "is_factory": true
+}

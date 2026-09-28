@@ -5,6 +5,7 @@ pub mod engine;
 pub mod clap_plugin;
 pub mod gui;
 pub mod nih_plugin;
+pub mod presets;
 
 pub use engine::PianoEngine;
 pub use clap_plugin::raw_clap_entry;

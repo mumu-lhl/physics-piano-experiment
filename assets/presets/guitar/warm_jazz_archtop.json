@@ -1,0 +1,26 @@
+{
+  "id": "warm_jazz_archtop",
+  "name": "Les Paul Warm Jazz",
+  "name_zh": "LP 温暖爵士双线圈",
+  "author": "Physics Soundlab",
+  "instrument": "guitar",
+  "category": "Jazz Humbucker",
+  "description": "Thick, buttery neck humbucker jazz tone with rolled-off passive tone circuit and flat acoustic response.",
+  "description_zh": "饱满圆润的琴颈双线圈爵士音色，高频滚降的被动式音色电位器，温暖迷人的复古爵士质感。",
+  "params": {
+    "mode": 0.0,
+    "pluck_style": 1.0,
+    "pickup_pos": 2.0,
+    "pickup_type": 1.0,
+    "tone": 0.35,
+    "amp_drive": 0.08,
+    "cab_enabled": 1.0,
+    "palmmute": 0.0,
+    "strum_speed": 8.0,
+    "fret_buzz": 0.15,
+    "pluckpos": 0.26,
+    "finger_squeak": 0.15,
+    "groove_pattern": 0.0
+  },
+  "is_factory": true
+}

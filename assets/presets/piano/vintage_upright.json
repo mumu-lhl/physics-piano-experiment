@@ -1,0 +1,25 @@
+{
+  "id": "vintage_upright",
+  "name": "Vintage Honky-Tonk Upright",
+  "name_zh": "复古立式酒吧钢琴",
+  "author": "Physics Soundlab",
+  "instrument": "piano",
+  "category": "Upright",
+  "description": "Distinctive short string scaling with elevated inharmonicity, strong unison chorus detuning, and pronounced mechanical action thump.",
+  "description_zh": "高泛音不谐度短弦体，浓郁的三弦轻微走音与机械触键撞击声，复古酒吧与留声机时代的经典质感。",
+  "params": {
+    "inharm": 1.65,
+    "hardness": 1.35,
+    "detune": 2.10,
+    "phantom": 0.6,
+    "keynoise": 1.7,
+    "dampernoise": 1.6,
+    "pedalnoise": 1.5,
+    "mic_close": 1.0,
+    "mic_player": -1.0,
+    "mic_ambient": -18.0,
+    "lid_angle": 15.0,
+    "velocity_curve": 0.0
+  },
+  "is_factory": true
+}

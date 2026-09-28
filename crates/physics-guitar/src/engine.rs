@@ -51,6 +51,8 @@ pub struct GuitarEngine {
 
     // Tracking active notes for release
     pub active_notes_on_string: [Option<u8>; 6],
+    /// Global pitch bend in semitones for standard single-channel MIDI keyboards
+    pub global_pitch_bend: f64,
 }
 
 impl GuitarEngine {
@@ -86,6 +88,7 @@ impl GuitarEngine {
             palm_mute_depth: 0.0,
             master_volume: 0.85,
             active_notes_on_string: [None; 6],
+            global_pitch_bend: 0.0,
         }
     }
 
@@ -105,6 +108,7 @@ impl GuitarEngine {
                     let fret = self.strings[i].current_fret;
                     self.strings[i].params = p;
                     self.strings[i].set_fret(fret);
+                    self.strings[i].set_pitch_bend(self.global_pitch_bend);
                 }
             }
         }
@@ -143,15 +147,22 @@ impl GuitarEngine {
             }
             self.active_notes_on_string[str_idx] = Some(midi_note);
 
+            let is_mpe = (2..=7).contains(&channel);
             if self.strummer.strum_speed_ms <= 1.0 {
                 // Instant direct pluck
                 let string = &mut self.strings[str_idx];
                 string.set_fret(loc.fret);
+                if !is_mpe {
+                    string.set_pitch_bend(self.global_pitch_bend);
+                }
                 string.palm_mute_depth = self.palm_mute_depth;
                 string.pluck(&self.exciter, self.pluck_pos_ratio, velocity);
             } else {
                 // Route to smart strummer for chord strumming and picking delays
                 self.strings[str_idx].set_fret(loc.fret);
+                if !is_mpe {
+                    self.strings[str_idx].set_pitch_bend(self.global_pitch_bend);
+                }
                 self.strings[str_idx].palm_mute_depth = self.palm_mute_depth;
                 self.strummer.trigger_note(str_idx, loc.fret, velocity);
             }
@@ -183,17 +194,18 @@ impl GuitarEngine {
         }
     }
 
-    /// Handles Pitch Bend (e.g. string bending or vibrato).
+    /// Handles Pitch Bend (e.g. string bending, whammy bar, or vibrato).
+    /// Supports both per-string MPE (channels 2..=7) and standard single-channel
+    /// MIDI keyboards (channel 0 or 1, or global broadcast).
     pub fn pitch_bend(&mut self, channel: u8, semitones: f64) {
         if (2..=7).contains(&channel) {
             let str_idx = (channel - 2) as usize;
             self.strings[str_idx].set_pitch_bend(semitones);
         } else {
-            // Global pitch bend across currently sounding strings
+            // Standard single-channel MIDI mode: apply to all strings and store global state
+            self.global_pitch_bend = semitones;
             for s in &mut self.strings {
-                if s.is_held {
-                    s.set_pitch_bend(semitones);
-                }
+                s.set_pitch_bend(semitones);
             }
         }
     }
@@ -282,6 +294,7 @@ impl GuitarEngine {
             if p.string_index < 6 {
                 let s = &mut self.strings[p.string_index];
                 s.set_fret(p.fret);
+                s.set_pitch_bend(self.global_pitch_bend);
                 s.palm_mute_depth = self.palm_mute_depth;
                 s.pluck(&self.exciter, self.pluck_pos_ratio, p.velocity);
             }

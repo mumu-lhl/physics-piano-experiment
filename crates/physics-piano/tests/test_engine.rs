@@ -436,6 +436,106 @@ fn test_sustain_pedal_and_key_hold_independence() {
     assert!(energy_damped < 1e-6, "Releasing pedal must promptly extinguish string vibration");
 }
 
+#[test]
+fn test_piano_pitch_bend_and_expression() {
+    use physics_piano::engine::{EngineEvent, PianoEngine};
+
+    let sample_rate = 44100.0;
+    let mut engine = PianoEngine::new(sample_rate, 15, false);
+
+    let block_size = 256;
+    let mut out_l = vec![0.0; block_size];
+    let mut out_r = vec![0.0; block_size];
+    let mut out_events = Vec::new();
+
+    // 1. Strike note 60
+    engine.note_on(60, 0.8);
+    engine.process_block(block_size, &[], &mut out_events, &mut out_l, &mut out_r);
+
+    let v = engine.get_voice(60).unwrap();
+    assert_eq!(v.pitch_bend_cents, 0.0);
+
+    // 2. Send pitch bend event (+150 cents)
+    let bend_ev = EngineEvent::PitchBend { time: 0, cents: 150.0 };
+    engine.process_block(block_size, &[bend_ev], &mut out_events, &mut out_l, &mut out_r);
+
+    let v_bent = engine.get_voice(60).unwrap();
+    assert_eq!(v_bent.pitch_bend_cents, 150.0);
+
+    // 3. Test CC 11 Expression gain control
+    let expr_mute = EngineEvent::Expression { time: 0, gain: 0.0 };
+    engine.process_block(block_size, &[expr_mute], &mut out_events, &mut out_l, &mut out_r);
+    let peak_muted = out_l.iter().chain(out_r.iter()).fold(0.0f64, |acc, &x| acc.max(x.abs()));
+    assert!(peak_muted < 1e-12, "Expression gain 0.0 must completely mute audio output");
+
+    let expr_half = EngineEvent::Expression { time: 0, gain: 0.5 };
+    engine.process_block(block_size, &[expr_half], &mut out_events, &mut out_l, &mut out_r);
+    let peak_half = out_l.iter().chain(out_r.iter()).fold(0.0f64, |acc, &x| acc.max(x.abs()));
+    assert!(peak_half > 1e-6, "Expression gain 0.5 must produce audible sound");
+}
+
+#[test]
+fn test_piano_velocity_curve_calibration() {
+    use physics_piano::engine::PianoEngine;
+
+    let sample_rate = 44100.0;
+    let mut engine = PianoEngine::new(sample_rate, 15, false);
+
+    let vel = 0.5;
+
+    // Soft curve (-1.0): easier to play loudly, effective vel > 0.5
+    engine.set_velocity_curve(-1.0);
+    engine.note_on(60, vel);
+    let energy_soft = engine.get_voice(60).unwrap().get_energy();
+
+    // Standard Linear curve (0.0): effective vel == 0.5
+    engine.set_velocity_curve(0.0);
+    engine.note_on(62, vel);
+    let energy_linear = engine.get_voice(62).unwrap().get_energy();
+
+    // Hard curve (+1.0): requires harder playing, effective vel < 0.5
+    engine.set_velocity_curve(1.0);
+    engine.note_on(64, vel);
+    let energy_hard = engine.get_voice(64).unwrap().get_energy();
+
+    println!("Energy Soft: {energy_soft:.6}, Linear: {energy_linear:.6}, Hard: {energy_hard:.6}");
+    assert!(energy_soft > energy_linear, "Soft velocity curve must deliver higher initial energy for moderate input");
+    assert!(energy_linear > energy_hard, "Hard velocity curve must require firmer touch, yielding lower energy for moderate input");
+}
+
+#[test]
+fn test_piano_presets() {
+    use physics_piano::presets::FactoryPreset;
+    use physics_piano::gui::Language;
+
+    let presets = FactoryPreset::all();
+    assert_eq!(presets.len(), 6);
+
+    for (i, p) in presets.iter().enumerate() {
+        let from_idx = FactoryPreset::from_index(i);
+        assert_eq!(*p, from_idx);
+
+        let en_name = p.name(Language::English);
+        let zh_name = p.name(Language::SimplifiedChinese);
+        assert!(!en_name.is_empty(), "Preset English name must not be empty");
+        assert!(!zh_name.is_empty(), "Preset Chinese name must not be empty");
+
+        let vals = p.values();
+        assert!(vals.inharmonicity_scale >= 0.2 && vals.inharmonicity_scale <= 2.5);
+        assert!(vals.hammer_hardness >= 0.5 && vals.hammer_hardness <= 2.5);
+        assert!(vals.unison_detuning >= 0.0 && vals.unison_detuning <= 3.0);
+        assert!(vals.phantom_gain >= 0.0 && vals.phantom_gain <= 2.0);
+        assert!(vals.key_noise >= 0.0 && vals.key_noise <= 2.0);
+        assert!(vals.damper_noise >= 0.0 && vals.damper_noise <= 2.0);
+        assert!(vals.pedal_noise >= 0.0 && vals.pedal_noise <= 2.0);
+        assert!(vals.mic_close >= -60.0 && vals.mic_close <= 6.0);
+        assert!(vals.mic_player >= -60.0 && vals.mic_player <= 6.0);
+        assert!(vals.mic_ambient >= -60.0 && vals.mic_ambient <= 6.0);
+        assert!(vals.lid_angle >= 0.0 && vals.lid_angle <= 60.0);
+        assert!(vals.velocity_curve >= -1.0 && vals.velocity_curve <= 1.0);
+    }
+}
+
 
 
 

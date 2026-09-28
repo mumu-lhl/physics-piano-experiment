@@ -1,26 +1,20 @@
-//! Native CLAP Plugin & Standalone Synthesizer built with nih-plug and egui.
+//! Native CLAP Plugin & Standalone Synthesizer built with nih-plug and vizia.
 
+use atomic_float::AtomicF32;
 use nih_plug::prelude::*;
-use nih_plug_egui::{
-    create_egui_editor,
-    egui::{self, Color32, FontId, RichText, Vec2},
-    EguiState,
-};
-use std::collections::HashSet;
+use nih_plug_vizia::ViziaState;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use crate::engine::{EngineEvent, EngineOutEvent, PianoEngine};
-use crate::gui::{
-    render_lissajous_scope, render_vu_meter,
-    PianoKeyboardWidget, I18n, Language, setup_cjk_fonts,
-};
+use crate::gui::{create_vizia_piano_editor, default_vizia_state, Language};
+use physics_presets::{piano_factory_presets, PresetManager, UndoManager};
 
 #[derive(Params)]
 pub struct PhysicsPianoParams {
     #[persist = "editor-state"]
-    pub editor_state: Arc<EguiState>,
+    pub editor_state: Arc<ViziaState>,
 
     /// Sustain Pedal Depth [0.0 ~ 1.0] (Half-pedaling)
     #[id = "sustain"]
@@ -77,12 +71,16 @@ pub struct PhysicsPianoParams {
     /// Master Volume Gain [-30 dB ~ +6 dB]
     #[id = "gain"]
     pub master_gain: FloatParam,
+
+    /// Keyboard Velocity Touch Sensitivity [-1.0 (Soft) ~ +1.0 (Hard)]
+    #[id = "velocity_curve"]
+    pub velocity_curve: FloatParam,
 }
 
 impl Default for PhysicsPianoParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(1080, 560),
+            editor_state: default_vizia_state(),
 
             sustain_pedal: FloatParam::new(
                 "Sustain Pedal",
@@ -196,6 +194,14 @@ impl Default for PhysicsPianoParams {
             .with_unit(" dB")
             .with_value_to_string(formatters::v2s_f32_gain_to_db(1))
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
+
+            velocity_curve: FloatParam::new(
+                "Touch Curve",
+                0.0,
+                FloatRange::Linear { min: -1.0, max: 1.0 },
+            )
+            .with_unit("")
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
         }
     }
 }
@@ -213,9 +219,12 @@ pub struct PhysicsPiano {
     peak_r: Arc<AtomicF32>,
     active_keys_low: Arc<AtomicU64>,   // Bitset for MIDI 21..84 (64 keys)
     active_keys_high: Arc<AtomicU64>,  // Bitset for MIDI 85..108 (24 keys)
+    key_velocities: Arc<parking_lot::RwLock<[f32; 88]>>,
     recent_orbit_t: Arc<parking_lot::RwLock<Vec<f32>>>,
     recent_orbit_p: Arc<parking_lot::RwLock<Vec<f32>>>,
     language: Arc<AtomicU8>,           // 0: English, 1: SimplifiedChinese
+    preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
+    undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
 
     // Edge-triggered parameter tracking to prevent overwriting MIDI CC
     prev_sustain: f32,
@@ -243,9 +252,15 @@ impl Default for PhysicsPiano {
             peak_r: Arc::new(AtomicF32::new(0.0)),
             active_keys_low: Arc::new(AtomicU64::new(0)),
             active_keys_high: Arc::new(AtomicU64::new(0)),
+            key_velocities: Arc::new(parking_lot::RwLock::new([0.0; 88])),
             recent_orbit_t: Arc::new(parking_lot::RwLock::new(vec![0.0; 64])),
             recent_orbit_p: Arc::new(parking_lot::RwLock::new(vec![0.0; 64])),
             language: Arc::new(AtomicU8::new(lang_code)),
+            preset_manager: Arc::new(parking_lot::RwLock::new(PresetManager::new(
+                "piano",
+                piano_factory_presets(),
+            ))),
+            undo_manager: Arc::new(parking_lot::RwLock::new(UndoManager::default())),
             prev_sustain: 0.0,
             prev_una_corda: false,
             events_scratch: Vec::with_capacity(64),
@@ -323,6 +338,12 @@ impl Plugin for PhysicsPiano {
         while let Some(event) = context.next_event() {
             match event {
                 NoteEvent::NoteOn { note, velocity, timing, .. } => {
+                    let key_idx = (note as i32 - 21) as usize;
+                    if key_idx < 88 {
+                        if let Some(mut vels) = self.key_velocities.try_write() {
+                            vels[key_idx] = velocity;
+                        }
+                    }
                     self.events_scratch.push(EngineEvent::NoteOn {
                         time: timing as usize,
                         key: note,
@@ -333,6 +354,14 @@ impl Plugin for PhysicsPiano {
                     self.events_scratch.push(EngineEvent::NoteOff {
                         time: timing as usize,
                         key: note,
+                    });
+                }
+                NoteEvent::MidiPitchBend { value, timing, .. } => {
+                    // value is in [0.0, 1.0], center is 0.5. Standard bend is +/- 2 semitones = +/- 200 cents.
+                    let cents = (value as f64 - 0.5) * 2.0 * 200.0;
+                    self.events_scratch.push(EngineEvent::PitchBend {
+                        time: timing as usize,
+                        cents,
                     });
                 }
                 NoteEvent::MidiCC { cc, value, timing, .. } => {
@@ -347,6 +376,12 @@ impl Plugin for PhysicsPiano {
                             time: timing as usize,
                             enabled: value >= 0.5,
                         });
+                    } else if cc == 11 {
+                        let gain = (value as f64).clamp(0.0, 1.0);
+                        self.events_scratch.push(EngineEvent::Expression {
+                            time: timing as usize,
+                            gain,
+                        });
                     }
                 }
                 _ => {}
@@ -355,6 +390,14 @@ impl Plugin for PhysicsPiano {
 
         // 2. Consume events triggered by on-screen virtual keyboard
         while let Ok(gui_ev) = self.gui_event_rx.try_recv() {
+            if let EngineEvent::NoteOn { key, velocity, .. } = gui_ev {
+                let key_idx = (key as i32 - 21) as usize;
+                if key_idx < 88 {
+                    if let Some(mut vels) = self.key_velocities.try_write() {
+                        vels[key_idx] = velocity as f32;
+                    }
+                }
+            }
             self.events_scratch.push(gui_ev);
         }
 
@@ -376,6 +419,7 @@ impl Plugin for PhysicsPiano {
         self.engine.set_hammer_hardness(self.params.hammer_hardness.value() as f64);
         self.engine.set_unison_detuning(self.params.unison_detuning.value() as f64);
         self.engine.set_phantom_gain(self.params.phantom_gain.value() as f64);
+        self.engine.set_velocity_curve(self.params.velocity_curve.value() as f64);
 
         // Tier 6: Micro-mechanical noise gains
         self.engine.set_key_noise_gain(self.params.key_noise.value() as f64);
@@ -422,8 +466,8 @@ fn soft_limit(x: f32) -> f32 {
         let right_out = &mut ch_right[0];
 
         for s in 0..num_samples {
-            let out_l = soft_limit((self.scratch_l[s] as f32) * total_gain);
-            let out_r = soft_limit((self.scratch_r[s] as f32) * total_gain);
+            let out_l = soft_limit(self.scratch_l[s] as f32 * total_gain);
+            let out_r = soft_limit(self.scratch_r[s] as f32 * total_gain);
             left_out[s] = out_l;
             right_out[s] = out_r;
             max_l = max_l.max(out_l.abs());
@@ -449,6 +493,15 @@ fn soft_limit(x: f32) -> f32 {
         self.active_keys_low.store(low_mask, Ordering::Relaxed);
         self.active_keys_high.store(high_mask, Ordering::Relaxed);
 
+        if let Some(mut vels) = self.key_velocities.try_write() {
+            for k in 21..=108u8 {
+                let idx = (k - 21) as usize;
+                if !self.engine.depressed_keys.contains(&k) {
+                    vels[idx] = 0.0;
+                }
+            }
+        }
+
         // Sync bridge dual-polarization orbit for oscilloscope visualizer
         if let Some(mut orb_t) = self.recent_orbit_t.try_write() {
             if let Some(mut orb_p) = self.recent_orbit_p.try_write() {
@@ -466,268 +519,20 @@ fn soft_limit(x: f32) -> f32 {
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        let params = self.params.clone();
-        let peak_l = self.peak_l.clone();
-        let peak_r = self.peak_r.clone();
-        let keys_low_arc = self.active_keys_low.clone();
-        let keys_high_arc = self.active_keys_high.clone();
-        let orbit_t_arc = self.recent_orbit_t.clone();
-        let orbit_p_arc = self.recent_orbit_p.clone();
-        let language_arc = self.language.clone();
-        let gui_tx = self.gui_event_tx.clone();
-
-        struct GuiKeyboardState {
-            held_mouse_key: Option<u8>,
-            held_qwerty_keys: HashSet<egui::Key>,
-            language: Language,
-        }
-
-        let initial_lang = if self.language.load(Ordering::Relaxed) == 1 {
-            Language::SimplifiedChinese
-        } else {
-            Language::English
-        };
-
-        create_egui_editor(
+        create_vizia_piano_editor(
+            self.params.clone(),
+            self.peak_l.clone(),
+            self.peak_r.clone(),
+            self.active_keys_low.clone(),
+            self.active_keys_high.clone(),
+            self.key_velocities.clone(),
+            self.recent_orbit_t.clone(),
+            self.recent_orbit_p.clone(),
+            self.language.clone(),
+            self.gui_event_tx.clone(),
+            self.preset_manager.clone(),
+            self.undo_manager.clone(),
             self.params.editor_state.clone(),
-            GuiKeyboardState {
-                held_mouse_key: None,
-                held_qwerty_keys: HashSet::new(),
-                language: initial_lang,
-            },
-            |egui_ctx, _gui_state| {
-                setup_cjk_fonts(egui_ctx);
-            },
-            move |egui_ctx, setter, gui_state| {
-                let lang = gui_state.language;
-                egui::CentralPanel::default()
-                    .frame(egui::Frame::NONE.fill(Color32::from_rgb(18, 19, 24)))
-                    .show(egui_ctx, |ui| {
-                        ui.spacing_mut().item_spacing = Vec2::new(12.0, 10.0);
-
-                        // Header Bar
-                        ui.horizontal(|ui| {
-                            ui.heading(
-                                RichText::new(I18n::title(lang))
-                                    .font(FontId::proportional(22.0))
-                                    .color(Color32::from_rgb(255, 215, 120))
-                                    .strong(),
-                            );
-                            ui.label(
-                                RichText::new(I18n::subtitle(lang))
-                                    .font(FontId::proportional(12.0))
-                                    .color(Color32::from_rgb(150, 155, 170)),
-                            );
-
-                            // Language Switcher Toggle Button (persists choice)
-                            let (btn_text, next_lang) = match lang {
-                                Language::English => ("🌐 中文", Language::SimplifiedChinese),
-                                Language::SimplifiedChinese => ("🌐 English", Language::English),
-                            };
-                            if ui
-                                .button(
-                                    RichText::new(btn_text)
-                                        .font(FontId::proportional(12.0))
-                                        .color(Color32::from_rgb(210, 220, 240)),
-                                )
-                                .clicked()
-                            {
-                                gui_state.language = next_lang;
-                                language_arc.store(
-                                    if next_lang == Language::SimplifiedChinese { 1 } else { 0 },
-                                    Ordering::Relaxed,
-                                );
-                            }
-
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let pl = peak_l.load(std::sync::atomic::Ordering::Relaxed);
-                                let pr = peak_r.load(std::sync::atomic::Ordering::Relaxed);
-                                render_vu_meter(ui, pl, pr, 32.0);
-
-                                let ot = orbit_t_arc.read();
-                                let op = orbit_p_arc.read();
-                                render_lissajous_scope(ui, &ot, &op, 34.0);
-                            });
-                        });
-
-                        ui.separator();
-
-                        // Voicing, Mechanics & Spatial Parameter Rack
-                        ui.group(|ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal_wrapped(|ui| {
-                                // 1. Pedals & Micro-Mechanics (Tier 6)
-                                ui.vertical(|ui| {
-                                    ui.label(RichText::new(I18n::rack_pedals(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
-                                    ui.horizontal(|ui| {
-                                        ui.vertical(|ui| {
-                                            ui.label(I18n::sustain(lang));
-                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.sustain_pedal, setter).with_width(85.0));
-                                            let mut una = params.una_corda.value();
-                                            if ui.checkbox(&mut una, I18n::una_corda(lang)).changed() {
-                                                setter.begin_set_parameter(&params.una_corda);
-                                                setter.set_parameter(&params.una_corda, una);
-                                                setter.end_set_parameter(&params.una_corda);
-                                            }
-                                        });
-                                        ui.vertical(|ui| {
-                                            ui.label(I18n::key_action(lang));
-                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.key_noise, setter).with_width(80.0));
-                                            ui.label(I18n::damper_noise(lang));
-                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.damper_noise, setter).with_width(80.0));
-                                        });
-                                        ui.vertical(|ui| {
-                                            ui.label(I18n::pedal_shock(lang));
-                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.pedal_noise, setter).with_width(80.0));
-                                        });
-                                    });
-                                });
-
-                                ui.separator();
-
-                                // 2. String & Hammer Physics
-                                ui.vertical(|ui| {
-                                    ui.label(RichText::new(I18n::rack_string(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
-                                    ui.horizontal(|ui| {
-                                        ui.vertical(|ui| {
-                                            ui.label(I18n::inharmonicity(lang));
-                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.inharmonicity_scale, setter).with_width(88.0));
-                                            ui.label(I18n::hammer_hardness(lang));
-                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.hammer_hardness, setter).with_width(88.0));
-                                        });
-                                        ui.vertical(|ui| {
-                                            ui.label(I18n::unison_detune(lang));
-                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.unison_detuning, setter).with_width(88.0));
-                                            ui.label(I18n::phantom_partials(lang));
-                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.phantom_gain, setter).with_width(88.0));
-                                        });
-                                    });
-                                });
-
-                                ui.separator();
-
-                                // 3. Spatial Multi-Mic & Lid Baffle (Tier 7)
-                                ui.vertical(|ui| {
-                                    ui.label(RichText::new(I18n::rack_spatial(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
-                                    ui.horizontal(|ui| {
-                                        ui.vertical(|ui| {
-                                            ui.label(I18n::mic_close(lang));
-                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.mic_close, setter).with_width(80.0));
-                                            ui.label(I18n::mic_player(lang));
-                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.mic_player, setter).with_width(80.0));
-                                        });
-                                        ui.vertical(|ui| {
-                                            ui.label(I18n::mic_ambient(lang));
-                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.mic_ambient, setter).with_width(80.0));
-                                            ui.label(I18n::lid_angle(lang));
-                                            ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.lid_angle, setter).with_width(80.0));
-                                        });
-                                    });
-                                });
-
-                                ui.separator();
-
-                                // 4. Master Output
-                                ui.vertical(|ui| {
-                                    ui.label(RichText::new(I18n::rack_output(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
-                                    ui.label(I18n::master_gain(lang));
-                                    ui.add(nih_plug_egui::widgets::ParamSlider::for_param(&params.master_gain, setter).with_width(110.0));
-                                });
-                            });
-                        });
-
-                        ui.add_space(8.0);
-
-                        // 88-Key Interactive Piano Keyboard (100% Lock-Free query)
-                        ui.group(|ui| {
-                            let low = keys_low_arc.load(Ordering::Relaxed);
-                            let high = keys_high_arc.load(Ordering::Relaxed);
-                            let is_active = move |k: u8| -> bool {
-                                if (21..85).contains(&k) {
-                                    (low & (1u64 << (k - 21))) != 0
-                                } else if (85..=108).contains(&k) {
-                                    (high & (1u64 << (k - 85))) != 0
-                                } else {
-                                    false
-                                }
-                            };
-
-                            let mut kb = PianoKeyboardWidget::new(&is_active, &mut gui_state.held_mouse_key);
-
-                            let avail_w = ui.available_width();
-                            let kb_h = 135.0f32;
-                            kb.show(ui, avail_w, kb_h);
-
-                            // Send triggered notes from on-screen keyboard
-                            for (note, vel) in kb.pressed_keys {
-                                let _ = gui_tx.send(EngineEvent::NoteOn {
-                                    time: 0,
-                                    key: note,
-                                    velocity: vel as f64,
-                                });
-                            }
-                            for note in kb.released_keys {
-                                let _ = gui_tx.send(EngineEvent::NoteOff {
-                                    time: 0,
-                                    key: note,
-                                });
-                            }
-                        });
-
-                        // Handle QWERTY laptop keyboard input (C4 to C5 octave)
-                        // Uses stateful tracking (gui_state.held_qwerty_keys) to strictly suppress
-                        // OS auto-repeat events when holding keys down.
-                        const QWERTY_KEYS: &[(egui::Key, u8)] = &[
-                            (egui::Key::A, 60), // C4
-                            (egui::Key::W, 61), // C#4
-                            (egui::Key::S, 62), // D4
-                            (egui::Key::E, 63), // D#4
-                            (egui::Key::D, 64), // E4
-                            (egui::Key::F, 65), // F4
-                            (egui::Key::T, 66), // F#4
-                            (egui::Key::G, 67), // G4
-                            (egui::Key::Y, 68), // G#4
-                            (egui::Key::H, 69), // A4
-                            (egui::Key::U, 70), // A#4
-                            (egui::Key::J, 71), // B4
-                            (egui::Key::K, 72), // C5
-                        ];
-
-                        egui_ctx.input(|i| {
-                            for &(key, midi) in QWERTY_KEYS {
-                                let is_down = i.key_down(key);
-                                let was_down = gui_state.held_qwerty_keys.contains(&key);
-
-                                if is_down && !was_down {
-                                    gui_state.held_qwerty_keys.insert(key);
-                                    let _ = gui_tx.send(EngineEvent::NoteOn {
-                                        time: 0,
-                                        key: midi,
-                                        velocity: 0.85,
-                                    });
-                                } else if !is_down && was_down {
-                                    gui_state.held_qwerty_keys.remove(&key);
-                                    let _ = gui_tx.send(EngineEvent::NoteOff {
-                                        time: 0,
-                                        key: midi,
-                                    });
-                                }
-                            }
-                        });
-
-                        // Footer with laptop QWERTY keyboard hints
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new(I18n::keyboard_hint(lang))
-                                    .font(FontId::proportional(11.0))
-                                    .color(Color32::from_rgb(110, 115, 130)),
-                            );
-                        });
-                    });
-
-                // Request continuous repaint for smooth VU meters and active key animations
-                egui_ctx.request_repaint();
-            },
         )
     }
 }

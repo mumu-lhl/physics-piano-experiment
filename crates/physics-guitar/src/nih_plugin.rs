@@ -1,28 +1,22 @@
-//! Native CLAP Plugin & Standalone Synthesizer built with nih-plug and egui for Physics Guitar.
+//! Native CLAP Plugin & Standalone Synthesizer built with nih-plug and vizia for Physics Guitar.
 
 use nih_plug::prelude::*;
-use nih_plug_egui::{
-    create_egui_editor,
-    egui::{self, Color32, FontId, RichText, Vec2},
-    widgets::ParamSlider,
-    EguiState,
-};
+use nih_plug_vizia::ViziaState;
+use physics_presets::{guitar_factory_presets, PresetManager, UndoManager};
 use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
-use parking_lot::Mutex;
 
-use crate::engine::{GuitarEngine, GuitarInstrumentMode};
-use crate::params::GuitarStringSetType;
-use crate::core::pluck::PluckStyle;
-use crate::core::pickup::{PickupType, PickupSelector};
 use crate::core::groove::GroovePattern;
-use crate::presets::FactoryPreset;
-use crate::gui::{GuitarFretboardWidget, I18n, Language, setup_cjk_fonts};
+use crate::core::pickup::{PickupSelector, PickupType};
+use crate::core::pluck::PluckStyle;
+use crate::engine::{GuitarEngine, GuitarInstrumentMode};
+use crate::gui::{create_vizia_guitar_editor, default_vizia_state, Language};
+use crate::params::GuitarStringSetType;
 
 #[derive(Params)]
 pub struct PhysicsGuitarParams {
-    #[persist = "editor-state-v9"]
-    pub editor_state: Arc<EguiState>,
+    #[persist = "editor-state-v10"]
+    pub editor_state: Arc<ViziaState>,
 
     /// Instrument Mode: 0 = Electric, 1 = Acoustic
     #[id = "mode"]
@@ -88,7 +82,7 @@ pub struct PhysicsGuitarParams {
 impl Default for PhysicsGuitarParams {
     fn default() -> Self {
         Self {
-            editor_state: EguiState::from_size(1100, 580),
+            editor_state: default_vizia_state(),
 
             mode: IntParam::new("Instrument Mode", 0, IntRange::Linear { min: 0, max: 1 }),
             pluck_style: IntParam::new("Pluck Style", 0, IntRange::Linear { min: 0, max: 1 }),
@@ -198,9 +192,12 @@ pub struct PhysicsGuitar {
     // Shared state for GUI animation (atomic / lock-free)
     pub active_frets_shared: Arc<[AtomicU8; 6]>,
     pub string_energies_shared: Arc<[AtomicU32; 6]>,
-    // Thread-safe event queue from GUI clicks/releases into audio engine
-    pub gui_event_queue: Arc<Mutex<Vec<GuiGuitarEvent>>>,
+    // Lock-free event queue from GUI clicks/releases into audio engine
+    pub gui_event_tx: crossbeam_channel::Sender<GuiGuitarEvent>,
+    pub gui_event_rx: crossbeam_channel::Receiver<GuiGuitarEvent>,
     pub language: Arc<AtomicU8>,
+    pub preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
+    pub undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
 }
 
 impl Default for PhysicsGuitar {
@@ -233,14 +230,22 @@ impl Default for PhysicsGuitar {
             AtomicU32::new(0),
         ]);
 
+        let (gui_event_tx, gui_event_rx) = crossbeam_channel::unbounded();
+
         Self {
             params: Arc::new(PhysicsGuitarParams::default()),
             engine,
             sample_rate: sample_rate as f32,
             active_frets_shared,
             string_energies_shared,
-            gui_event_queue: Arc::new(Mutex::new(Vec::with_capacity(16))),
+            gui_event_tx,
+            gui_event_rx,
             language: Arc::new(AtomicU8::new(lang_code)),
+            preset_manager: Arc::new(parking_lot::RwLock::new(PresetManager::new(
+                "guitar",
+                guitar_factory_presets(),
+            ))),
+            undo_manager: Arc::new(parking_lot::RwLock::new(UndoManager::default())),
         }
     }
 }
@@ -295,25 +300,22 @@ impl Plugin for PhysicsGuitar {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        // 1. Process GUI manual fret events from queue
-        {
-            let mut queue = self.gui_event_queue.lock();
-            for event in queue.drain(..) {
-                match event {
-                    GuiGuitarEvent::NoteOn { string_index, fret } => {
-                        if (1..=6).contains(&string_index) {
-                            let s_i = (string_index - 1) as usize;
-                            let open_note = self.engine.router.open_notes[s_i];
-                            let midi_note = open_note + fret;
-                            self.engine.strings[s_i].set_fret(fret);
-                            self.engine.strings[s_i].pluck(&self.engine.exciter, self.engine.pluck_pos_ratio, 0.85);
-                            self.engine.active_notes_on_string[s_i] = Some(midi_note);
-                        }
+        // 1. Process GUI manual fret events from lock-free queue
+        while let Ok(event) = self.gui_event_rx.try_recv() {
+            match event {
+                GuiGuitarEvent::NoteOn { string_index, fret } => {
+                    if (1..=6).contains(&string_index) {
+                        let s_i = (string_index - 1) as usize;
+                        let open_note = self.engine.router.open_notes[s_i];
+                        let midi_note = open_note + fret;
+                        self.engine.strings[s_i].set_fret(fret);
+                        self.engine.strings[s_i].pluck(&self.engine.exciter, self.engine.pluck_pos_ratio, 0.85);
+                        self.engine.active_notes_on_string[s_i] = Some(midi_note);
                     }
-                    GuiGuitarEvent::NoteOff { string_index, .. } => {
-                        if (1..=6).contains(&string_index) {
-                            self.engine.release_string(string_index);
-                        }
+                }
+                GuiGuitarEvent::NoteOff { string_index, .. } => {
+                    if (1..=6).contains(&string_index) {
+                        self.engine.release_string(string_index);
                     }
                 }
             }
@@ -382,8 +384,9 @@ impl Plugin for PhysicsGuitar {
                         self.engine.note_off(channel, note);
                     }
                     NoteEvent::MidiPitchBend { channel, value, .. } => {
-                        // 14-bit pitch bend: 8192 is center, map to +/- 12 semitones
-                        let bend_semitones = ((value as f64 - 8192.0) / 8192.0) * 12.0;
+                        // nih-plug normalizes value to [0.0, 1.0], where 0.5 is center (0 bend)
+                        // Map to +/- 12 semitones
+                        let bend_semitones = (value as f64 - 0.5) * 2.0 * 12.0;
                         self.engine.pitch_bend(channel, bend_semitones);
                     }
                     _ => {}
@@ -415,337 +418,15 @@ impl Plugin for PhysicsGuitar {
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        let params = self.params.clone();
-        let active_frets_shared = self.active_frets_shared.clone();
-        let string_energies_shared = self.string_energies_shared.clone();
-        let gui_event_queue = self.gui_event_queue.clone();
-        let language_arc = self.language.clone();
-
-        struct GuiGuitarState {
-            held_mouse_fret: Option<(u8, u8)>,
-            language: Language,
-            selected_preset: Option<usize>,
-        }
-
-        let initial_lang = if language_arc.load(Ordering::Relaxed) == 1 {
-            Language::SimplifiedChinese
-        } else {
-            Language::English
-        };
-
-        create_egui_editor(
+        create_vizia_guitar_editor(
+            self.params.clone(),
+            self.active_frets_shared.clone(),
+            self.string_energies_shared.clone(),
+            self.language.clone(),
+            self.gui_event_tx.clone(),
+            self.preset_manager.clone(),
+            self.undo_manager.clone(),
             self.params.editor_state.clone(),
-            GuiGuitarState {
-                held_mouse_fret: None,
-                language: initial_lang,
-                selected_preset: Some(0),
-            },
-            |egui_ctx, _gui_state| {
-                setup_cjk_fonts(egui_ctx);
-            },
-            move |egui_ctx, setter, gui_state| {
-                let lang = gui_state.language;
-                egui::CentralPanel::default().show(egui_ctx, |ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
-
-                    // Top Banner Header with Title, Presets, and Language Toggle
-                    ui.horizontal(|ui| {
-                        ui.heading(
-                            RichText::new(I18n::title(lang))
-                                .font(FontId::proportional(22.0))
-                                .color(Color32::from_rgb(255, 195, 80))
-                                .strong(),
-                        );
-                        ui.label(
-                            RichText::new(I18n::subtitle(lang))
-                                .font(FontId::proportional(11.0))
-                                .color(Color32::from_rgb(170, 175, 190)),
-                        );
-
-                        // Right-aligned controls: Language Switcher & Preset Selector
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let (btn_text, next_lang) = match lang {
-                                Language::English => ("🌐 中文", Language::SimplifiedChinese),
-                                Language::SimplifiedChinese => ("🌐 English", Language::English),
-                            };
-                            if ui
-                                .button(
-                                    RichText::new(btn_text)
-                                        .font(FontId::proportional(12.0))
-                                        .color(Color32::from_rgb(210, 220, 240)),
-                                )
-                                .clicked()
-                            {
-                                gui_state.language = next_lang;
-                                language_arc.store(
-                                    if next_lang == Language::SimplifiedChinese { 1 } else { 0 },
-                                    Ordering::Relaxed,
-                                );
-                            }
-
-                            // Preset Selector Dropdown
-                            let current_preset_name = match gui_state.selected_preset {
-                                Some(idx) => FactoryPreset::from_index(idx).name(lang),
-                                None => FactoryPreset::MartinD28Fingerstyle.name(lang),
-                            };
-
-                            egui::ComboBox::from_id_salt("preset_selector_combo")
-                                .selected_text(current_preset_name)
-                                .width(180.0)
-                                .show_ui(ui, |ui| {
-                                    for (idx, &preset) in FactoryPreset::all().iter().enumerate() {
-                                        let is_sel = gui_state.selected_preset == Some(idx);
-                                        if ui.selectable_label(is_sel, preset.name(lang)).clicked() {
-                                            gui_state.selected_preset = Some(idx);
-                                            let v = preset.values();
-
-                                            setter.begin_set_parameter(&params.mode);
-                                            setter.set_parameter(&params.mode, v.mode);
-                                            setter.end_set_parameter(&params.mode);
-
-                                            setter.begin_set_parameter(&params.pluck_style);
-                                            setter.set_parameter(&params.pluck_style, v.pluck_style);
-                                            setter.end_set_parameter(&params.pluck_style);
-
-                                            setter.begin_set_parameter(&params.pickup_pos);
-                                            setter.set_parameter(&params.pickup_pos, v.pickup_pos);
-                                            setter.end_set_parameter(&params.pickup_pos);
-
-                                            setter.begin_set_parameter(&params.pickup_type);
-                                            setter.set_parameter(&params.pickup_type, v.pickup_type);
-                                            setter.end_set_parameter(&params.pickup_type);
-
-                                            setter.begin_set_parameter(&params.tone);
-                                            setter.set_parameter(&params.tone, v.tone);
-                                            setter.end_set_parameter(&params.tone);
-
-                                            setter.begin_set_parameter(&params.amp_drive);
-                                            setter.set_parameter(&params.amp_drive, v.amp_drive);
-                                            setter.end_set_parameter(&params.amp_drive);
-
-                                            setter.begin_set_parameter(&params.cab_enabled);
-                                            setter.set_parameter(&params.cab_enabled, v.cab_enabled);
-                                            setter.end_set_parameter(&params.cab_enabled);
-
-                                            setter.begin_set_parameter(&params.palm_mute);
-                                            setter.set_parameter(&params.palm_mute, v.palm_mute);
-                                            setter.end_set_parameter(&params.palm_mute);
-
-                                            setter.begin_set_parameter(&params.strum_speed);
-                                            setter.set_parameter(&params.strum_speed, v.strum_speed);
-                                            setter.end_set_parameter(&params.strum_speed);
-
-                                            setter.begin_set_parameter(&params.fret_buzz);
-                                            setter.set_parameter(&params.fret_buzz, v.fret_buzz);
-                                            setter.end_set_parameter(&params.fret_buzz);
-
-                                            setter.begin_set_parameter(&params.pluck_pos);
-                                            setter.set_parameter(&params.pluck_pos, v.pluck_pos);
-                                            setter.end_set_parameter(&params.pluck_pos);
-
-                                            setter.begin_set_parameter(&params.finger_squeak);
-                                            setter.set_parameter(&params.finger_squeak, v.finger_squeak);
-                                            setter.end_set_parameter(&params.finger_squeak);
-
-                                            setter.begin_set_parameter(&params.groove_pattern);
-                                            setter.set_parameter(&params.groove_pattern, v.groove_pattern);
-                                            setter.end_set_parameter(&params.groove_pattern);
-                                        }
-                                    }
-                                });
-
-                            ui.label(RichText::new(I18n::preset_label(lang)).color(Color32::from_rgb(180, 190, 210)));
-                        });
-                    });
-
-                    ui.separator();
-
-                    // Mode & Performance Controls Rack (Sequential horizontal layout with zero overlap)
-                    ui.group(|ui| {
-                        ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            let total_spacing = 3.0 * 16.0 + 24.0;
-                            let section_width = ((ui.available_width() - total_spacing) / 4.0).clamp(160.0, 240.0);
-                            // CRITICAL: ParamSlider appends an internal ~60px value label box to the right of slider_width!
-                            // Therefore, slider bar width must be bounded to (section_width - 70.0) so the entire widget fits!
-                            let slider_w = (section_width - 70.0).clamp(60.0, 150.0);
-
-                            // Section 0: Instrument & Pickup (乐器与拾音)
-                            ui.vertical(|ui| {
-                                ui.set_width(section_width);
-                                ui.set_max_width(section_width);
-
-                                ui.label(RichText::new(I18n::rack_instrument(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
-                                let mut mode_idx = params.mode.value();
-                                ui.horizontal(|ui| {
-                                    ui.radio_value(&mut mode_idx, 0, I18n::mode_electric(lang));
-                                    ui.radio_value(&mut mode_idx, 1, I18n::mode_acoustic(lang));
-                                });
-                                if mode_idx != params.mode.value() {
-                                    setter.begin_set_parameter(&params.mode);
-                                    setter.set_parameter(&params.mode, mode_idx);
-                                    setter.end_set_parameter(&params.mode);
-                                }
-
-                                ui.label(RichText::new(I18n::pickup_pos(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                let mut pos_idx = params.pickup_pos.value();
-                                ui.horizontal(|ui| {
-                                    ui.radio_value(&mut pos_idx, 0, I18n::pickup_bridge(lang));
-                                    ui.radio_value(&mut pos_idx, 1, I18n::pickup_mid(lang));
-                                    ui.radio_value(&mut pos_idx, 2, I18n::pickup_neck(lang));
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.radio_value(&mut pos_idx, 3, I18n::pickup_bn(lang));
-                                    ui.radio_value(&mut pos_idx, 4, I18n::pickup_bm(lang));
-                                });
-                                if pos_idx != params.pickup_pos.value() {
-                                    setter.begin_set_parameter(&params.pickup_pos);
-                                    setter.set_parameter(&params.pickup_pos, pos_idx);
-                                    setter.end_set_parameter(&params.pickup_pos);
-                                }
-
-                                let mut type_idx = params.pickup_type.value();
-                                ui.horizontal(|ui| {
-                                    ui.radio_value(&mut type_idx, 0, I18n::pickup_single(lang));
-                                    ui.radio_value(&mut type_idx, 1, I18n::pickup_humbucker(lang));
-                                });
-                                if type_idx != params.pickup_type.value() {
-                                    setter.begin_set_parameter(&params.pickup_type);
-                                    setter.set_parameter(&params.pickup_type, type_idx);
-                                    setter.end_set_parameter(&params.pickup_type);
-                                }
-
-                                ui.label(RichText::new(I18n::tone_knob(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                ui.add(ParamSlider::for_param(&params.tone, setter).with_width(slider_w));
-                            });
-
-                            ui.separator();
-
-                            // Section 1: Tube Amp & Cabinet (放大器与箱体)
-                            ui.vertical(|ui| {
-                                ui.set_width(section_width);
-                                ui.set_max_width(section_width);
-
-                                ui.label(RichText::new(I18n::rack_amp(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
-                                ui.label(RichText::new(I18n::amp_drive(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                ui.add(ParamSlider::for_param(&params.amp_drive, setter).with_width(slider_w));
-
-                                let mut cab_val = params.cab_enabled.value();
-                                if ui.checkbox(&mut cab_val, I18n::cab_enabled(lang)).changed() {
-                                    setter.begin_set_parameter(&params.cab_enabled);
-                                    setter.set_parameter(&params.cab_enabled, cab_val);
-                                    setter.end_set_parameter(&params.cab_enabled);
-                                }
-
-                                ui.label(RichText::new(I18n::palm_mute(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                ui.add(ParamSlider::for_param(&params.palm_mute, setter).with_width(slider_w));
-                            });
-
-                            ui.separator();
-
-                            // Section 2: Strum & Groove (弹奏与伴奏)
-                            ui.vertical(|ui| {
-                                ui.set_width(section_width);
-                                ui.set_max_width(section_width);
-
-                                ui.label(RichText::new(I18n::rack_strum(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
-                                ui.label(RichText::new(I18n::pluck_style(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                let mut style_idx = params.pluck_style.value();
-                                ui.horizontal(|ui| {
-                                    ui.radio_value(&mut style_idx, 0, I18n::pluck_plectrum(lang));
-                                    ui.radio_value(&mut style_idx, 1, I18n::pluck_finger(lang));
-                                });
-                                if style_idx != params.pluck_style.value() {
-                                    setter.begin_set_parameter(&params.pluck_style);
-                                    setter.set_parameter(&params.pluck_style, style_idx);
-                                    setter.end_set_parameter(&params.pluck_style);
-                                }
-
-                                ui.label(RichText::new(I18n::strum_speed(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                ui.add(ParamSlider::for_param(&params.strum_speed, setter).with_width(slider_w));
-
-                                ui.label(RichText::new(I18n::finger_squeak(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                ui.add(ParamSlider::for_param(&params.finger_squeak, setter).with_width(slider_w));
-
-                                ui.label(RichText::new(I18n::groove_pattern(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                let cur_groove = params.groove_pattern.value();
-                                egui::ComboBox::from_id_salt("groove_pattern_combo")
-                                    .selected_text(I18n::groove_name(cur_groove, lang))
-                                    .width(slider_w)
-                                    .show_ui(ui, |ui| {
-                                        for g_idx in 0..=4 {
-                                            if ui.selectable_label(cur_groove == g_idx, I18n::groove_name(g_idx, lang)).clicked() {
-                                                setter.begin_set_parameter(&params.groove_pattern);
-                                                setter.set_parameter(&params.groove_pattern, g_idx);
-                                                setter.end_set_parameter(&params.groove_pattern);
-                                            }
-                                        }
-                                    });
-                            });
-
-                            ui.separator();
-
-                            // Section 3: Master Output (总输出 - safe, wide right margin)
-                            ui.vertical(|ui| {
-                                ui.set_width(section_width);
-                                ui.set_max_width(section_width);
-
-                                ui.label(RichText::new(I18n::rack_output(lang)).strong().color(Color32::from_rgb(200, 205, 220)));
-
-                                ui.label(RichText::new(I18n::pluck_pos(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                ui.add(ParamSlider::for_param(&params.pluck_pos, setter).with_width(slider_w));
-
-                                ui.label(RichText::new(I18n::fret_buzz(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                ui.add(ParamSlider::for_param(&params.fret_buzz, setter).with_width(slider_w));
-
-                                ui.label(RichText::new(I18n::master_gain(lang)).color(Color32::from_rgb(160, 165, 180)));
-                                ui.add(ParamSlider::for_param(&params.master_gain, setter).with_width(slider_w));
-                            });
-                        });
-                    });
-
-                    ui.add_space(8.0);
-
-                    // Read shared fret states and string vibration energies
-                    let mut active_frets = [None; 6];
-                    let mut string_energies = [0.0f32; 6];
-                    for i in 0..6 {
-                        let f = active_frets_shared[i].load(Ordering::Relaxed);
-                        if f != 255 {
-                            active_frets[i] = Some(f);
-                        }
-                        string_energies[i] = f32::from_bits(string_energies_shared[i].load(Ordering::Relaxed));
-                    }
-
-                    // Interactive Guitar Fretboard Widget
-                    ui.label(RichText::new(I18n::fretboard_hint(lang)).color(Color32::from_rgb(180, 185, 200)));
-                    let fretboard_size = Vec2::new(ui.available_width(), 200.0);
-
-                    let mut on_pressed = |str_clicked: u8, fret_clicked: u8| {
-                        gui_event_queue.lock().push(GuiGuitarEvent::NoteOn {
-                            string_index: str_clicked,
-                            fret: fret_clicked,
-                        });
-                    };
-
-                    let mut on_released = |str_clicked: u8, fret_clicked: u8| {
-                        gui_event_queue.lock().push(GuiGuitarEvent::NoteOff {
-                            string_index: str_clicked,
-                            fret: fret_clicked,
-                        });
-                    };
-
-                    GuitarFretboardWidget::new(&active_frets, &string_energies, &mut gui_state.held_mouse_fret)
-                        .with_callbacks(&mut on_pressed, &mut on_released)
-                        .show(ui, fretboard_size);
-
-                    // Throttled repaint: request repaint only when strings vibrate or mouse interacts
-                    let is_animating = string_energies.iter().any(|&e| e > 0.001) || gui_state.held_mouse_fret.is_some();
-                    if is_animating {
-                        egui_ctx.request_repaint();
-                    }
-                });
-            },
         )
     }
 }

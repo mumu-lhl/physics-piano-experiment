@@ -1,0 +1,26 @@
+{
+  "id": "ambient_dreamy_pluck",
+  "name": "Dreadnought Strummer",
+  "name_zh": "D型琴扫弦伴奏",
+  "author": "Physics Soundlab",
+  "instrument": "guitar",
+  "category": "Acoustic Strummer",
+  "description": "Dynamic multi-string acoustic strumming with automatic Folk 4/4 rhythm groove accompaniment and balanced pick transient.",
+  "description_zh": "多弦真实扫弦动态，内置民谣 4/4 拍节奏律动自动伴奏，自然的拨片过弦微时延。",
+  "params": {
+    "mode": 1.0,
+    "pluck_style": 0.0,
+    "pickup_pos": 0.0,
+    "pickup_type": 0.0,
+    "tone": 0.90,
+    "amp_drive": 0.0,
+    "cab_enabled": 0.0,
+    "palmmute": 0.0,
+    "strum_speed": 26.0,
+    "fret_buzz": 0.38,
+    "pluckpos": 0.15,
+    "finger_squeak": 0.40,
+    "groove_pattern": 1.0
+  },
+  "is_factory": true
+}

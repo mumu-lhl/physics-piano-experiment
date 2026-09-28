@@ -1,0 +1,80 @@
+/* Physics Guitar Dark Vintage Amplifier & Instrument Theme */
+
+:root {
+    background-color: #14151b;
+    color: #e2e4ec;
+    font-size: 11.5;
+}
+
+label {
+    color: #c4c7d4;
+}
+
+.title {
+    font-size: 19.0;
+    font-weight: bold;
+    color: #ffd778;
+}
+
+.subtitle {
+    font-size: 11.0;
+    color: #8c90a2;
+}
+
+.rack-title {
+    font-size: 11.5;
+    font-weight: bold;
+    color: #ffd778;
+    bottom: 4px;
+}
+
+.param-label {
+    font-size: 10.5;
+    color: #a4a8bc;
+    bottom: 2px;
+}
+
+.rack-box {
+    background-color: #1a1c26;
+    border-color: #2b2f42;
+    border-width: 1px;
+    border-radius: 5px;
+    child-space: 6px;
+}
+
+button {
+    background-color: #262938;
+    border-color: #3e445c;
+    border-width: 1px;
+    border-radius: 4px;
+    color: #dce0f0;
+    height: 24px;
+    child-space: 4px;
+}
+
+button:hover {
+    background-color: #353b52;
+    border-color: #555f84;
+}
+
+button:active {
+    background-color: #ffd778;
+    color: #121318;
+}
+
+.btn-active {
+    background-color: #3d3624;
+    border-color: #ffd778;
+    color: #ffd778;
+}
+
+.btn-icon {
+    width: 28px;
+    height: 24px;
+    font-size: 13.0;
+}
+
+.hint-text {
+    font-size: 10.0;
+    color: #727688;
+}

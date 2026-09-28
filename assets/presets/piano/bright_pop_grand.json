@@ -1,0 +1,25 @@
+{
+  "id": "bright_pop_grand",
+  "name": "Bright Pop & Jazz Grand",
+  "name_zh": "明亮流行爵士三角琴",
+  "author": "Physics Soundlab",
+  "instrument": "piano",
+  "category": "Pop Grand",
+  "description": "Hard-hammered pop grand with cutting treble presence, tight close-mic balance, and wide-open lid for maximum cutting mix punch.",
+  "description_zh": "硬毡击槌的高穿透力流行三角琴，近距离强拾音，琴盖全开，适合在现代流行与爵士混音中脱颖而出。",
+  "params": {
+    "inharm": 0.95,
+    "hardness": 1.55,
+    "detune": 1.25,
+    "phantom": 1.2,
+    "keynoise": 1.2,
+    "dampernoise": 0.8,
+    "pedalnoise": 0.9,
+    "mic_close": 2.0,
+    "mic_player": 0.0,
+    "mic_ambient": -12.0,
+    "lid_angle": 60.0,
+    "velocity_curve": -0.2
+  },
+  "is_factory": true
+}

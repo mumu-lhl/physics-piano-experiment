@@ -1,0 +1,26 @@
+{
+  "id": "heavy_palm_mute_metal",
+  "name": "Heavy Metal Chug",
+  "name_zh": "重金属紧实闷音切弦",
+  "author": "Physics Soundlab",
+  "instrument": "guitar",
+  "category": "Metal High Gain",
+  "description": "High-gain bridge humbucker with tight palm-muting decay, fast plectrum attack, and 4x12 closed-back cabinet punch.",
+  "description_zh": "高增益琴桥双线圈，沉重紧致的右手掌侧边闷音，极快拨片瞬态冲击，配以 4x12 封闭式箱体低频打击感。",
+  "params": {
+    "mode": 0.0,
+    "pluck_style": 0.0,
+    "pickup_pos": 0.0,
+    "pickup_type": 1.0,
+    "tone": 1.0,
+    "amp_drive": 0.88,
+    "cab_enabled": 1.0,
+    "palmmute": 0.65,
+    "strum_speed": 4.0,
+    "fret_buzz": 0.50,
+    "pluckpos": 0.10,
+    "finger_squeak": 0.20,
+    "groove_pattern": 4.0
+  },
+  "is_factory": true
+}

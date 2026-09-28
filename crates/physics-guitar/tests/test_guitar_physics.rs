@@ -297,3 +297,23 @@ fn test_acoustic_stereo_spatial_radiation() {
     assert!(diff_sq > 1e-6, "Acoustic body must produce natural spatial stereo image (not dead mono)");
 }
 
+#[test]
+fn test_single_channel_pitch_bend_and_pre_bend() {
+    let mut engine = GuitarEngine::new(44100.0, GuitarStringSetType::Acoustic012, GuitarInstrumentMode::Acoustic);
+
+    // 1. Send pitch bend on standard MIDI channel 1 (Channel 1, +2.0 semitones) BEFORE playing
+    engine.pitch_bend(1, 2.0);
+    assert_eq!(engine.global_pitch_bend, 2.0);
+
+    // 2. Play note on Channel 1 (Low E2 -> String 6)
+    engine.note_on(1, 40, 0.8);
+
+    // String 6 (index 5) must have pitch bend applied (+2 semitones)
+    assert!((engine.strings[5].pitch_bend_semitones - 2.0).abs() < 1e-4);
+
+    // 3. Modulate bend while sounding to +4.0 semitones
+    engine.pitch_bend(1, 4.0);
+    assert!((engine.strings[5].pitch_bend_semitones - 4.0).abs() < 1e-4);
+}
+
+

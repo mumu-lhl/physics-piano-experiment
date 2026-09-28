@@ -1,0 +1,11 @@
+[package]
+name = "physics-presets"
+version = "0.1.0"
+edition = "2021"
+authors = ["Mumulhl"]
+description = "Universal JSON-based preset management, file storage, and Undo/Redo history system for physical modeling instruments"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dirs = "5.0"

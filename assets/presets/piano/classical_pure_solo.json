@@ -1,0 +1,25 @@
+{
+  "id": "classical_pure_solo",
+  "name": "Classical Pure Solo",
+  "name_zh": "纯净独奏古典琴",
+  "author": "Physics Soundlab",
+  "instrument": "piano",
+  "category": "Classical Solo",
+  "description": "Pristine, ultra-clean concert tuning with tight unison convergence, restrained action noise, and player-seated binaural imaging.",
+  "description_zh": "严谨精密的古典音乐会纯净调律，三弦走音极小，机械杂音收敛，演奏者双耳头模近场沉浸视角。",
+  "params": {
+    "inharm": 1.00,
+    "hardness": 0.95,
+    "detune": 0.70,
+    "phantom": 0.9,
+    "keynoise": 0.6,
+    "dampernoise": 0.7,
+    "pedalnoise": 0.7,
+    "mic_close": -4.0,
+    "mic_player": 2.0,
+    "mic_ambient": -3.0,
+    "lid_angle": 45.0,
+    "velocity_curve": 0.0
+  },
+  "is_factory": true
+}

@@ -1,0 +1,26 @@
+{
+  "id": "dreadnought_acoustic_fingerstyle",
+  "name": "Martin D-28 Fingerstyle",
+  "name_zh": "马丁 D-28 指弹原声",
+  "author": "Physics Soundlab",
+  "instrument": "guitar",
+  "category": "Acoustic Fingerstyle",
+  "description": "Rich acoustic dreadnought body resonance, flesh finger pluck dynamics, and authentic soundboard bridge modal radiation.",
+  "description_zh": "丰满浑厚的 D 型原声吉他共鸣箱体，指肉拨弦触感，真实的琴桥木质共鸣板辐射。",
+  "params": {
+    "mode": 1.0,
+    "pluck_style": 1.0,
+    "pickup_pos": 0.0,
+    "pickup_type": 0.0,
+    "tone": 1.0,
+    "amp_drive": 0.0,
+    "cab_enabled": 0.0,
+    "palmmute": 0.0,
+    "strum_speed": 14.0,
+    "fret_buzz": 0.25,
+    "pluckpos": 0.22,
+    "finger_squeak": 0.45,
+    "groove_pattern": 0.0
+  },
+  "is_factory": true
+}

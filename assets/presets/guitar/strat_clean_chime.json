@@ -1,0 +1,26 @@
+{
+  "id": "strat_clean_chime",
+  "name": "Strat Clean Chime",
+  "name_zh": "芬达单线圈铃音清音",
+  "author": "Physics Soundlab",
+  "instrument": "guitar",
+  "category": "Electric Clean",
+  "description": "Bell-like in-between single coil chime (Bridge + Middle) with sparkling top end and dynamic tube preamp touch sensitivity.",
+  "description_zh": "经典的琴桥与中拾音器并联第四档（Quack）音色，通透明亮的铃音高频与灵动的电子管触感响应。",
+  "params": {
+    "mode": 0.0,
+    "pluck_style": 0.0,
+    "pickup_pos": 4.0,
+    "pickup_type": 0.0,
+    "tone": 0.95,
+    "amp_drive": 0.15,
+    "cab_enabled": 1.0,
+    "palmmute": 0.0,
+    "strum_speed": 6.0,
+    "fret_buzz": 0.30,
+    "pluckpos": 0.16,
+    "finger_squeak": 0.25,
+    "groove_pattern": 0.0
+  },
+  "is_factory": true
+}

@@ -14,6 +14,8 @@ pub enum EngineEvent {
     NoteTuning { time: usize, key: u8, cents: f64 },
     SustainPedal { time: usize, depth: f64 },
     UnaCorda { time: usize, enabled: bool },
+    PitchBend { time: usize, cents: f64 },
+    Expression { time: usize, gain: f64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +49,9 @@ pub struct PianoEngine {
     pub hammer_hardness: f64,
     pub unison_detuning: f64,
     pub phantom_gain: f64,
+    pub pitch_bend_cents: f64,
+    pub expression_gain: f64,
+    pub velocity_curve: f64,
 
     // Tier 6: Micro-Mechanical Action Noise Generators
     pub action_noise: KeyActionNoise,
@@ -104,6 +109,9 @@ impl PianoEngine {
             hammer_hardness: 1.0,
             unison_detuning: 1.0,
             phantom_gain: 1.0,
+            pitch_bend_cents: 0.0,
+            expression_gain: 1.0,
+            velocity_curve: 0.0,
             action_noise,
             damper_whoosh,
             plate_shock,
@@ -115,6 +123,21 @@ impl PianoEngine {
             active_keys_vec: Vec::with_capacity(32),
             keys_to_remove_scratch: Vec::with_capacity(32),
         }
+    }
+
+    pub fn set_pitch_bend(&mut self, cents: f64) {
+        self.pitch_bend_cents = cents;
+        for v in self.voices.values_mut() {
+            v.set_pitch_bend(cents);
+        }
+    }
+
+    pub fn set_expression_gain(&mut self, gain: f64) {
+        self.expression_gain = gain.clamp(0.0, 2.0);
+    }
+
+    pub fn set_velocity_curve(&mut self, curve: f64) {
+        self.velocity_curve = curve.clamp(-1.0, 1.0);
     }
 
     pub fn set_inharmonicity_scale(&mut self, scale: f64) {
@@ -192,6 +215,7 @@ impl PianoEngine {
         let hardness = self.hammer_hardness;
         let detune = self.unison_detuning;
         let inharm = self.inharmonicity_scale;
+        let pitch_bend = self.pitch_bend_cents;
 
         self.voices.entry(key).or_insert_with(|| {
             let mut v = PianoVoice::new(kp.clone(), sr);
@@ -199,7 +223,7 @@ impl PianoEngine {
                 v.set_una_corda(true);
             }
             v.set_hammer_hardness(hardness);
-            v.set_unison_detuning(detune);
+            v.update_string_tunings(detune, pitch_bend);
             v.set_inharmonicity_scale(inharm);
             v
         })
@@ -261,10 +285,17 @@ impl PianoEngine {
         if self.active_keys.len() >= self.max_active_voices && !self.active_keys.contains(&key) {
             self.steal_voice();
         }
-        self.action_noise.trigger_note_on(key, velocity);
+        let effective_vel = if self.velocity_curve.abs() > 1e-4 {
+            let exponent = 2.0_f64.powf(self.velocity_curve * 0.8);
+            velocity.clamp(0.001, 1.0).powf(exponent).clamp(0.001, 1.0)
+        } else {
+            velocity.clamp(0.001, 1.0)
+        };
+
+        self.action_noise.trigger_note_on(key, effective_vel);
         let cur_energy = {
             let v = self.get_or_create_voice(key);
-            v.note_on(velocity);
+            v.note_on(effective_vel);
             v.get_energy()
         };
         self.active_keys.insert(key);
@@ -345,6 +376,8 @@ impl PianoEngine {
                     EngineEvent::NoteTuning { time, .. } => *time,
                     EngineEvent::SustainPedal { time, .. } => *time,
                     EngineEvent::UnaCorda { time, .. } => *time,
+                    EngineEvent::PitchBend { time, .. } => *time,
+                    EngineEvent::Expression { time, .. } => *time,
                 };
                 if ev_time <= s {
                     match ev {
@@ -356,6 +389,8 @@ impl PianoEngine {
                             self.set_sustain_pedal(down, *depth);
                         }
                         EngineEvent::UnaCorda { enabled, .. } => self.set_una_corda(*enabled),
+                        EngineEvent::PitchBend { cents, .. } => self.set_pitch_bend(*cents),
+                        EngineEvent::Expression { gain, .. } => self.set_expression_gain(*gain),
                     }
                     event_idx += 1;
                 } else {
@@ -414,8 +449,9 @@ impl PianoEngine {
             let (shock_l, shock_r) = self.plate_shock.step();
             let (buzz_l, buzz_r) = self.restrike_buzz.step();
 
-            out_left[s] = rad_l + act_l + whoosh_l + shock_l + buzz_l;
-            out_right[s] = rad_r + act_r + whoosh_r + shock_r + buzz_r;
+            let expr = self.expression_gain;
+            out_left[s] = (rad_l + act_l + whoosh_l + shock_l + buzz_l) * expr;
+            out_right[s] = (rad_r + act_r + whoosh_r + shock_r + buzz_r) * expr;
         }
 
         // Stage 5: Voice lifecycle & polyphony management at block boundary
@@ -476,6 +512,8 @@ impl PianoEngine {
         self.depressed_keys.clear();
         self.active_keys_vec.clear();
         self.note_energy_peak.clear();
+        self.pitch_bend_cents = 0.0;
+        self.expression_gain = 1.0;
         self.f_react_t = 0.0;
         self.f_react_p = 0.0;
         self.bridge = BridgeSoundboard::new(self.sample_rate);

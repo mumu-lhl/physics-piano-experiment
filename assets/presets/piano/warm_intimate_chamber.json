@@ -1,0 +1,25 @@
+{
+  "id": "warm_intimate_chamber",
+  "name": "Warm Intimate Chamber",
+  "name_zh": "温暖室内乐重奏琴",
+  "author": "Physics Soundlab",
+  "instrument": "piano",
+  "category": "Chamber Grand",
+  "description": "Softer felt voicing and partially closed lid creating a round, warm, woody timbre ideal for chamber music and intimate film scoring.",
+  "description_zh": "软毡打磨击槌，半闭合琴盖，醇厚温润的木质泛音，非常适合室内乐重奏与抒情影视配乐。",
+  "params": {
+    "inharm": 1.05,
+    "hardness": 0.75,
+    "detune": 0.85,
+    "phantom": 0.8,
+    "keynoise": 0.7,
+    "dampernoise": 1.1,
+    "pedalnoise": 0.8,
+    "mic_close": -2.0,
+    "mic_player": 1.0,
+    "mic_ambient": -4.0,
+    "lid_angle": 30.0,
+    "velocity_curve": 0.1
+  },
+  "is_factory": true
+}

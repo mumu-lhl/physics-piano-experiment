@@ -1,0 +1,25 @@
+{
+  "id": "steinway_concert_d",
+  "name": "Steinway D Concert Grand",
+  "name_zh": "施坦威 D-274 音乐会三角琴",
+  "author": "Physics Soundlab",
+  "instrument": "piano",
+  "category": "Concert Grand",
+  "description": "Full-size 9-foot concert grand piano with balanced inharmonicity, rich longitudinal partials, and standard concert hall microphone staging.",
+  "description_zh": "标准 2.74 米音乐会三角钢琴，音色均衡雄壮，纵向泛音丰富，配以多声道音乐厅立体声拾音。",
+  "params": {
+    "inharm": 1.0,
+    "hardness": 1.05,
+    "detune": 1.0,
+    "phantom": 1.0,
+    "keynoise": 1.0,
+    "dampernoise": 1.0,
+    "pedalnoise": 1.0,
+    "mic_close": 0.0,
+    "mic_player": -3.0,
+    "mic_ambient": -6.0,
+    "lid_angle": 45.0,
+    "velocity_curve": 0.0
+  },
+  "is_factory": true
+}

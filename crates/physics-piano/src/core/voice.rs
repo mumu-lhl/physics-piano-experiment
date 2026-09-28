@@ -18,6 +18,8 @@ pub struct PianoVoice {
 
     pub is_key_down: bool,
     pub is_sounding: bool,
+    pub unison_scale: f64,
+    pub pitch_bend_cents: f64,
 }
 
 impl PianoVoice {
@@ -31,19 +33,8 @@ impl PianoVoice {
 
         let has_damper = midi_note < 89;
         let mut strings = Vec::with_capacity(key_params.num_unisons);
-        for (i, s_param) in key_params.strings.iter().enumerate() {
-            let cents_detune = if i < key_params.detuning_cents.len() {
-                key_params.detuning_cents[i]
-            } else {
-                0.0
-            };
-            let freq_ratio = 2.0f64.powf(cents_detune / 1200.0);
-            let detuned_tension = s_param.tension * freq_ratio.powi(2);
-
-            let mut detuned_param = s_param.clone();
-            detuned_param.tension = detuned_tension;
-
-            let mut s = StiffStringModal::new(detuned_param, sample_rate);
+        for s_param in key_params.strings.iter() {
+            let mut s = StiffStringModal::new(s_param.clone(), sample_rate);
             s.has_damper = has_damper;
             if !has_damper {
                 s.set_damper(false, 0.0);
@@ -54,7 +45,7 @@ impl PianoVoice {
 
         let hammer = HuntCrossleyHammer::new(key_params.hammer.clone(), sample_rate);
 
-        Self {
+        let mut voice = Self {
             key_params,
             midi_note,
             pitch_name,
@@ -66,7 +57,11 @@ impl PianoVoice {
             hammer,
             is_key_down: false,
             is_sounding: false,
-        }
+            unison_scale: 1.0,
+            pitch_bend_cents: 0.0,
+        };
+        voice.recompute_string_tunings();
+        voice
     }
 
     pub fn reset(&mut self) {
@@ -78,9 +73,35 @@ impl PianoVoice {
         }
     }
 
+    pub fn update_string_tunings(&mut self, unison_scale: f64, pitch_bend_cents: f64) {
+        self.unison_scale = unison_scale;
+        self.pitch_bend_cents = pitch_bend_cents;
+        self.recompute_string_tunings();
+    }
+
+    pub fn set_pitch_bend(&mut self, cents: f64) {
+        self.pitch_bend_cents = cents;
+        self.recompute_string_tunings();
+    }
+
+    pub fn set_unison_detuning(&mut self, detune_scale: f64) {
+        self.unison_scale = detune_scale;
+        self.recompute_string_tunings();
+    }
+
     pub fn set_tuning_offset(&mut self, cents: f64) {
-        for s in &mut self.strings {
-            s.set_tuning_offset(cents);
+        self.pitch_bend_cents = cents;
+        self.recompute_string_tunings();
+    }
+
+    fn recompute_string_tunings(&mut self) {
+        for (i, s) in self.strings.iter_mut().enumerate() {
+            let base_cents = if i < self.key_params.detuning_cents.len() {
+                self.key_params.detuning_cents[i]
+            } else {
+                0.0
+            };
+            s.set_tuning_offset(base_cents * self.unison_scale + self.pitch_bend_cents);
         }
     }
 
@@ -92,17 +113,6 @@ impl PianoVoice {
         let s = scale.clamp(0.4, 3.0);
         self.hammer.k_h = self.key_params.hammer.stiffness * s.powf(2.0);
         self.hammer.p = (self.key_params.hammer.exponent * s.sqrt()).clamp(1.5, 3.5);
-    }
-
-    pub fn set_unison_detuning(&mut self, detune_scale: f64) {
-        for (i, s) in self.strings.iter_mut().enumerate() {
-            let base_cents = if i < self.key_params.detuning_cents.len() {
-                self.key_params.detuning_cents[i]
-            } else {
-                0.0
-            };
-            s.set_tuning_offset(base_cents * detune_scale);
-        }
     }
 
     pub fn set_inharmonicity_scale(&mut self, inharm_scale: f64) {
