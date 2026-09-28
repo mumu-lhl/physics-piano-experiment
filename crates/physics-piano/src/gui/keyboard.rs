@@ -12,7 +12,6 @@
 use crossbeam_channel::Sender;
 use nih_plug_vizia::vizia::prelude::*;
 use nih_plug_vizia::vizia::vg;
-use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -24,7 +23,6 @@ pub struct PianoKeyboardWidget {
     active_keys_high: Arc<AtomicU64>,
     key_velocities: Arc<parking_lot::RwLock<[f32; 88]>>,
     held_mouse_key: Option<u8>,
-    held_qwerty_keys: HashSet<Code>,
 }
 
 impl PianoKeyboardWidget {
@@ -46,9 +44,9 @@ impl PianoKeyboardWidget {
             active_keys_high: active_keys_high.get(cx),
             key_velocities: key_velocities.get(cx),
             held_mouse_key: None,
-            held_qwerty_keys: HashSet::new(),
         }
         .build(cx, |_| {})
+        .focusable(true)
     }
 
     #[inline]
@@ -131,6 +129,7 @@ impl View for PianoKeyboardWidget {
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
         event.map(|window_event, meta| match window_event {
             WindowEvent::MouseDown(MouseButton::Left) => {
+                cx.focus();
                 let bounds = cx.bounds();
                 let mouse_x = cx.mouse().cursorx;
                 let mouse_y = cx.mouse().cursory;
@@ -171,58 +170,10 @@ impl View for PianoKeyboardWidget {
                     meta.consume();
                 }
             }
-            WindowEvent::KeyDown(code, _) => {
-                const QWERTY_MAP: &[(Code, u8)] = &[
-                    (Code::KeyA, 60), // C4
-                    (Code::KeyW, 61), // C#4
-                    (Code::KeyS, 62), // D4
-                    (Code::KeyE, 63), // D#4
-                    (Code::KeyD, 64), // E4
-                    (Code::KeyF, 65), // F4
-                    (Code::KeyT, 66), // F#4
-                    (Code::KeyG, 67), // G4
-                    (Code::KeyY, 68), // G#4
-                    (Code::KeyH, 69), // A4
-                    (Code::KeyU, 70), // A#4
-                    (Code::KeyJ, 71), // B4
-                    (Code::KeyK, 72), // C5
-                ];
-
-                for &(c, midi) in QWERTY_MAP {
-                    if *code == c && !self.held_qwerty_keys.contains(code) {
-                        self.held_qwerty_keys.insert(*code);
-                        self.play_note(midi, 0.85);
-                        cx.needs_redraw();
-                        meta.consume();
-                        break;
-                    }
-                }
-            }
-            WindowEvent::KeyUp(code, _) => {
-                const QWERTY_MAP: &[(Code, u8)] = &[
-                    (Code::KeyA, 60),
-                    (Code::KeyW, 61),
-                    (Code::KeyS, 62),
-                    (Code::KeyE, 63),
-                    (Code::KeyD, 64),
-                    (Code::KeyF, 65),
-                    (Code::KeyT, 66),
-                    (Code::KeyG, 67),
-                    (Code::KeyY, 68),
-                    (Code::KeyH, 69),
-                    (Code::KeyU, 70),
-                    (Code::KeyJ, 71),
-                    (Code::KeyK, 72),
-                ];
-
-                for &(c, midi) in QWERTY_MAP {
-                    if *code == c && self.held_qwerty_keys.contains(code) {
-                        self.held_qwerty_keys.remove(code);
-                        self.release_note(midi);
-                        cx.needs_redraw();
-                        meta.consume();
-                        break;
-                    }
+            WindowEvent::FocusOut => {
+                if let Some(prev) = self.held_mouse_key.take() {
+                    self.release_note(prev);
+                    cx.needs_redraw();
                 }
             }
             _ => {}

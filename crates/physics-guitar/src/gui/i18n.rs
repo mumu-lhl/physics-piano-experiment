@@ -266,6 +266,10 @@ impl I18n {
         }
     }
 
+    pub fn preset(lang: Language) -> &'static str {
+        Self::preset_label(lang)
+    }
+
     pub fn finger_squeak(lang: Language) -> &'static str {
         match lang {
             Language::English => "Finger Squeak:",

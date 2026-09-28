@@ -98,10 +98,12 @@ pub struct GuitarViziaData {
     pub language_atom: Arc<AtomicU8>,
     pub language: Language,
     pub selected_preset_id: Option<String>,
+    pub selected_preset_name: String,
     pub preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     pub undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
     pub can_undo: bool,
     pub can_redo: bool,
+    pub suppress_undo_gestures: Arc<AtomicU32>,
 }
 
 impl GuitarViziaData {
@@ -147,6 +149,7 @@ impl GuitarViziaData {
 pub enum GuitarUiEvent {
     ToggleLanguage,
     SelectPreset(String),
+    CyclePreset(bool),
     PromptSavePreset,
     SavePreset(String),
     DeletePreset(String),
@@ -168,8 +171,11 @@ impl Model for GuitarViziaData {
                 );
             }
             GuitarUiEvent::SelectPreset(preset_id) => {
-                let mgr = self.preset_manager.read();
-                if let Some(preset) = mgr.get_preset(preset_id) {
+                let preset_opt = {
+                    let mgr = self.preset_manager.read();
+                    mgr.get_preset(&preset_id).cloned()
+                };
+                if let Some(preset) = preset_opt {
                     let mut transitions = Vec::new();
                     for (pid, &new_val) in &preset.params {
                         if let Some(old_val) = get_guitar_param_value(&self.params, pid) {
@@ -180,6 +186,7 @@ impl Model for GuitarViziaData {
                                     new_value: new_val,
                                 });
                             }
+                            self.suppress_undo_gestures.fetch_add(1, Ordering::Relaxed);
                             set_guitar_param_value(cx, &self.params, pid, new_val);
                         }
                     }
@@ -187,8 +194,37 @@ impl Model for GuitarViziaData {
                         self.undo_manager.write().record_batch(&preset.name, transitions);
                     }
                     self.selected_preset_id = Some(preset_id.clone());
-                    self.can_undo = self.undo_manager.read().can_undo();
-                    self.can_redo = self.undo_manager.read().can_redo();
+                    self.selected_preset_name = preset.name.clone();
+                    let (u, r) = {
+                        let mgr = self.undo_manager.read();
+                        (mgr.can_undo(), mgr.can_redo())
+                    };
+                    self.can_undo = u;
+                    self.can_redo = r;
+                }
+            }
+            GuitarUiEvent::CyclePreset(next) => {
+                let next_id_opt = {
+                    let mgr = self.preset_manager.read();
+                    let presets = mgr.presets();
+                    if presets.is_empty() {
+                        None
+                    } else {
+                        let curr_idx = self
+                            .selected_preset_id
+                            .as_ref()
+                            .and_then(|id| presets.iter().position(|p| &p.id == id))
+                            .unwrap_or(0);
+                        let new_idx = if *next {
+                            (curr_idx + 1) % presets.len()
+                        } else {
+                            (curr_idx + presets.len() - 1) % presets.len()
+                        };
+                        Some(presets[new_idx].id.clone())
+                    }
+                };
+                if let Some(next_id) = next_id_opt {
+                    cx.emit(GuitarUiEvent::SelectPreset(next_id));
                 }
             }
             GuitarUiEvent::PromptSavePreset => {
@@ -196,10 +232,11 @@ impl Model for GuitarViziaData {
                 let new_id = format!("user_guitar_preset_{}", preset_count + 1);
                 let new_name = format!("User Guitar {}", preset_count + 1);
                 let params_map = snapshot_guitar_params(&self.params);
-                let preset = Preset::new(new_id.clone(), new_name, "guitar", params_map);
+                let preset = Preset::new(new_id.clone(), new_name.clone(), "guitar", params_map);
                 let mut mgr = self.preset_manager.write();
                 if let Ok(()) = mgr.save_user_preset(preset) {
                     self.selected_preset_id = Some(new_id);
+                    self.selected_preset_name = new_name;
                 }
             }
             GuitarUiEvent::SavePreset(name) => {
@@ -209,53 +246,83 @@ impl Model for GuitarViziaData {
                 let mut mgr = self.preset_manager.write();
                 if let Ok(()) = mgr.save_user_preset(preset) {
                     self.selected_preset_id = Some(safe_id);
+                    self.selected_preset_name = name.clone();
                 }
             }
             GuitarUiEvent::DeletePreset(preset_id) => {
                 let mut mgr = self.preset_manager.write();
-                let _ = mgr.delete_user_preset(preset_id);
-                if self.selected_preset_id.as_deref() == Some(preset_id) {
+                let _ = mgr.delete_user_preset(&preset_id);
+                if self.selected_preset_id.as_deref() == Some(&preset_id) {
                     self.selected_preset_id = None;
+                    self.selected_preset_name = "Strat Clean Chime".to_string();
                 }
             }
             GuitarUiEvent::Undo => {
-                if let Some(restores) = self.undo_manager.write().undo() {
+                let restores = {
+                    let mut mgr = self.undo_manager.write();
+                    mgr.undo()
+                };
+                if let Some(restores) = restores {
                     for (pid, val) in restores {
+                        self.suppress_undo_gestures.fetch_add(1, Ordering::Relaxed);
                         set_guitar_param_value(cx, &self.params, &pid, val);
                     }
-                    self.can_undo = self.undo_manager.read().can_undo();
-                    self.can_redo = self.undo_manager.read().can_redo();
+                    let (u, r) = {
+                        let mgr = self.undo_manager.read();
+                        (mgr.can_undo(), mgr.can_redo())
+                    };
+                    self.can_undo = u;
+                    self.can_redo = r;
                 }
             }
             GuitarUiEvent::Redo => {
-                if let Some(restores) = self.undo_manager.write().redo() {
+                let restores = {
+                    let mut mgr = self.undo_manager.write();
+                    mgr.redo()
+                };
+                if let Some(restores) = restores {
                     for (pid, val) in restores {
+                        self.suppress_undo_gestures.fetch_add(1, Ordering::Relaxed);
                         set_guitar_param_value(cx, &self.params, &pid, val);
                     }
-                    self.can_undo = self.undo_manager.read().can_undo();
-                    self.can_redo = self.undo_manager.read().can_redo();
+                    let (u, r) = {
+                        let mgr = self.undo_manager.read();
+                        (mgr.can_undo(), mgr.can_redo())
+                    };
+                    self.can_undo = u;
+                    self.can_redo = r;
                 }
             }
         });
 
         // Intercept parameter slider gestures for single-parameter undo/redo
-        event.map(|raw_param: &RawParamEvent, _| match raw_param {
-            RawParamEvent::BeginSetParameter(ptr) => {
-                let (pid, val) = self.resolve_param_ptr(*ptr);
-                if !pid.is_empty() {
-                    self.undo_manager.write().begin_gesture(pid, val);
-                }
-            }
-            RawParamEvent::EndSetParameter(ptr) => {
-                let (pid, val) = self.resolve_param_ptr(*ptr);
-                if !pid.is_empty() {
-                    if self.undo_manager.write().end_gesture(pid, val) {
-                        self.can_undo = self.undo_manager.read().can_undo();
-                        self.can_redo = self.undo_manager.read().can_redo();
+        event.map(|raw_param: &RawParamEvent, _| {
+            match raw_param {
+                RawParamEvent::BeginSetParameter(ptr) => {
+                    if self.suppress_undo_gestures.load(Ordering::Relaxed) > 0 {
+                        self.suppress_undo_gestures.fetch_sub(1, Ordering::Relaxed);
+                        return;
+                    }
+                    let (pid, val) = self.resolve_param_ptr(*ptr);
+                    if !pid.is_empty() {
+                        self.undo_manager.write().begin_gesture(pid, val);
                     }
                 }
+                RawParamEvent::EndSetParameter(ptr) => {
+                    let (pid, val) = self.resolve_param_ptr(*ptr);
+                    if !pid.is_empty() {
+                        if self.undo_manager.write().end_gesture(pid, val) {
+                            let (u, r) = {
+                                let mgr = self.undo_manager.read();
+                                (mgr.can_undo(), mgr.can_redo())
+                            };
+                            self.can_undo = u;
+                            self.can_redo = r;
+                        }
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         });
 
         // Keyboard shortcuts: Ctrl+Z (Undo), Ctrl+Y / Ctrl+Shift+Z (Redo)
@@ -293,6 +360,13 @@ pub fn create_vizia_guitar_editor(
         Language::English
     };
 
+    let initial_preset_name = {
+        let mgr = preset_manager.read();
+        mgr.get_preset("strat_clean_chime")
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "Strat Clean Chime".to_string())
+    };
+
     let data = GuitarViziaData {
         params,
         active_frets_shared,
@@ -300,10 +374,12 @@ pub fn create_vizia_guitar_editor(
         language_atom,
         language: initial_lang,
         selected_preset_id: Some("strat_clean_chime".to_string()),
+        selected_preset_name: initial_preset_name,
         preset_manager,
         undo_manager,
         can_undo: false,
         can_redo: false,
+        suppress_undo_gestures: Arc::new(AtomicU32::new(0)),
     };
 
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _gui_cx| {
@@ -318,49 +394,132 @@ pub fn create_vizia_guitar_editor(
         let lang = data.language;
 
         VStack::new(cx, |cx| {
-            // 1. Header Bar: Title, Undo/Redo, Save Preset, Language
+            // 1. Header Bar: Title, Compact Preset Selector, Undo/Redo, Language
             HStack::new(cx, |cx| {
                 VStack::new(cx, |cx| {
                     Label::new(cx, I18n::title(lang)).class("title");
                     Label::new(cx, I18n::subtitle(lang)).class("subtitle");
                 })
-                .width(Stretch(1.0));
+                .width(Pixels(170.0));
 
-                // Undo & Redo Buttons
+                // Compact Preset Navigator: ◀ | Preset ▾ | ▶ | Save
+                HStack::new(cx, |cx| {
+                    Label::new(cx, I18n::preset(lang))
+                        .class("param-label")
+                        .top(Stretch(1.0))
+                        .bottom(Stretch(1.0));
+
+                    Button::new(
+                        cx,
+                        |cx| cx.emit(GuitarUiEvent::CyclePreset(false)),
+                        |cx| Label::new(cx, "◀"),
+                    )
+                    .class("btn-cycle")
+                    .width(Pixels(26.0))
+                    .height(Pixels(24.0));
+
+                    Dropdown::new(
+                        cx,
+                        |cx| {
+                            Label::new(
+                                cx,
+                                GuitarViziaData::selected_preset_name.map(|name| format!("{} ▾", name)),
+                            )
+                            .class("preset-dropdown-label")
+                            .top(Stretch(1.0))
+                            .bottom(Stretch(1.0))
+                        },
+                        |cx| {
+                            Binding::new(cx, GuitarViziaData::preset_manager, |cx, mgr_lens| {
+                                let mgr_arc = mgr_lens.get(cx);
+                                let mgr = mgr_arc.read();
+                                for preset in mgr.presets() {
+                                    let pid = preset.id.clone();
+                                    let pname = preset.name.clone();
+                                    Label::new(cx, &pname)
+                                        .class("preset-item")
+                                        .on_press(move |cx| {
+                                            cx.emit(GuitarUiEvent::SelectPreset(pid.clone()));
+                                            cx.emit(PopupEvent::Close);
+                                        });
+                                }
+                            });
+                        },
+                    )
+                    .class("preset-dropdown")
+                    .height(Pixels(24.0))
+                    .width(Pixels(185.0));
+
+                    Button::new(
+                        cx,
+                        |cx| cx.emit(GuitarUiEvent::CyclePreset(true)),
+                        |cx| Label::new(cx, "▶"),
+                    )
+                    .class("btn-cycle")
+                    .width(Pixels(26.0))
+                    .height(Pixels(24.0));
+
+                    Button::new(
+                        cx,
+                        |cx| cx.emit(GuitarUiEvent::PromptSavePreset),
+                        |cx| {
+                            Label::new(
+                                cx,
+                                match lang {
+                                    Language::English => "Save",
+                                    Language::SimplifiedChinese => "保存",
+                                },
+                            )
+                        },
+                    )
+                    .height(Pixels(24.0))
+                    .width(Pixels(52.0));
+                })
+                .col_between(Pixels(4.0))
+                .top(Stretch(1.0))
+                .bottom(Stretch(1.0));
+
+                Element::new(cx).width(Stretch(1.0));
+
+                // Undo & Redo Buttons (clean text without broken unicode arrows)
                 HStack::new(cx, |cx| {
                     Button::new(
                         cx,
                         |cx| cx.emit(GuitarUiEvent::Undo),
-                        |cx| Label::new(cx, "↶ Undo"),
+                        |cx| {
+                            Label::new(
+                                cx,
+                                match lang {
+                                    Language::English => "Undo",
+                                    Language::SimplifiedChinese => "撤销",
+                                },
+                            )
+                        },
                     )
-                    .class("btn-icon")
-                    .width(Pixels(56.0));
+                    .class("btn-action")
+                    .height(Pixels(24.0))
+                    .width(Pixels(52.0));
 
                     Button::new(
                         cx,
                         |cx| cx.emit(GuitarUiEvent::Redo),
-                        |cx| Label::new(cx, "↷ Redo"),
+                        |cx| {
+                            Label::new(
+                                cx,
+                                match lang {
+                                    Language::English => "Redo",
+                                    Language::SimplifiedChinese => "重做",
+                                },
+                            )
+                        },
                     )
-                    .class("btn-icon")
-                    .width(Pixels(56.0));
+                    .class("btn-action")
+                    .height(Pixels(24.0))
+                    .width(Pixels(52.0));
                 })
-                .col_between(Pixels(4.0));
-
-                // Save Custom Preset Button
-                Button::new(
-                    cx,
-                    |cx| cx.emit(GuitarUiEvent::PromptSavePreset),
-                    |cx| {
-                        Label::new(
-                            cx,
-                            match lang {
-                                Language::English => "💾 Save",
-                                Language::SimplifiedChinese => "💾 保存",
-                            },
-                        )
-                    },
-                )
-                .width(Pixels(62.0));
+                .col_between(Pixels(4.0))
+                .top(Stretch(1.0))
+                .bottom(Stretch(1.0));
 
                 // Language Switcher Button
                 Button::new(
@@ -376,144 +535,108 @@ pub fn create_vizia_guitar_editor(
                         )
                     },
                 )
-                .width(Pixels(74.0));
+                .height(Pixels(24.0))
+                .width(Pixels(74.0))
+                .top(Stretch(1.0))
+                .bottom(Stretch(1.0));
             })
             .height(Pixels(38.0))
             .child_top(Stretch(1.0))
             .child_bottom(Stretch(1.0))
             .col_between(Pixels(10.0));
 
-            // 1b. Preset Selection Bar
-            HStack::new(cx, |cx| {
-                let mgr = data.preset_manager.read();
-                let presets = mgr.presets().to_vec();
-                for preset in presets {
-                    let p_id = preset.id.clone();
-                    let p_name = preset.display_name(lang == Language::SimplifiedChinese).to_string();
-                    let is_factory = preset.is_factory;
-
-                    HStack::new(cx, |cx| {
-                        let id_for_select = p_id.clone();
-                        Button::new(
-                            cx,
-                            move |cx| {
-                                cx.emit(GuitarUiEvent::SelectPreset(id_for_select.clone()));
-                            },
-                            move |cx| Label::new(cx, &p_name),
-                        )
-                        .height(Pixels(22.0));
-
-                        if !is_factory {
-                            let id_for_del = p_id.clone();
-                            Button::new(
-                                cx,
-                                move |cx| {
-                                    cx.emit(GuitarUiEvent::DeletePreset(id_for_del.clone()));
-                                },
-                                |cx| Label::new(cx, "✕"),
-                            )
-                            .width(Pixels(18.0))
-                            .height(Pixels(22.0));
-                        }
-                    })
-                    .col_between(Pixels(1.0));
-                }
-            })
-            .height(Pixels(24.0))
-            .col_between(Pixels(4.0));
-
-            // 2. Four Parameter Control Racks
+            // 2. Four Parameter Control Racks with aligned labels and sliders
             HStack::new(cx, |cx| {
                 // Rack 1: Instrument & Pickup Circuit
                 VStack::new(cx, |cx| {
                     Label::new(cx, I18n::rack_instrument(lang)).class("rack-title");
                     HStack::new(cx, |cx| {
-                        Label::new(cx, "Mode (0:Elec, 1:Acous):").class("param-label");
-                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.mode);
-                    }).size(Auto);
+                        Label::new(cx, "Mode:").class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.mode).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
                     HStack::new(cx, |cx| {
-                        Label::new(cx, "Pickup Position (0-4):").class("param-label");
-                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.pickup_pos);
-                    }).size(Auto);
+                        Label::new(cx, "Pickup:").class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.pickup_pos).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
                     HStack::new(cx, |cx| {
-                        Label::new(cx, "Pickup Type (0:Single, 1:Hum):").class("param-label");
-                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.pickup_type);
-                    }).size(Auto);
+                        Label::new(cx, "Coil:").class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.pickup_type).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
                     HStack::new(cx, |cx| {
-                        Label::new(cx, "Passive Tone:").class("param-label");
-                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.tone);
-                    }).size(Auto);
+                        Label::new(cx, "Tone:").class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.tone).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
                 })
                 .class("rack-box")
                 .width(Stretch(1.0))
-                .height(Pixels(180.0));
+                .height(Pixels(165.0));
 
                 // Rack 2: Tube Preamp & Tone Shaping
                 VStack::new(cx, |cx| {
                     Label::new(cx, I18n::rack_amp(lang)).class("rack-title");
                     HStack::new(cx, |cx| {
-                        Label::new(cx, "Tube Overdrive:").class("param-label");
-                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.amp_drive);
-                    }).size(Auto);
+                        Label::new(cx, "Overdrive:").class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.amp_drive).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
                     HStack::new(cx, |cx| {
-                        Label::new(cx, "Palm Mute Depth:").class("param-label");
-                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.palm_mute);
-                    }).size(Auto);
+                        Label::new(cx, "PalmMute:").class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.palm_mute).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
                     HStack::new(cx, |cx| {
-                        Label::new(cx, "Pluck Position:").class("param-label");
-                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.pluck_pos);
-                    }).size(Auto);
+                        Label::new(cx, "PluckPos:").class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.pluck_pos).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
                 })
                 .class("rack-box")
                 .width(Stretch(1.0))
-                .height(Pixels(180.0));
+                .height(Pixels(165.0));
 
                 // Rack 3: Mechanics & Organic Noises
                 VStack::new(cx, |cx| {
                     Label::new(cx, I18n::rack_mechanics(lang)).class("rack-title");
                     HStack::new(cx, |cx| {
-                        Label::new(cx, "Pluck Style (0:Pick, 1:Finger):").class("param-label");
-                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.pluck_style);
-                    }).size(Auto);
+                        Label::new(cx, "Style:").class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.pluck_style).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
                     HStack::new(cx, |cx| {
-                        Label::new(cx, "Strum Speed:").class("param-label");
-                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.strum_speed);
-                    }).size(Auto);
+                        Label::new(cx, "Speed:").class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.strum_speed).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
                     HStack::new(cx, |cx| {
-                        Label::new(cx, "Fret Buzz Sensitivity:").class("param-label");
-                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.fret_buzz);
-                    }).size(Auto);
+                        Label::new(cx, "Buzz:").class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.fret_buzz).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
                     HStack::new(cx, |cx| {
-                        Label::new(cx, "Finger Squeak Noise:").class("param-label");
-                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.finger_squeak);
-                    }).size(Auto);
+                        Label::new(cx, "Squeak:").class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.finger_squeak).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
                 })
                 .class("rack-box")
                 .width(Stretch(1.0))
-                .height(Pixels(180.0));
+                .height(Pixels(165.0));
 
                 // Rack 4: Groove & Master Output
                 VStack::new(cx, |cx| {
                     Label::new(cx, I18n::rack_master(lang)).class("rack-title");
                     HStack::new(cx, |cx| {
-                        Label::new(cx, "Groove Pattern (0-4):").class("param-label");
-                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.groove_pattern);
-                    }).size(Auto);
+                        Label::new(cx, "Pattern:").class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.groove_pattern).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
                     HStack::new(cx, |cx| {
-                        Label::new(cx, "Groove BPM:").class("param-label");
-                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.groove_bpm);
-                    }).size(Auto);
+                        Label::new(cx, "BPM:").class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.groove_bpm).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
                     HStack::new(cx, |cx| {
-                        Label::new(cx, "Master Volume:").class("param-label");
-                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.master_gain);
-                    }).size(Auto);
+                        Label::new(cx, "Volume:").class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                        ParamSlider::new(cx, GuitarViziaData::params, |p| &p.master_gain).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
+                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
                 })
                 .class("rack-box")
                 .width(Stretch(1.0))
-                .height(Pixels(180.0));
+                .height(Pixels(165.0));
             })
             .col_between(Pixels(8.0))
-            .height(Pixels(185.0));
+            .height(Pixels(170.0));
 
             // 3. Interactive 24-Fret 6-String Fretboard
             GuitarFretboardWidget::new(

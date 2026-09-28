@@ -182,8 +182,8 @@ impl I18n {
 
     pub fn keyboard_hint(lang: Language) -> &'static str {
         match lang {
-            Language::English => "Virtual 88-Key Keyboard (A0-C8) | Play via mouse or QWERTY keys (Z-M / Q-U)",
-            Language::SimplifiedChinese => "88键虚拟物理键盘 (A0-C8) | 支持鼠标点击或电脑键盘弹奏 (Z-M / Q-U)",
+            Language::English => "Virtual 88-Key Keyboard (A0-C8) | Play via mouse or QWERTY keys (A-K / W,E,T,Y,U), Z/X to shift octave",
+            Language::SimplifiedChinese => "88键虚拟物理键盘 (A0-C8) | 支持鼠标点击或电脑键盘弹奏 (A-K / W,E,T,Y,U)，按 Z/X 切换八度",
         }
     }
 }
