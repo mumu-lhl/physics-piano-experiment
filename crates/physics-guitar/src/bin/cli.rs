@@ -1,7 +1,7 @@
-use std::env;
-use hound::{WavSpec, WavWriter, SampleFormat};
-use physics_guitar::params::GuitarStringSetType;
+use hound::{SampleFormat, WavSpec, WavWriter};
 use physics_guitar::engine::{GuitarEngine, GuitarInstrumentMode};
+use physics_guitar::params::GuitarStringSetType;
+use std::env;
 
 fn pitch_to_midi(name: &str) -> Option<u8> {
     let name = name.trim();
@@ -57,7 +57,10 @@ fn main() {
     if cmd == "render" {
         let pitch = args.get(2).map(|s| s.as_str()).unwrap_or("E2");
         let dur: f64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(3.0);
-        let out_path = args.get(4).map(|s| s.as_str()).unwrap_or("guitar_pluck.wav");
+        let out_path = args
+            .get(4)
+            .map(|s| s.as_str())
+            .unwrap_or("guitar_pluck.wav");
         let mode_str = args.get(5).map(|s| s.as_str()).unwrap_or("electric");
 
         let mode = if mode_str == "acoustic" {
@@ -73,7 +76,10 @@ fn main() {
         };
 
         let midi_note = pitch_to_midi(pitch).unwrap_or(40);
-        println!("Synthesizing guitar note: {} (MIDI {}) in {:?} mode for {:.1}s...", pitch, midi_note, mode, dur);
+        println!(
+            "Synthesizing guitar note: {} (MIDI {}) in {:?} mode for {:.1}s...",
+            pitch, midi_note, mode, dur
+        );
 
         let mut engine = GuitarEngine::new(sample_rate, set_type, mode);
         engine.note_on(1, midi_note, 0.85);
@@ -98,7 +104,10 @@ fn main() {
         println!("Rendered output saved to: {}", out_path);
     } else if cmd == "strum" {
         let dur: f64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3.5);
-        let out_path = args.get(3).map(|s| s.as_str()).unwrap_or("guitar_strum.wav");
+        let out_path = args
+            .get(3)
+            .map(|s| s.as_str())
+            .unwrap_or("guitar_strum.wav");
         let mode_str = args.get(4).map(|s| s.as_str()).unwrap_or("electric");
 
         let mode = if mode_str == "acoustic" {
@@ -113,7 +122,10 @@ fn main() {
             GuitarStringSetType::Electric010
         };
 
-        println!("Strumming E-minor chord (E2, B2, E3, G3, B3, E4) in {:?} mode...", mode);
+        println!(
+            "Strumming E-minor chord (E2, B2, E3, G3, B3, E4) in {:?} mode...",
+            mode
+        );
         let mut engine = GuitarEngine::new(sample_rate, set_type, mode);
 
         // Open Em chord:

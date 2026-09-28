@@ -1,12 +1,12 @@
 //! Native CLAP Plugin & Standalone Synthesizer built with nih-plug and vizia.
 
 use atomic_float::AtomicF32;
-use nih_plug::prelude::*;
-use nih_plug_vizia::ViziaState;
+use nice_plug::prelude::*;
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
+use vizia_plug::ViziaState;
 
 use crate::engine::{EngineEvent, EngineOutEvent, PianoEngine};
 use crate::gui::{create_vizia_piano_editor, default_vizia_state, Language};
@@ -153,7 +153,10 @@ impl Default for PhysicsPianoParams {
             mic_close: FloatParam::new(
                 "Close Mic",
                 0.0,
-                FloatRange::Linear { min: -60.0, max: 6.0 },
+                FloatRange::Linear {
+                    min: -60.0,
+                    max: 6.0,
+                },
             )
             .with_unit(" dB")
             .with_value_to_string(formatters::v2s_f32_rounded(1)),
@@ -161,7 +164,10 @@ impl Default for PhysicsPianoParams {
             mic_player: FloatParam::new(
                 "Player Mic",
                 -3.0,
-                FloatRange::Linear { min: -60.0, max: 6.0 },
+                FloatRange::Linear {
+                    min: -60.0,
+                    max: 6.0,
+                },
             )
             .with_unit(" dB")
             .with_value_to_string(formatters::v2s_f32_rounded(1)),
@@ -169,7 +175,10 @@ impl Default for PhysicsPianoParams {
             mic_ambient: FloatParam::new(
                 "Ambient Mic",
                 -6.0,
-                FloatRange::Linear { min: -60.0, max: 6.0 },
+                FloatRange::Linear {
+                    min: -60.0,
+                    max: 6.0,
+                },
             )
             .with_unit(" dB")
             .with_value_to_string(formatters::v2s_f32_rounded(1)),
@@ -177,7 +186,10 @@ impl Default for PhysicsPianoParams {
             lid_angle: FloatParam::new(
                 "Lid Angle",
                 45.0,
-                FloatRange::Linear { min: 0.0, max: 60.0 },
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 60.0,
+                },
             )
             .with_unit("°")
             .with_value_to_string(formatters::v2s_f32_rounded(0)),
@@ -199,7 +211,10 @@ impl Default for PhysicsPianoParams {
             velocity_curve: FloatParam::new(
                 "Touch Curve",
                 0.0,
-                FloatRange::Linear { min: -1.0, max: 1.0 },
+                FloatRange::Linear {
+                    min: -1.0,
+                    max: 1.0,
+                },
             )
             .with_unit("")
             .with_value_to_string(formatters::v2s_f32_rounded(2)),
@@ -218,12 +233,12 @@ pub struct PhysicsPiano {
     // Real-time visualization state shared with GUI (lock-free atomics)
     peak_l: Arc<AtomicF32>,
     peak_r: Arc<AtomicF32>,
-    active_keys_low: Arc<AtomicU64>,   // Bitset for MIDI 21..84 (64 keys)
-    active_keys_high: Arc<AtomicU64>,  // Bitset for MIDI 85..108 (24 keys)
+    active_keys_low: Arc<AtomicU64>, // Bitset for MIDI 21..84 (64 keys)
+    active_keys_high: Arc<AtomicU64>, // Bitset for MIDI 85..108 (24 keys)
     key_velocities: Arc<parking_lot::RwLock<[f32; 88]>>,
     recent_orbit_t: Arc<parking_lot::RwLock<Vec<f32>>>,
     recent_orbit_p: Arc<parking_lot::RwLock<Vec<f32>>>,
-    language: Arc<AtomicU8>,           // 0: English, 1: SimplifiedChinese
+    language: Arc<AtomicU8>, // 0: English, 1: SimplifiedChinese
     preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
 
@@ -245,7 +260,11 @@ impl Default for PhysicsPiano {
     fn default() -> Self {
         let (tx, rx) = crossbeam_channel::unbounded();
         let default_lang = Language::from_system_locale();
-        let lang_code = if default_lang == Language::SimplifiedChinese { 1 } else { 0 };
+        let lang_code = if default_lang == Language::SimplifiedChinese {
+            1
+        } else {
+            0
+        };
 
         Self {
             params: Arc::new(PhysicsPianoParams::default()),
@@ -313,7 +332,8 @@ impl Plugin for PhysicsPiano {
         // Seed initial parameters
         self.prev_sustain = self.params.sustain_pedal.value();
         self.prev_una_corda = self.params.una_corda.value();
-        self.engine.set_sustain_pedal(self.prev_sustain > 0.01, self.prev_sustain as f64);
+        self.engine
+            .set_sustain_pedal(self.prev_sustain > 0.01, self.prev_sustain as f64);
         self.engine.set_una_corda(self.prev_una_corda);
         self.pending_gui_note_offs.clear();
         true
@@ -344,7 +364,12 @@ impl Plugin for PhysicsPiano {
 
         while let Some(event) = context.next_event() {
             match event {
-                NoteEvent::NoteOn { note, velocity, timing, .. } => {
+                NoteEvent::NoteOn {
+                    note,
+                    velocity,
+                    timing,
+                    ..
+                } => {
                     let key_idx = (note as i32 - 21) as usize;
                     if key_idx < 88 {
                         if let Some(mut vels) = self.key_velocities.try_write() {
@@ -371,7 +396,9 @@ impl Plugin for PhysicsPiano {
                         cents,
                     });
                 }
-                NoteEvent::MidiCC { cc, value, timing, .. } => {
+                NoteEvent::MidiCC {
+                    cc, value, timing, ..
+                } => {
                     if cc == 64 {
                         let depth = value as f64;
                         self.events_scratch.push(EngineEvent::SustainPedal {
@@ -436,7 +463,8 @@ impl Plugin for PhysicsPiano {
             }
             for k in expired_keys {
                 self.pending_gui_note_offs.remove(&k);
-                self.events_scratch.push(EngineEvent::NoteOff { time: 0, key: k });
+                self.events_scratch
+                    .push(EngineEvent::NoteOff { time: 0, key: k });
             }
         }
 
@@ -444,7 +472,8 @@ impl Plugin for PhysicsPiano {
         let sustain_val = self.params.sustain_pedal.value();
         if (sustain_val - self.prev_sustain).abs() > 1e-4 {
             self.prev_sustain = sustain_val;
-            self.engine.set_sustain_pedal(sustain_val > 0.01, sustain_val as f64);
+            self.engine
+                .set_sustain_pedal(sustain_val > 0.01, sustain_val as f64);
         }
 
         let una_val = self.params.una_corda.value();
@@ -454,23 +483,33 @@ impl Plugin for PhysicsPiano {
         }
 
         // Voicing & Physical parameters
-        self.engine.set_inharmonicity_scale(self.params.inharmonicity_scale.value() as f64);
-        self.engine.set_hammer_hardness(self.params.hammer_hardness.value() as f64);
-        self.engine.set_unison_detuning(self.params.unison_detuning.value() as f64);
-        self.engine.set_phantom_gain(self.params.phantom_gain.value() as f64);
-        self.engine.set_velocity_curve(self.params.velocity_curve.value() as f64);
+        self.engine
+            .set_inharmonicity_scale(self.params.inharmonicity_scale.value() as f64);
+        self.engine
+            .set_hammer_hardness(self.params.hammer_hardness.value() as f64);
+        self.engine
+            .set_unison_detuning(self.params.unison_detuning.value() as f64);
+        self.engine
+            .set_phantom_gain(self.params.phantom_gain.value() as f64);
+        self.engine
+            .set_velocity_curve(self.params.velocity_curve.value() as f64);
 
         // Tier 6: Micro-mechanical noise gains
-        self.engine.set_key_noise_gain(self.params.key_noise.value() as f64);
-        self.engine.set_damper_noise_gain(self.params.damper_noise.value() as f64);
-        self.engine.set_pedal_noise_gain(self.params.pedal_noise.value() as f64);
+        self.engine
+            .set_key_noise_gain(self.params.key_noise.value() as f64);
+        self.engine
+            .set_damper_noise_gain(self.params.damper_noise.value() as f64);
+        self.engine
+            .set_pedal_noise_gain(self.params.pedal_noise.value() as f64);
 
         // Tier 7: Spatial Multi-Microphone gains & Lid Baffle
         let close_g = util::db_to_gain(self.params.mic_close.value());
         let player_g = util::db_to_gain(self.params.mic_player.value());
         let amb_g = util::db_to_gain(self.params.mic_ambient.value());
-        self.engine.set_mic_gains(close_g as f64, player_g as f64, amb_g as f64);
-        self.engine.set_lid_angle(self.params.lid_angle.value() as f64);
+        self.engine
+            .set_mic_gains(close_g as f64, player_g as f64, amb_g as f64);
+        self.engine
+            .set_lid_angle(self.params.lid_angle.value() as f64);
 
         // 3. Step Physical Simulation
         self.engine.process_block(
@@ -481,18 +520,18 @@ impl Plugin for PhysicsPiano {
             &mut self.scratch_r[..num_samples],
         );
 
-/// Transparent tanh-based soft limiter ensuring output never exceeds 0.99 (0.0 dBFS)
-#[inline]
-fn soft_limit(x: f32) -> f32 {
-    if x.abs() <= 0.82 {
-        x
-    } else {
-        let sign = x.signum();
-        let mag = x.abs();
-        let excess = mag - 0.82;
-        sign * (0.82 + 0.17 * (excess / 0.17).tanh())
-    }
-}
+        /// Transparent tanh-based soft limiter ensuring output never exceeds 0.99 (0.0 dBFS)
+        #[inline]
+        fn soft_limit(x: f32) -> f32 {
+            if x.abs() <= 0.82 {
+                x
+            } else {
+                let sign = x.signum();
+                let mag = x.abs();
+                let excess = mag - 0.82;
+                sign * (0.82 + 0.17 * (excess / 0.17).tanh())
+            }
+        }
 
         // 4. Mix to output buffer with master gain, polyphony headroom scale (0.08), and soft limiter
         let total_gain = self.params.master_gain.value() * 0.08f32;
@@ -516,8 +555,14 @@ fn soft_limit(x: f32) -> f32 {
         // Update peak meter smoothly
         let prev_l = self.peak_l.load(std::sync::atomic::Ordering::Relaxed);
         let prev_r = self.peak_r.load(std::sync::atomic::Ordering::Relaxed);
-        self.peak_l.store(prev_l * 0.92 + max_l * 0.08, std::sync::atomic::Ordering::Relaxed);
-        self.peak_r.store(prev_r * 0.92 + max_r * 0.08, std::sync::atomic::Ordering::Relaxed);
+        self.peak_l.store(
+            prev_l * 0.92 + max_l * 0.08,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        self.peak_r.store(
+            prev_r * 0.92 + max_r * 0.08,
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         // Sync physically depressed keys for GUI keyboard visualization using lock-free atomics
         let mut low_mask = 0u64;
@@ -596,4 +641,3 @@ impl Vst3Plugin for PhysicsPiano {
         Vst3SubCategory::Stereo,
     ];
 }
-

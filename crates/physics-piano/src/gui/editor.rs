@@ -1,20 +1,14 @@
-//! Complete Vizia GUI Editor for Physics Piano.
-//!
-//! Replaces the old egui immediate-mode layout with a high-performance,
-//! retained-mode vector UI adhering to professional virtual instrument standards.
-//! Integrates shared JSON preset persistence and granular Undo/Redo gesture tracking.
+//! Vizia Plug editor for the physical piano.
 
 use atomic_float::AtomicF32;
 use crossbeam_channel::Sender;
-use nih_plug::prelude::{Editor, Param, ParamPtr};
-use nih_plug_vizia::vizia::prelude::*;
-use nih_plug_vizia::widgets::util::ModifiersExt;
-use nih_plug_vizia::widgets::*;
-use nih_plug_vizia::{create_vizia_editor, ViziaState, ViziaTheming};
-use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
-use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
+use nice_plug::prelude::{Editor, Param};
+use std::sync::atomic::{AtomicU64, AtomicU8};
 use std::sync::Arc;
+use vizia_plug::vizia::prelude::*;
+use vizia_plug::widgets::util::ModifiersExt;
+use vizia_plug::widgets::*;
+use vizia_plug::{create_vizia_editor, ViziaState, ViziaTheming};
 
 use crate::engine::EngineEvent;
 use crate::gui::i18n::{setup_vizia_fonts, I18n, Language};
@@ -23,483 +17,426 @@ use crate::gui::lid::PianoLidWidget;
 use crate::gui::mics::MicStageWidget;
 use crate::gui::scope::{LissajousScopeWidget, StereoVuMeterWidget};
 use crate::nih_plugin::PhysicsPianoParams;
+use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 pub const EDITOR_WIDTH: u32 = 1080;
 pub const EDITOR_HEIGHT: u32 = 620;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Data)]
-pub enum DialogMode {
-    None,
-    SaveNew,
+fn slider<'a, P: Param + 'static>(cx: &'a mut Context, label: &'static str, param: &'a P) {
+    HStack::new(cx, |cx| {
+        Label::new(cx, label).width(Pixels(86.0));
+        ParamSlider::new(cx, param)
+            .width(Stretch(1.0))
+            .height(Pixels(20.0));
+    })
+    .height(Pixels(23.0))
+    .horizontal_gap(Pixels(6.0));
+}
+
+struct PianoUiState {
+    params: Arc<PhysicsPianoParams>,
+    manager: Arc<parking_lot::RwLock<PresetManager>>,
+    undo: Arc<parking_lot::RwLock<UndoManager>>,
+    selected_name: Signal<String>,
+    selected_id: Signal<String>,
+    language: Signal<Language>,
+    language_atom: Arc<AtomicU8>,
+    name_input: Signal<String>,
+    is_user_preset: Signal<bool>,
+    can_undo: Signal<bool>,
+    can_redo: Signal<bool>,
+    suppress_undo: Arc<AtomicU32>,
+    gui_tx: Sender<EngineEvent>,
+    octave_offset: i8,
+    held_qwerty_keys: HashMap<Code, u8>,
+    held_nav_keys: std::collections::HashSet<Code>,
+}
+
+#[derive(Debug)]
+enum PianoUiEvent {
+    PreviousPreset,
+    NextPreset,
+    ToggleLanguage,
+    Undo,
+    Redo,
+    SelectPreset(String),
+    SetName(String),
+    SaveAs,
     Rename,
+    Overwrite,
+    Delete,
 }
 
-fn apply_param<P: Param>(cx: &mut EventContext, param: &P, val: P::Plain) {
-    cx.emit(ParamEvent::BeginSetParameter(param).upcast());
-    cx.emit(ParamEvent::SetParameter(param, val).upcast());
-    cx.emit(ParamEvent::EndSetParameter(param).upcast());
+fn piano_value(params: &PhysicsPianoParams, id: &str) -> Option<f32> {
+    Some(match id {
+        "inharm" => params.inharmonicity_scale.value(),
+        "hardness" => params.hammer_hardness.value(),
+        "detune" => params.unison_detuning.value(),
+        "phantom" => params.phantom_gain.value(),
+        "keynoise" => params.key_noise.value(),
+        "dampernoise" => params.damper_noise.value(),
+        "pedalnoise" => params.pedal_noise.value(),
+        "mic_close" => params.mic_close.value(),
+        "mic_player" => params.mic_player.value(),
+        "mic_ambient" => params.mic_ambient.value(),
+        "lid_angle" => params.lid_angle.value(),
+        "velocity_curve" => params.velocity_curve.value(),
+        "sustain" => params.sustain_pedal.value(),
+        _ => return None,
+    })
 }
 
-fn get_piano_param_value(params: &PhysicsPianoParams, param_id: &str) -> Option<f32> {
-    match param_id {
-        "inharm" => Some(params.inharmonicity_scale.value()),
-        "hardness" => Some(params.hammer_hardness.value()),
-        "detune" => Some(params.unison_detuning.value()),
-        "phantom" => Some(params.phantom_gain.value()),
-        "keynoise" => Some(params.key_noise.value()),
-        "dampernoise" => Some(params.damper_noise.value()),
-        "pedalnoise" => Some(params.pedal_noise.value()),
-        "mic_close" => Some(params.mic_close.value()),
-        "mic_player" => Some(params.mic_player.value()),
-        "mic_ambient" => Some(params.mic_ambient.value()),
-        "lid_angle" => Some(params.lid_angle.value()),
-        "velocity_curve" => Some(params.velocity_curve.value()),
-        "sustain" => Some(params.sustain_pedal.value()),
-        _ => None,
-    }
-}
-
-fn set_piano_param_value(cx: &mut EventContext, params: &PhysicsPianoParams, param_id: &str, val: f32) {
-    match param_id {
-        "inharm" => apply_param(cx, &params.inharmonicity_scale, val),
-        "hardness" => apply_param(cx, &params.hammer_hardness, val),
-        "detune" => apply_param(cx, &params.unison_detuning, val),
-        "phantom" => apply_param(cx, &params.phantom_gain, val),
-        "keynoise" => apply_param(cx, &params.key_noise, val),
-        "dampernoise" => apply_param(cx, &params.damper_noise, val),
-        "pedalnoise" => apply_param(cx, &params.pedal_noise, val),
-        "mic_close" => apply_param(cx, &params.mic_close, val),
-        "mic_player" => apply_param(cx, &params.mic_player, val),
-        "mic_ambient" => apply_param(cx, &params.mic_ambient, val),
-        "lid_angle" => apply_param(cx, &params.lid_angle, val),
-        "velocity_curve" => apply_param(cx, &params.velocity_curve, val),
-        "sustain" => apply_param(cx, &params.sustain_pedal, val),
+fn set_piano_value(cx: &mut EventContext, params: &PhysicsPianoParams, id: &str, value: f32) {
+    match id {
+        "inharm" => set_param(cx, &params.inharmonicity_scale, value),
+        "hardness" => set_param(cx, &params.hammer_hardness, value),
+        "detune" => set_param(cx, &params.unison_detuning, value),
+        "phantom" => set_param(cx, &params.phantom_gain, value),
+        "keynoise" => set_param(cx, &params.key_noise, value),
+        "dampernoise" => set_param(cx, &params.damper_noise, value),
+        "pedalnoise" => set_param(cx, &params.pedal_noise, value),
+        "mic_close" => set_param(cx, &params.mic_close, value),
+        "mic_player" => set_param(cx, &params.mic_player, value),
+        "mic_ambient" => set_param(cx, &params.mic_ambient, value),
+        "lid_angle" => set_param(cx, &params.lid_angle, value),
+        "velocity_curve" => set_param(cx, &params.velocity_curve, value),
+        "sustain" => set_param(cx, &params.sustain_pedal, value),
         _ => {}
     }
 }
 
-pub fn snapshot_piano_params(params: &PhysicsPianoParams) -> HashMap<String, f32> {
-    let mut map = HashMap::new();
-    map.insert("inharm".to_string(), params.inharmonicity_scale.value());
-    map.insert("hardness".to_string(), params.hammer_hardness.value());
-    map.insert("detune".to_string(), params.unison_detuning.value());
-    map.insert("phantom".to_string(), params.phantom_gain.value());
-    map.insert("keynoise".to_string(), params.key_noise.value());
-    map.insert("dampernoise".to_string(), params.damper_noise.value());
-    map.insert("pedalnoise".to_string(), params.pedal_noise.value());
-    map.insert("mic_close".to_string(), params.mic_close.value());
-    map.insert("mic_player".to_string(), params.mic_player.value());
-    map.insert("mic_ambient".to_string(), params.mic_ambient.value());
-    map.insert("lid_angle".to_string(), params.lid_angle.value());
-    map.insert("velocity_curve".to_string(), params.velocity_curve.value());
-    map
+fn piano_snapshot(params: &PhysicsPianoParams) -> HashMap<String, f32> {
+    [
+        "inharm",
+        "hardness",
+        "detune",
+        "phantom",
+        "keynoise",
+        "dampernoise",
+        "pedalnoise",
+        "mic_close",
+        "mic_player",
+        "mic_ambient",
+        "lid_angle",
+        "velocity_curve",
+        "sustain",
+    ]
+    .into_iter()
+    .filter_map(|id| piano_value(params, id).map(|value| (id.to_string(), value)))
+    .collect()
 }
 
-#[derive(Lens, Clone)]
-pub struct PianoViziaData {
-    pub params: Arc<PhysicsPianoParams>,
-    pub peak_l: Arc<AtomicF32>,
-    pub peak_r: Arc<AtomicF32>,
-    pub active_keys_low: Arc<AtomicU64>,
-    pub active_keys_high: Arc<AtomicU64>,
-    pub key_velocities: Arc<parking_lot::RwLock<[f32; 88]>>,
-    pub recent_orbit_t: Arc<parking_lot::RwLock<Vec<f32>>>,
-    pub recent_orbit_p: Arc<parking_lot::RwLock<Vec<f32>>>,
-    pub language_atom: Arc<AtomicU8>,
-    pub language: Language,
-    pub selected_preset_id: Option<String>,
-    pub selected_preset_name: String,
-    pub is_user_preset: bool,
-    pub dialog_mode: DialogMode,
-    pub preset_input_text: String,
-    pub target_rename_id: String,
-    pub preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
-    pub undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
-    pub can_undo: bool,
-    pub can_redo: bool,
-    pub gui_tx: Sender<EngineEvent>,
-    pub octave_offset: i8,
-    pub held_qwerty_keys: HashMap<Code, u8>,
-    pub held_nav_keys: HashSet<Code>,
-    pub suppress_undo_gestures: Arc<AtomicU32>,
-}
-
-impl PianoViziaData {
-    pub fn play_note(&mut self, key: u8, velocity: f32) {
-        if (21..=108).contains(&key) {
-            let idx = (key - 21) as usize;
-            if let Some(mut vels) = self.key_velocities.try_write() {
-                vels[idx] = velocity;
-            }
-        }
+impl PianoUiState {
+    fn play_note(&self, key: u8, velocity: f64) {
         let _ = self.gui_tx.send(EngineEvent::NoteOn {
             time: 0,
             key,
-            velocity: velocity as f64,
+            velocity,
         });
     }
 
-    pub fn release_note(&mut self, key: u8) {
-        let _ = self.gui_tx.send(EngineEvent::NoteOff {
-            time: 0,
-            key,
-        });
+    fn release_note(&self, key: u8) {
+        let _ = self.gui_tx.send(EngineEvent::NoteOff { time: 0, key });
     }
 
-    fn resolve_param_ptr(&self, ptr: ParamPtr) -> (&'static str, f32) {
-        let pr = &self.params;
-        if ptr == pr.inharmonicity_scale.as_ptr() {
-            ("inharm", pr.inharmonicity_scale.value())
-        } else if ptr == pr.hammer_hardness.as_ptr() {
-            ("hardness", pr.hammer_hardness.value())
-        } else if ptr == pr.unison_detuning.as_ptr() {
-            ("detune", pr.unison_detuning.value())
-        } else if ptr == pr.phantom_gain.as_ptr() {
-            ("phantom", pr.phantom_gain.value())
-        } else if ptr == pr.key_noise.as_ptr() {
-            ("keynoise", pr.key_noise.value())
-        } else if ptr == pr.damper_noise.as_ptr() {
-            ("dampernoise", pr.damper_noise.value())
-        } else if ptr == pr.pedal_noise.as_ptr() {
-            ("pedalnoise", pr.pedal_noise.value())
-        } else if ptr == pr.mic_close.as_ptr() {
-            ("mic_close", pr.mic_close.value())
-        } else if ptr == pr.mic_player.as_ptr() {
-            ("mic_player", pr.mic_player.value())
-        } else if ptr == pr.mic_ambient.as_ptr() {
-            ("mic_ambient", pr.mic_ambient.value())
-        } else if ptr == pr.lid_angle.as_ptr() {
-            ("lid_angle", pr.lid_angle.value())
-        } else if ptr == pr.velocity_curve.as_ptr() {
-            ("velocity_curve", pr.velocity_curve.value())
-        } else if ptr == pr.sustain_pedal.as_ptr() {
-            ("sustain", pr.sustain_pedal.value())
+    fn set_undo_state(&self) {
+        let undo = self.undo.read();
+        self.can_undo.set(undo.can_undo());
+        self.can_redo.set(undo.can_redo());
+    }
+
+    fn apply_history(&mut self, cx: &mut EventContext, redo: bool) {
+        let changes = if redo {
+            self.undo.write().redo()
         } else {
-            ("", 0.0)
+            self.undo.write().undo()
+        };
+        if let Some(changes) = changes {
+            for (id, value) in changes {
+                self.suppress_undo.fetch_add(1, Ordering::Relaxed);
+                set_piano_value(cx, &self.params, &id, value);
+            }
         }
+        self.set_undo_state();
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum PianoUiEvent {
-    ToggleLanguage,
-    SelectPreset(String),
-    CyclePreset(bool),
-    OpenSaveDialog,
-    OpenRenameDialog(String, String),
-    SetPresetInputText(String),
-    ConfirmDialog,
-    CancelDialog,
-    OverwriteCurrentPreset,
-    DeletePreset(String),
-    Undo,
-    Redo,
+fn set_param<P: Param>(cx: &mut EventContext, param: &P, value: P::Plain) {
+    cx.emit(ParamEvent::BeginSetParameter(param).upcast());
+    cx.emit(ParamEvent::SetParameter(param, value).upcast());
+    cx.emit(ParamEvent::EndSetParameter(param).upcast());
 }
 
-impl Model for PianoViziaData {
+impl Model for PianoUiState {
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
-        event.map(|app_event, _| match app_event {
-            PianoUiEvent::ToggleLanguage => {
-                self.language = match self.language {
-                    Language::English => Language::SimplifiedChinese,
-                    Language::SimplifiedChinese => Language::English,
+        event.map(|event, _| match event {
+            PianoUiEvent::PreviousPreset | PianoUiEvent::NextPreset => {
+                let next = matches!(event, PianoUiEvent::NextPreset);
+                let id = {
+                    let manager = self.manager.read();
+                    let presets = manager.presets();
+                    if presets.is_empty() {
+                        return;
+                    }
+                    let index = presets
+                        .iter()
+                        .position(|preset| preset.id == self.selected_id.get())
+                        .unwrap_or(0);
+                    let index = if next {
+                        (index + 1) % presets.len()
+                    } else {
+                        (index + presets.len() - 1) % presets.len()
+                    };
+                    presets[index].id.clone()
                 };
+                cx.emit(PianoUiEvent::SelectPreset(id));
+            }
+            PianoUiEvent::SelectPreset(id) => {
+                let preset = self.manager.read().get_preset(id).cloned();
+                if let Some(preset) = preset {
+                    let mut changes = Vec::new();
+                    for (pid, value) in &preset.params {
+                        if let Some(old) = piano_value(&self.params, pid) {
+                            if (old - value).abs() > 1e-5 {
+                                changes.push(ParamTransition {
+                                    param_id: pid.clone(),
+                                    old_value: old,
+                                    new_value: *value,
+                                });
+                                self.suppress_undo.fetch_add(1, Ordering::Relaxed);
+                                set_piano_value(cx, &self.params, pid, *value);
+                            }
+                        }
+                    }
+                    if !changes.is_empty() {
+                        self.undo.write().record_batch(&preset.name, changes);
+                    }
+                    self.selected_id.set(preset.id.clone());
+                    self.selected_name.set(
+                        preset
+                            .display_name(self.language.get() == Language::SimplifiedChinese)
+                            .to_string(),
+                    );
+                    self.name_input.set(
+                        preset
+                            .display_name(self.language.get() == Language::SimplifiedChinese)
+                            .to_string(),
+                    );
+                    self.is_user_preset
+                        .set(self.manager.read().is_user_preset(id));
+                    self.set_undo_state();
+                }
+            }
+            PianoUiEvent::ToggleLanguage => {
+                let lang = if self.language.get() == Language::English {
+                    Language::SimplifiedChinese
+                } else {
+                    Language::English
+                };
+                self.language.set(lang);
                 self.language_atom.store(
-                    if self.language == Language::SimplifiedChinese { 1 } else { 0 },
+                    u8::from(lang == Language::SimplifiedChinese),
                     Ordering::Relaxed,
                 );
+                if let Some(preset) = self.manager.read().get_preset(&self.selected_id.get()) {
+                    self.selected_name.set(
+                        preset
+                            .display_name(lang == Language::SimplifiedChinese)
+                            .to_string(),
+                    );
+                    self.name_input.set(
+                        preset
+                            .display_name(lang == Language::SimplifiedChinese)
+                            .to_string(),
+                    );
+                }
             }
-            PianoUiEvent::SelectPreset(preset_id) => {
-                let preset_opt = {
-                    let mgr = self.preset_manager.read();
-                    mgr.get_preset(&preset_id).cloned()
+            PianoUiEvent::Undo => self.apply_history(cx, false),
+            PianoUiEvent::Redo => self.apply_history(cx, true),
+            PianoUiEvent::SetName(name) => self.name_input.set(name.clone()),
+            PianoUiEvent::SaveAs => {
+                let name = self.name_input.get().trim().to_string();
+                let name = if name.is_empty() {
+                    "Custom Piano".to_string()
+                } else {
+                    name
                 };
-                if let Some(preset) = preset_opt {
-                    let mut transitions = Vec::new();
-                    for (pid, &new_val) in &preset.params {
-                        if let Some(old_val) = get_piano_param_value(&self.params, pid) {
-                            if (new_val - old_val).abs() > 1e-4 {
-                                transitions.push(ParamTransition {
-                                    param_id: pid.clone(),
-                                    old_value: old_val,
-                                    new_value: new_val,
-                                });
-                            }
-                            self.suppress_undo_gestures.fetch_add(1, Ordering::Relaxed);
-                            set_piano_param_value(cx, &self.params, pid, new_val);
-                        }
-                    }
-                    if !transitions.is_empty() {
-                        self.undo_manager.write().record_batch(&preset.name, transitions);
-                    }
-                    self.selected_preset_id = Some(preset_id.clone());
-                    self.selected_preset_name = preset.name.clone();
-                    self.is_user_preset = self.preset_manager.read().is_user_preset(&preset_id);
-                    let (u, r) = {
-                        let mgr = self.undo_manager.read();
-                        (mgr.can_undo(), mgr.can_redo())
-                    };
-                    self.can_undo = u;
-                    self.can_redo = r;
+                let id = format!(
+                    "user_{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or_default()
+                );
+                let preset = Preset::new(
+                    id.clone(),
+                    name.clone(),
+                    "piano",
+                    piano_snapshot(&self.params),
+                );
+                if self.manager.write().save_user_preset(preset).is_ok() {
+                    self.selected_id.set(id);
+                    self.selected_name.set(name.clone());
+                    self.name_input.set(name);
+                    self.is_user_preset.set(true);
                 }
             }
-            PianoUiEvent::CyclePreset(next) => {
-                let next_id_opt = {
-                    let mgr = self.preset_manager.read();
-                    let presets = mgr.presets();
-                    if presets.is_empty() {
-                        None
-                    } else {
-                        let curr_idx = self
-                            .selected_preset_id
-                            .as_ref()
-                            .and_then(|id| presets.iter().position(|p| &p.id == id))
-                            .unwrap_or(0);
-                        let new_idx = if *next {
-                            (curr_idx + 1) % presets.len()
-                        } else {
-                            (curr_idx + presets.len() - 1) % presets.len()
-                        };
-                        Some(presets[new_idx].id.clone())
-                    }
-                };
-                if let Some(next_id) = next_id_opt {
-                    cx.emit(PianoUiEvent::SelectPreset(next_id));
-                }
-            }
-            PianoUiEvent::OpenSaveDialog => {
-                self.dialog_mode = DialogMode::SaveNew;
-                self.preset_input_text = format!("{} Copy", self.selected_preset_name);
-            }
-            PianoUiEvent::OpenRenameDialog(preset_id, current_name) => {
-                self.dialog_mode = DialogMode::Rename;
-                self.target_rename_id = preset_id.clone();
-                self.preset_input_text = current_name.clone();
-            }
-            PianoUiEvent::SetPresetInputText(text) => {
-                self.preset_input_text = text.clone();
-            }
-            PianoUiEvent::ConfirmDialog => {
-                match self.dialog_mode {
-                    DialogMode::SaveNew => {
-                        let trimmed = self.preset_input_text.trim();
-                        let name = if trimmed.is_empty() { "Custom Piano" } else { trimmed };
-                        let timestamp = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
-                        let safe_id = format!("user_{}_{}", name.to_lowercase().replace(|c: char| !c.is_alphanumeric(), "_"), timestamp);
-                        let params_map = snapshot_piano_params(&self.params);
-                        let preset = Preset::new(safe_id.clone(), name.to_string(), "piano", params_map);
-                        let mut mgr = self.preset_manager.write();
-                        if let Ok(()) = mgr.save_user_preset(preset) {
-                            self.selected_preset_id = Some(safe_id);
-                            self.selected_preset_name = name.to_string();
-                            self.is_user_preset = true;
-                        }
-                    }
-                    DialogMode::Rename => {
-                        let trimmed = self.preset_input_text.trim();
-                        if !trimmed.is_empty() {
-                            let mut mgr = self.preset_manager.write();
-                            if let Ok(true) = mgr.rename_user_preset(&self.target_rename_id, trimmed) {
-                                if self.selected_preset_id.as_deref() == Some(&self.target_rename_id) {
-                                    self.selected_preset_name = trimmed.to_string();
-                                }
-                            }
-                        }
-                    }
-                    DialogMode::None => {}
-                }
-                self.dialog_mode = DialogMode::None;
-            }
-            PianoUiEvent::CancelDialog => {
-                self.dialog_mode = DialogMode::None;
-            }
-            PianoUiEvent::OverwriteCurrentPreset => {
-                if self.is_user_preset {
-                    if let Some(ref id) = self.selected_preset_id {
-                        let params_map = snapshot_piano_params(&self.params);
-                        let mut mgr = self.preset_manager.write();
-                        let _ = mgr.overwrite_user_preset(id, params_map);
+            PianoUiEvent::Rename => {
+                if self.is_user_preset.get() {
+                    let name = self.name_input.get().trim().to_string();
+                    if !name.is_empty()
+                        && self
+                            .manager
+                            .write()
+                            .rename_user_preset(&self.selected_id.get(), &name)
+                            .unwrap_or(false)
+                    {
+                        self.selected_name.set(name);
                     }
                 }
             }
-            PianoUiEvent::DeletePreset(preset_id) => {
-                let mut mgr = self.preset_manager.write();
-                let _ = mgr.delete_user_preset(&preset_id);
-                if self.selected_preset_id.as_deref() == Some(&preset_id) {
-                    self.selected_preset_id = Some("steinway_concert_d".to_string());
-                    self.selected_preset_name = "Steinway Concert D".to_string();
-                    self.is_user_preset = false;
+            PianoUiEvent::Overwrite => {
+                if self.is_user_preset.get() {
+                    let _ = self.manager.write().overwrite_user_preset(
+                        &self.selected_id.get(),
+                        piano_snapshot(&self.params),
+                    );
                 }
             }
-            PianoUiEvent::Undo => {
-                let restores = {
-                    let mut mgr = self.undo_manager.write();
-                    mgr.undo()
-                };
-                if let Some(restores) = restores {
-                    for (pid, val) in restores {
-                        self.suppress_undo_gestures.fetch_add(1, Ordering::Relaxed);
-                        set_piano_param_value(cx, &self.params, &pid, val);
-                    }
-                    let (u, r) = {
-                        let mgr = self.undo_manager.read();
-                        (mgr.can_undo(), mgr.can_redo())
-                    };
-                    self.can_undo = u;
-                    self.can_redo = r;
-                }
-            }
-            PianoUiEvent::Redo => {
-                let restores = {
-                    let mut mgr = self.undo_manager.write();
-                    mgr.redo()
-                };
-                if let Some(restores) = restores {
-                    for (pid, val) in restores {
-                        self.suppress_undo_gestures.fetch_add(1, Ordering::Relaxed);
-                        set_piano_param_value(cx, &self.params, &pid, val);
-                    }
-                    let (u, r) = {
-                        let mgr = self.undo_manager.read();
-                        (mgr.can_undo(), mgr.can_redo())
-                    };
-                    self.can_undo = u;
-                    self.can_redo = r;
+            PianoUiEvent::Delete => {
+                let id = self.selected_id.get();
+                if self
+                    .manager
+                    .write()
+                    .delete_user_preset(&id)
+                    .unwrap_or(false)
+                {
+                    cx.emit(PianoUiEvent::SelectPreset("steinway_concert_d".to_string()));
                 }
             }
         });
 
-        // Intercept parameter slider gestures for single-parameter undo/redo
-        event.map(|raw_param: &RawParamEvent, _| {
-            match raw_param {
-                RawParamEvent::BeginSetParameter(ptr) => {
-                    if self.suppress_undo_gestures.load(Ordering::Relaxed) > 0 {
-                        self.suppress_undo_gestures.fetch_sub(1, Ordering::Relaxed);
-                        return;
-                    }
-                    let (pid, val) = self.resolve_param_ptr(*ptr);
-                    if !pid.is_empty() {
-                        self.undo_manager.write().begin_gesture(pid, val);
-                    }
-                }
-                RawParamEvent::EndSetParameter(ptr) => {
-                    let (pid, val) = self.resolve_param_ptr(*ptr);
-                    if !pid.is_empty() {
-                        if self.undo_manager.write().end_gesture(pid, val) {
-                            let (u, r) = {
-                                let mgr = self.undo_manager.read();
-                                (mgr.can_undo(), mgr.can_redo())
-                            };
-                            self.can_undo = u;
-                            self.can_redo = r;
-                        }
-                    }
-                }
-                _ => {}
+        event.map(|raw: &RawParamEvent, _| {
+            let (ptr, begin) = match raw {
+                RawParamEvent::BeginSetParameter(ptr) => (*ptr, true),
+                RawParamEvent::EndSetParameter(ptr) => (*ptr, false),
+                _ => return,
+            };
+            if begin && self.suppress_undo.load(Ordering::Relaxed) > 0 {
+                self.suppress_undo.fetch_sub(1, Ordering::Relaxed);
+                return;
+            }
+            let params = &self.params;
+            let (id, value) = if ptr == params.inharmonicity_scale.as_ptr() {
+                ("inharm", params.inharmonicity_scale.value())
+            } else if ptr == params.hammer_hardness.as_ptr() {
+                ("hardness", params.hammer_hardness.value())
+            } else if ptr == params.unison_detuning.as_ptr() {
+                ("detune", params.unison_detuning.value())
+            } else if ptr == params.phantom_gain.as_ptr() {
+                ("phantom", params.phantom_gain.value())
+            } else if ptr == params.key_noise.as_ptr() {
+                ("keynoise", params.key_noise.value())
+            } else if ptr == params.damper_noise.as_ptr() {
+                ("dampernoise", params.damper_noise.value())
+            } else if ptr == params.pedal_noise.as_ptr() {
+                ("pedalnoise", params.pedal_noise.value())
+            } else if ptr == params.mic_close.as_ptr() {
+                ("mic_close", params.mic_close.value())
+            } else if ptr == params.mic_player.as_ptr() {
+                ("mic_player", params.mic_player.value())
+            } else if ptr == params.mic_ambient.as_ptr() {
+                ("mic_ambient", params.mic_ambient.value())
+            } else if ptr == params.lid_angle.as_ptr() {
+                ("lid_angle", params.lid_angle.value())
+            } else if ptr == params.velocity_curve.as_ptr() {
+                ("velocity_curve", params.velocity_curve.value())
+            } else if ptr == params.sustain_pedal.as_ptr() {
+                ("sustain", params.sustain_pedal.value())
+            } else {
+                return;
+            };
+            if begin {
+                self.undo.write().begin_gesture(id, value);
+            } else if self.undo.write().end_gesture(id, value) {
+                self.set_undo_state();
             }
         });
 
-        // Keyboard shortcuts & QWERTY piano playing
-        event.map(|window_event: &WindowEvent, meta| {
-            match window_event {
-                WindowEvent::KeyDown(code, _) => {
-                    if self.dialog_mode != DialogMode::None {
-                        if *code == Code::Enter || *code == Code::NumpadEnter {
-                            cx.emit(PianoUiEvent::ConfirmDialog);
-                            meta.consume();
-                        } else if *code == Code::Escape {
-                            cx.emit(PianoUiEvent::CancelDialog);
-                            meta.consume();
-                        }
-                        return;
+        event.map(|window: &WindowEvent, meta| match window {
+            WindowEvent::KeyDown(code, _) => {
+                if cx.modifiers().command() {
+                    if *code == Code::KeyZ && !cx.modifiers().shift() {
+                        cx.emit(PianoUiEvent::Undo);
+                    } else if *code == Code::KeyY || (*code == Code::KeyZ && cx.modifiers().shift())
+                    {
+                        cx.emit(PianoUiEvent::Redo);
                     }
-
-                    if cx.modifiers().command() {
-                        if *code == Code::KeyZ && !cx.modifiers().shift() {
-                            cx.emit(PianoUiEvent::Undo);
-                            meta.consume();
-                        } else if *code == Code::KeyY || (*code == Code::KeyZ && cx.modifiers().shift()) {
-                            cx.emit(PianoUiEvent::Redo);
-                            meta.consume();
-                        }
-                        return;
-                    }
-
-                    // Octave Shift: Z = Octave Down (-12), X = Octave Up (+12)
-                    if *code == Code::KeyZ {
-                        if !self.held_nav_keys.contains(code) {
-                            self.held_nav_keys.insert(*code);
-                            if self.octave_offset > -24 {
-                                self.octave_offset -= 12;
-                            }
-                        }
-                        meta.consume();
-                        return;
-                    }
-                    if *code == Code::KeyX {
-                        if !self.held_nav_keys.contains(code) {
-                            self.held_nav_keys.insert(*code);
-                            if self.octave_offset < 24 {
-                                self.octave_offset += 12;
-                            }
-                        }
-                        meta.consume();
-                        return;
-                    }
-
-                    const QWERTY_MAP: &[(Code, u8)] = &[
-                        (Code::KeyA, 60),      // C4
-                        (Code::KeyW, 61),      // C#4
-                        (Code::KeyS, 62),      // D4
-                        (Code::KeyE, 63),      // D#4
-                        (Code::KeyD, 64),      // E4
-                        (Code::KeyF, 65),      // F4
-                        (Code::KeyT, 66),      // F#4
-                        (Code::KeyG, 67),      // G4
-                        (Code::KeyY, 68),      // G#4
-                        (Code::KeyH, 69),      // A4
-                        (Code::KeyU, 70),      // A#4
-                        (Code::KeyJ, 71),      // B4
-                        (Code::KeyK, 72),      // C5
-                        (Code::KeyO, 73),      // C#5
-                        (Code::KeyL, 74),      // D5
-                        (Code::KeyP, 75),      // D#5
-                        (Code::Semicolon, 76), // E5
-                        (Code::Quote, 77),     // F5
-                    ];
-
-                    for &(c, base_midi) in QWERTY_MAP {
-                        if *code == c && !self.held_qwerty_keys.contains_key(code) {
-                            let midi = (base_midi as i16 + self.octave_offset as i16).clamp(21, 108) as u8;
-                            self.held_qwerty_keys.insert(*code, midi);
-                            self.play_note(midi, 0.85);
-                            cx.needs_redraw();
-                            meta.consume();
-                            break;
-                        }
-                    }
+                    meta.consume();
+                    return;
                 }
-                WindowEvent::KeyUp(code, _) => {
-                    self.held_nav_keys.remove(code);
-                    if let Some(midi) = self.held_qwerty_keys.remove(code) {
-                        self.release_note(midi);
-                        cx.needs_redraw();
+                if *code == Code::KeyZ || *code == Code::KeyX {
+                    if self.held_nav_keys.insert(*code) {
+                        if *code == Code::KeyZ && self.octave_offset > -24 {
+                            self.octave_offset -= 12;
+                        }
+                        if *code == Code::KeyX && self.octave_offset < 24 {
+                            self.octave_offset += 12;
+                        }
+                    }
+                    meta.consume();
+                    return;
+                }
+                const KEY_MAP: &[(Code, u8)] = &[
+                    (Code::KeyA, 60),
+                    (Code::KeyW, 61),
+                    (Code::KeyS, 62),
+                    (Code::KeyE, 63),
+                    (Code::KeyD, 64),
+                    (Code::KeyF, 65),
+                    (Code::KeyT, 66),
+                    (Code::KeyG, 67),
+                    (Code::KeyY, 68),
+                    (Code::KeyH, 69),
+                    (Code::KeyU, 70),
+                    (Code::KeyJ, 71),
+                    (Code::KeyK, 72),
+                    (Code::KeyO, 73),
+                    (Code::KeyL, 74),
+                    (Code::KeyP, 75),
+                    (Code::Semicolon, 76),
+                    (Code::Quote, 77),
+                ];
+                if let Some((_, base)) = KEY_MAP.iter().find(|(key, _)| key == code) {
+                    if !self.held_qwerty_keys.contains_key(code) {
+                        let midi = (*base as i16 + self.octave_offset as i16).clamp(21, 108) as u8;
+                        self.held_qwerty_keys.insert(*code, midi);
+                        self.play_note(midi, 0.85);
                         meta.consume();
                     }
                 }
-                WindowEvent::FocusOut => {
-                    self.held_nav_keys.clear();
-                    let keys: Vec<u8> = self.held_qwerty_keys.drain().map(|(_, k)| k).collect();
-                    for k in keys {
-                        self.release_note(k);
-                    }
-                    cx.needs_redraw();
-                }
-                _ => {}
             }
+            WindowEvent::KeyUp(code, _) => {
+                self.held_nav_keys.remove(code);
+                if let Some(midi) = self.held_qwerty_keys.remove(code) {
+                    self.release_note(midi);
+                    meta.consume();
+                }
+            }
+            WindowEvent::FocusOut => {
+                self.held_nav_keys.clear();
+                let released: Vec<u8> = self
+                    .held_qwerty_keys
+                    .drain()
+                    .map(|(_, midi)| midi)
+                    .collect();
+                for midi in released {
+                    self.release_note(midi);
+                }
+            }
+            _ => {}
         });
     }
 }
@@ -508,6 +445,7 @@ pub fn default_vizia_state() -> Arc<ViziaState> {
     ViziaState::new(|| (EDITOR_WIDTH, EDITOR_HEIGHT))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_vizia_piano_editor(
     params: Arc<PhysicsPianoParams>,
     peak_l: Arc<AtomicF32>,
@@ -523,514 +461,220 @@ pub fn create_vizia_piano_editor(
     undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
     editor_state: Arc<ViziaState>,
 ) -> Option<Box<dyn Editor>> {
-    let initial_lang = if language_atom.load(Ordering::Relaxed) == 1 {
+    let lang = if language_atom.load(std::sync::atomic::Ordering::Relaxed) == 1 {
         Language::SimplifiedChinese
     } else {
         Language::English
     };
+    let selected_name = preset_manager
+        .read()
+        .get_preset("steinway_concert_d")
+        .map(|preset| {
+            preset
+                .display_name(lang == Language::SimplifiedChinese)
+                .to_string()
+        })
+        .unwrap_or_else(|| "Steinway Concert D".to_string());
+    let manager = preset_manager;
+    let language_initial = lang;
+    let initial_id = "steinway_concert_d".to_string();
 
-    let (initial_preset_name, initial_is_user) = {
-        let mgr = preset_manager.read();
-        let name = mgr.get_preset("steinway_concert_d")
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| "Steinway Concert D".to_string());
-        let is_user = mgr.is_user_preset("steinway_concert_d");
-        (name, is_user)
-    };
-
-    let data = PianoViziaData {
-        params,
-        peak_l,
-        peak_r,
-        active_keys_low,
-        active_keys_high,
-        key_velocities,
-        recent_orbit_t,
-        recent_orbit_p,
-        language_atom,
-        language: initial_lang,
-        selected_preset_id: Some("steinway_concert_d".to_string()),
-        selected_preset_name: initial_preset_name,
-        is_user_preset: initial_is_user,
-        dialog_mode: DialogMode::None,
-        preset_input_text: String::new(),
-        target_rename_id: String::new(),
-        preset_manager,
-        undo_manager,
-        can_undo: false,
-        can_redo: false,
-        gui_tx,
-        octave_offset: 0,
-        held_qwerty_keys: HashMap::new(),
-        held_nav_keys: HashSet::new(),
-        suppress_undo_gestures: Arc::new(AtomicU32::new(0)),
-    };
-
-    create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _gui_cx| {
+    create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
+        // Signals need to belong to this Vizia tree's reactive scope.
+        let preset_name = Signal::new(selected_name.clone());
+        let preset_id = Signal::new(initial_id.clone());
+        let language = Signal::new(language_initial);
+        let language_view = language.clone();
+        let language_ui = language.clone();
+        let name_input = Signal::new(selected_name.clone());
+        let is_user_preset = Signal::new(false);
+        let can_undo = Signal::new(undo_manager.read().can_undo());
+        let can_redo = Signal::new(undo_manager.read().can_redo());
+        let suppress_undo = Arc::new(AtomicU32::new(0));
         setup_vizia_fonts(cx);
-
         if let Err(err) = cx.add_stylesheet(include_style!("src/gui/theme.css")) {
-            nih_plug::nih_error!("Failed to load Vizia stylesheet: {err:?}");
+            eprintln!("Failed to load Vizia stylesheet: {err:?}");
         }
+        PianoUiState {
+            params: params.clone(),
+            manager: manager.clone(),
+            undo: undo_manager.clone(),
+            selected_name: preset_name.clone(),
+            selected_id: preset_id,
+            language,
+            language_atom: language_atom.clone(),
+            name_input: name_input.clone(),
+            is_user_preset,
+            can_undo: can_undo.clone(),
+            can_redo: can_redo.clone(),
+            suppress_undo,
+            gui_tx: gui_tx.clone(),
+            octave_offset: 0,
+            held_qwerty_keys: HashMap::new(),
+            held_nav_keys: std::collections::HashSet::new(),
+        }
+        .build(cx);
 
-        data.clone().build(cx);
+        let params_ui = params.clone();
+        let peak_l_ui = peak_l.clone();
+        let peak_r_ui = peak_r.clone();
+        let active_keys_low_ui = active_keys_low.clone();
+        let active_keys_high_ui = active_keys_high.clone();
+        let key_velocities_ui = key_velocities.clone();
+        let recent_orbit_t_ui = recent_orbit_t.clone();
+        let recent_orbit_p_ui = recent_orbit_p.clone();
+        let gui_tx_ui = gui_tx.clone();
+        let name_input_ui = name_input.clone();
+        let preset_name_ui = preset_name.clone();
+        let language_view_ui = language_view.clone();
 
-        let lang = data.language;
-        let gui_tx = data.gui_tx.clone();
-
-        ZStack::new(cx, move |cx| {
-        VStack::new(cx, |cx| {
-            // 1. Header Bar: Title, Compact Preset Selector, Undo/Redo, Language, Meter
-            HStack::new(cx, |cx| {
-                VStack::new(cx, |cx| {
-                    Label::new(cx, I18n::title(lang)).class("title");
-                    Label::new(cx, I18n::subtitle(lang)).class("subtitle");
-                })
-                .width(Pixels(160.0));
-
-                // Compact Preset Navigator: < | Preset ▾ | > | Overwrite | Save As...
+        Binding::new(cx, language_ui, move |cx| {
+            let lang = language_ui.get();
+            let params = params_ui.clone();
+            let peak_l = peak_l_ui.clone();
+            let peak_r = peak_r_ui.clone();
+            let active_keys_low = active_keys_low_ui.clone();
+            let active_keys_high = active_keys_high_ui.clone();
+            let key_velocities = key_velocities_ui.clone();
+            let recent_orbit_t = recent_orbit_t_ui.clone();
+            let recent_orbit_p = recent_orbit_p_ui.clone();
+            let gui_tx = gui_tx_ui.clone();
+            let initial_preset_name = preset_name_ui.clone();
+            let name_input = name_input_ui.clone();
+            let language_view = language_view_ui.clone();
+            VStack::new(cx, move |cx| {
                 HStack::new(cx, |cx| {
-                    Label::new(cx, I18n::preset(lang))
-                        .class("param-label")
-                        .top(Stretch(1.0))
-                        .bottom(Stretch(1.0));
-
-                    Button::new(
-                        cx,
-                        |cx| cx.emit(PianoUiEvent::CyclePreset(false)),
-                        |cx| Label::new(cx, "<").class("btn-cycle-arrow"),
-                    )
-                    .class("btn-cycle")
-                    .width(Pixels(30.0))
-                    .height(Pixels(28.0));
-
-                    Dropdown::new(
-                        cx,
-                        |cx| {
-                            Label::new(
-                                cx,
-                                PianoViziaData::selected_preset_name.map(|name| format!("{} ▾", name)),
-                            )
-                            .class("preset-dropdown-label")
-                            .top(Stretch(1.0))
-                            .bottom(Stretch(1.0))
-                        },
-                        move |cx| {
-                            Binding::new(cx, PianoViziaData::preset_manager, move |cx, mgr_lens| {
-                                let mgr_arc = mgr_lens.get(cx);
-                                let mgr = mgr_arc.read();
-                                let presets = mgr.presets();
-                                let factory: Vec<_> = presets.iter().filter(|p| p.is_factory).collect();
-                                let user: Vec<_> = presets.iter().filter(|p| !p.is_factory).collect();
-
-                                Label::new(cx, match lang {
-                                    Language::English => "── Factory Presets ──",
-                                    Language::SimplifiedChinese => "── 出厂预置 ──",
-                                })
-                                .class("preset-section-header");
-
-                                for preset in factory {
-                                    let pid = preset.id.clone();
-                                    let pname = preset.name.clone();
-                                    Label::new(cx, &pname)
-                                        .class("preset-item")
-                                        .on_press(move |cx| {
-                                            cx.emit(PianoUiEvent::SelectPreset(pid.clone()));
-                                            cx.emit(PopupEvent::Close);
-                                        });
-                                }
-
-                                if !user.is_empty() {
-                                    Label::new(cx, match lang {
-                                        Language::English => "── User Presets ──",
-                                        Language::SimplifiedChinese => "── 用户自定义预设 ──",
-                                    })
-                                    .class("preset-section-header");
-
-                                    for preset in user {
-                                        let pid = preset.id.clone();
-                                        let pname = preset.name.clone();
-                                        let pid_del = pid.clone();
-                                        let pid_ren = pid.clone();
-                                        let pname_ren = pname.clone();
-
-                                        HStack::new(cx, move |cx| {
-                                            let pid_sel = pid.clone();
-                                            Label::new(cx, &pname)
-                                                .class("preset-item-name")
-                                                .width(Stretch(1.0))
-                                                .on_press(move |cx| {
-                                                    cx.emit(PianoUiEvent::SelectPreset(pid_sel.clone()));
-                                                    cx.emit(PopupEvent::Close);
-                                                });
-
-                                            Button::new(
-                                                cx,
-                                                move |cx| {
-                                                    cx.emit(PianoUiEvent::OpenRenameDialog(pid_ren.clone(), pname_ren.clone()));
-                                                    cx.emit(PopupEvent::Close);
-                                                },
-                                                |cx| Label::new(cx, "✎").class("btn-item-icon"),
-                                            )
-                                            .class("btn-item-action")
-                                            .width(Pixels(24.0))
-                                            .height(Pixels(22.0));
-
-                                            Button::new(
-                                                cx,
-                                                move |cx| {
-                                                    cx.emit(PianoUiEvent::DeletePreset(pid_del.clone()));
-                                                    cx.emit(PopupEvent::Close);
-                                                },
-                                                |cx| Label::new(cx, "×").class("btn-item-icon"),
-                                            )
-                                            .class("btn-item-action")
-                                            .width(Pixels(24.0))
-                                            .height(Pixels(22.0));
-                                        })
-                                        .class("preset-user-item-row")
-                                        .height(Pixels(26.0));
-                                    }
-                                }
-                            });
-                        },
-                    )
-                    .class("preset-dropdown")
-                    .height(Pixels(28.0))
+                    VStack::new(cx, |cx| {
+                        Label::new(cx, I18n::title(lang)).class("title");
+                        Label::new(cx, I18n::subtitle(lang)).class("subtitle");
+                    })
                     .width(Pixels(200.0));
 
-                    Button::new(
-                        cx,
-                        |cx| cx.emit(PianoUiEvent::CyclePreset(true)),
-                        |cx| Label::new(cx, ">").class("btn-cycle-arrow"),
-                    )
-                    .class("btn-cycle")
-                    .width(Pixels(30.0))
-                    .height(Pixels(28.0));
-
-                    Binding::new(cx, PianoViziaData::is_user_preset, move |cx, is_user_lens| {
-                        let is_user = is_user_lens.get(cx);
-                        if is_user {
-                            Button::new(
-                                cx,
-                                |cx| cx.emit(PianoUiEvent::OverwriteCurrentPreset),
-                                move |cx| {
-                                    Label::new(
-                                        cx,
-                                        match lang {
-                                            Language::English => "Overwrite",
-                                            Language::SimplifiedChinese => "覆盖保存",
-                                        },
-                                    )
-                                },
-                            )
-                            .class("btn-action-gold")
-                            .height(Pixels(28.0))
-                            .width(Pixels(72.0));
-                        }
-
-                        Button::new(
-                            cx,
-                            |cx| cx.emit(PianoUiEvent::OpenSaveDialog),
-                            move |cx| {
-                                Label::new(
-                                    cx,
-                                    match lang {
-                                        Language::English => if is_user { "Save As..." } else { "Save As..." },
-                                        Language::SimplifiedChinese => if is_user { "另存为..." } else { "另存为预设..." },
-                                    },
-                                )
-                            },
-                        )
-                        .class("btn-action")
-                        .height(Pixels(28.0))
-                        .width(if is_user { Pixels(70.0) } else { Pixels(92.0) });
-                    });
-                })
-                .col_between(Pixels(4.0))
-                .top(Stretch(1.0))
-                .bottom(Stretch(1.0));
-
-                Element::new(cx).width(Stretch(1.0));
-
-                // Undo & Redo Buttons (clean text without broken unicode arrows)
-                HStack::new(cx, |cx| {
-                    Button::new(
-                        cx,
-                        |cx| cx.emit(PianoUiEvent::Undo),
-                        |cx| {
-                            Label::new(
-                                cx,
-                                match lang {
-                                    Language::English => "Undo",
-                                    Language::SimplifiedChinese => "撤销",
-                                },
-                            )
-                        },
-                    )
-                    .class("btn-action")
-                    .height(Pixels(24.0))
-                    .width(Pixels(52.0));
-
-                    Button::new(
-                        cx,
-                        |cx| cx.emit(PianoUiEvent::Redo),
-                        |cx| {
-                            Label::new(
-                                cx,
-                                match lang {
-                                    Language::English => "Redo",
-                                    Language::SimplifiedChinese => "重做",
-                                },
-                            )
-                        },
-                    )
-                    .class("btn-action")
-                    .height(Pixels(24.0))
-                    .width(Pixels(52.0));
-                })
-                .col_between(Pixels(4.0))
-                .top(Stretch(1.0))
-                .bottom(Stretch(1.0));
-
-                // Language Switcher Button
-                Button::new(
-                    cx,
-                    |cx| cx.emit(PianoUiEvent::ToggleLanguage),
-                    |cx| {
+                    Button::new(cx, |cx| Label::new(cx, "<"))
+                        .on_press(|cx| cx.emit(PianoUiEvent::PreviousPreset))
+                        .width(Pixels(28.0));
+                    Label::new(cx, initial_preset_name).width(Pixels(190.0));
+                    Button::new(cx, |cx| Label::new(cx, ">"))
+                        .on_press(|cx| cx.emit(PianoUiEvent::NextPreset))
+                        .width(Pixels(28.0));
+                    Button::new(cx, move |cx| {
                         Label::new(
                             cx,
-                            match lang {
-                                Language::English => "🌐 中文",
-                                Language::SimplifiedChinese => "🌐 English",
-                            },
+                            language_view.map(|lang| match lang {
+                                Language::English => "中文".to_string(),
+                                Language::SimplifiedChinese => "English".to_string(),
+                            }),
                         )
-                    },
-                )
-                .height(Pixels(24.0))
-                .width(Pixels(74.0))
-                .top(Stretch(1.0))
-                .bottom(Stretch(1.0));
-
-                // Visualizers (Lissajous & Stereo VU Meter)
-                HStack::new(cx, |cx| {
-                    LissajousScopeWidget::new(cx, PianoViziaData::recent_orbit_t, PianoViziaData::recent_orbit_p)
-                        .size(Pixels(32.0));
-                    StereoVuMeterWidget::new(cx, PianoViziaData::peak_l, PianoViziaData::peak_r)
-                        .width(Pixels(70.0))
-                        .height(Pixels(24.0));
-                })
-                .col_between(Pixels(8.0))
-                .top(Stretch(1.0))
-                .bottom(Stretch(1.0));
-            })
-            .height(Pixels(38.0))
-            .child_top(Stretch(1.0))
-            .child_bottom(Stretch(1.0))
-            .col_between(Pixels(10.0));
-
-            // 2. Center Visual Physical Metaphors Panel (Lid Geometry & Mic Soundstage)
-            HStack::new(cx, |cx| {
-                PianoLidWidget::new(cx, PianoViziaData::params, lang)
-                    .width(Stretch(1.0))
-                    .height(Pixels(150.0));
-
-                MicStageWidget::new(cx, PianoViziaData::params, lang)
-                    .width(Stretch(1.0))
-                    .height(Pixels(150.0));
-            })
-            .height(Pixels(154.0))
-            .col_between(Pixels(10.0));
-
-            // 3. Four Parameter Control Racks with aligned labels and sliders
-            HStack::new(cx, |cx| {
-                // Rack 1: Pedals & Mechanics
-                VStack::new(cx, |cx| {
-                    Label::new(cx, I18n::rack_pedals(lang)).class("rack-title");
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, I18n::sustain(lang)).class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                        ParamSlider::new(cx, PianoViziaData::params, |p| &p.sustain_pedal).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, I18n::key_action(lang)).class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                        ParamSlider::new(cx, PianoViziaData::params, |p| &p.key_noise).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, I18n::damper_noise(lang)).class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                        ParamSlider::new(cx, PianoViziaData::params, |p| &p.damper_noise).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, I18n::pedal_shock(lang)).class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                        ParamSlider::new(cx, PianoViziaData::params, |p| &p.pedal_noise).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
-                })
-                .class("rack-box")
-                .width(Stretch(1.0))
-                .height(Pixels(165.0));
-
-                // Rack 2: String & Hammer Physics
-                VStack::new(cx, |cx| {
-                    Label::new(cx, I18n::rack_string(lang)).class("rack-title");
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, I18n::inharmonicity(lang)).class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                        ParamSlider::new(cx, PianoViziaData::params, |p| &p.inharmonicity_scale).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, I18n::hammer_hardness(lang)).class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                        ParamSlider::new(cx, PianoViziaData::params, |p| &p.hammer_hardness).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, I18n::unison_detune(lang)).class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                        ParamSlider::new(cx, PianoViziaData::params, |p| &p.unison_detuning).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, I18n::phantom_partials(lang)).class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                        ParamSlider::new(cx, PianoViziaData::params, |p| &p.phantom_gain).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
-                })
-                .class("rack-box")
-                .width(Stretch(1.0))
-                .height(Pixels(165.0));
-
-                // Rack 3: Spatial Mics & Lid
-                VStack::new(cx, |cx| {
-                    Label::new(cx, I18n::rack_spatial(lang)).class("rack-title");
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, I18n::mic_close(lang)).class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                        ParamSlider::new(cx, PianoViziaData::params, |p| &p.mic_close).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, I18n::mic_player(lang)).class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                        ParamSlider::new(cx, PianoViziaData::params, |p| &p.mic_player).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, I18n::mic_ambient(lang)).class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                        ParamSlider::new(cx, PianoViziaData::params, |p| &p.mic_ambient).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, I18n::lid_angle(lang)).class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                        ParamSlider::new(cx, PianoViziaData::params, |p| &p.lid_angle).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
-                })
-                .class("rack-box")
-                .width(Stretch(1.0))
-                .height(Pixels(165.0));
-
-                // Rack 4: Output & Touch Response
-                VStack::new(cx, |cx| {
-                    Label::new(cx, I18n::rack_output(lang)).class("rack-title");
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, I18n::master_gain(lang)).class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                        ParamSlider::new(cx, PianoViziaData::params, |p| &p.master_gain).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, I18n::velocity_curve(lang)).class("param-label").width(Pixels(86.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                        ParamSlider::new(cx, PianoViziaData::params, |p| &p.velocity_curve).height(Pixels(20.0)).width(Stretch(1.0)).top(Stretch(1.0)).bottom(Stretch(1.0));
-                    }).height(Pixels(22.0)).col_between(Pixels(6.0));
-                })
-                .class("rack-box")
-                .width(Stretch(1.0))
-                .height(Pixels(165.0));
-            })
-            .col_between(Pixels(8.0))
-            .height(Pixels(170.0));
-
-            // 4. Interactive 88-Key Keyboard with dynamic velocity travel sink
-            PianoKeyboardWidget::new(
-                cx,
-                gui_tx.clone(),
-                PianoViziaData::active_keys_low,
-                PianoViziaData::active_keys_high,
-                PianoViziaData::key_velocities,
-            )
-            .focusable(true)
-            .height(Pixels(130.0))
-            .width(Stretch(1.0));
-
-            // Footer hint
-            Label::new(cx, I18n::keyboard_hint(lang))
-                .class("hint-text")
-                .height(Pixels(16.0));
-        })
-        .child_space(Pixels(10.0))
-        .row_between(Pixels(8.0));
-
-        // Modal Dialog Overlay for Custom Presets (Save As / Rename)
-        Binding::new(cx, PianoViziaData::dialog_mode, move |cx, mode_lens| {
-            let mode = mode_lens.get(cx);
-            if mode != DialogMode::None {
-                VStack::new(cx, move |cx| {
-                    VStack::new(cx, move |cx| {
-                        Label::new(
-                            cx,
-                            if mode == DialogMode::SaveNew {
-                                match lang {
-                                    Language::English => "Save Preset As",
-                                    Language::SimplifiedChinese => "另存为预设",
-                                }
-                            } else {
-                                match lang {
-                                    Language::English => "Rename Preset",
-                                    Language::SimplifiedChinese => "重命名预设",
-                                }
-                            },
-                        )
-                        .class("modal-title");
-
-                        Textbox::new(cx, PianoViziaData::preset_input_text)
-                            .class("modal-textbox")
-                            .width(Stretch(1.0))
-                            .on_edit(|cx, text| cx.emit(PianoUiEvent::SetPresetInputText(text)));
-
-                        HStack::new(cx, move |cx| {
-                            Button::new(
-                                cx,
-                                |cx| cx.emit(PianoUiEvent::ConfirmDialog),
-                                move |cx| {
-                                    Label::new(
-                                        cx,
-                                        match lang {
-                                            Language::English => "Confirm",
-                                            Language::SimplifiedChinese => "确认",
-                                        },
-                                    )
-                                },
-                            )
-                            .class("btn-action-gold")
-                            .width(Pixels(80.0))
-                            .height(Pixels(26.0));
-
-                            Button::new(
-                                cx,
-                                |cx| cx.emit(PianoUiEvent::CancelDialog),
-                                move |cx| {
-                                    Label::new(
-                                        cx,
-                                        match lang {
-                                            Language::English => "Cancel",
-                                            Language::SimplifiedChinese => "取消",
-                                        },
-                                    )
-                                },
-                            )
-                            .class("btn-action")
-                            .width(Pixels(80.0))
-                            .height(Pixels(26.0));
-                        })
-                        .col_between(Pixels(12.0))
-                        .top(Stretch(1.0));
                     })
-                    .class("modal-card")
-                    .width(Pixels(320.0))
-                    .height(Pixels(130.0));
-                })
-                .class("modal-backdrop")
-                .width(Stretch(1.0))
-                .height(Stretch(1.0));
-            }
-        });
+                    .on_press(|cx| cx.emit(PianoUiEvent::ToggleLanguage))
+                    .width(Pixels(60.0));
 
-        ResizeHandle::new(cx);
+                    HStack::new(cx, |cx| {
+                        LissajousScopeWidget::new(
+                            cx,
+                            recent_orbit_t.clone(),
+                            recent_orbit_p.clone(),
+                        )
+                        .size(Pixels(32.0));
+                        StereoVuMeterWidget::new(cx, peak_l.clone(), peak_r.clone())
+                            .width(Pixels(70.0))
+                            .height(Pixels(24.0));
+                    })
+                    .horizontal_gap(Pixels(8.0));
+                })
+                .height(Pixels(38.0))
+                .horizontal_gap(Pixels(8.0));
+
+                HStack::new(cx, |cx| {
+                    Textbox::new(cx, name_input.clone())
+                        .on_edit(|cx, text| cx.emit(PianoUiEvent::SetName(text)))
+                        .width(Pixels(120.0))
+                        .height(Pixels(26.0));
+                    Button::new(cx, |cx| Label::new(cx, "Save As"))
+                        .on_press(|cx| cx.emit(PianoUiEvent::SaveAs))
+                        .width(Pixels(60.0));
+                    Button::new(cx, |cx| Label::new(cx, "Rename"))
+                        .on_press(|cx| cx.emit(PianoUiEvent::Rename))
+                        .width(Pixels(54.0));
+                    Button::new(cx, |cx| Label::new(cx, "Overwrite"))
+                        .on_press(|cx| cx.emit(PianoUiEvent::Overwrite))
+                        .width(Pixels(64.0));
+                    Button::new(cx, |cx| Label::new(cx, "Delete"))
+                        .on_press(|cx| cx.emit(PianoUiEvent::Delete))
+                        .width(Pixels(44.0));
+                    Button::new(cx, |cx| Label::new(cx, "Undo"))
+                        .on_press(|cx| cx.emit(PianoUiEvent::Undo))
+                        .width(Pixels(48.0));
+                    Button::new(cx, |cx| Label::new(cx, "Redo"))
+                        .on_press(|cx| cx.emit(PianoUiEvent::Redo))
+                        .width(Pixels(48.0));
+                })
+                .height(Pixels(30.0))
+                .horizontal_gap(Pixels(8.0));
+
+                HStack::new(cx, |cx| {
+                    PianoLidWidget::new(cx, params.clone(), lang)
+                        .width(Stretch(1.0))
+                        .height(Pixels(150.0));
+                    MicStageWidget::new(cx, params.clone(), lang)
+                        .width(Stretch(1.0))
+                        .height(Pixels(150.0));
+                })
+                .height(Pixels(154.0))
+                .horizontal_gap(Pixels(8.0));
+
+                HStack::new(cx, |cx| {
+                    VStack::new(cx, |cx| {
+                        Label::new(cx, I18n::rack_pedals(lang)).class("rack-title");
+                        slider(cx, I18n::sustain(lang), &params.sustain_pedal);
+                        slider(cx, I18n::key_action(lang), &params.key_noise);
+                        slider(cx, I18n::damper_noise(lang), &params.damper_noise);
+                        slider(cx, I18n::pedal_shock(lang), &params.pedal_noise);
+                    })
+                    .class("rack-box")
+                    .width(Stretch(1.0));
+                    VStack::new(cx, |cx| {
+                        Label::new(cx, I18n::rack_string(lang)).class("rack-title");
+                        slider(cx, I18n::inharmonicity(lang), &params.inharmonicity_scale);
+                        slider(cx, I18n::hammer_hardness(lang), &params.hammer_hardness);
+                        slider(cx, I18n::unison_detune(lang), &params.unison_detuning);
+                        slider(cx, I18n::phantom_partials(lang), &params.phantom_gain);
+                    })
+                    .class("rack-box")
+                    .width(Stretch(1.0));
+                    VStack::new(cx, |cx| {
+                        Label::new(cx, I18n::rack_spatial(lang)).class("rack-title");
+                        slider(cx, I18n::mic_close(lang), &params.mic_close);
+                        slider(cx, I18n::mic_player(lang), &params.mic_player);
+                        slider(cx, I18n::mic_ambient(lang), &params.mic_ambient);
+                        slider(cx, I18n::lid_angle(lang), &params.lid_angle);
+                    })
+                    .class("rack-box")
+                    .width(Stretch(1.0));
+                    VStack::new(cx, |cx| {
+                        Label::new(cx, I18n::rack_output(lang)).class("rack-title");
+                        slider(cx, I18n::master_gain(lang), &params.master_gain);
+                        slider(cx, I18n::velocity_curve(lang), &params.velocity_curve);
+                        ParamButton::new(cx, &params.una_corda).with_label("Una Corda");
+                    })
+                    .class("rack-box")
+                    .width(Stretch(1.0));
+                })
+                .height(Pixels(170.0))
+                .horizontal_gap(Pixels(8.0));
+
+                PianoKeyboardWidget::new(
+                    cx,
+                    gui_tx.clone(),
+                    active_keys_low.clone(),
+                    active_keys_high.clone(),
+                    key_velocities.clone(),
+                )
+                .focusable(true)
+                .height(Pixels(130.0))
+                .width(Stretch(1.0));
+                Label::new(cx, I18n::keyboard_hint(lang)).class("hint-text");
+            });
         });
     })
 }

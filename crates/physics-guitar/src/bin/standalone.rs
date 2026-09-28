@@ -1,6 +1,6 @@
 //! Standalone Desktop Application with Hardware-Accelerated GUI and Audio/MIDI for Physics Guitar.
 
-use nih_plug::wrapper::standalone::nih_export_standalone_with_args;
+use nice_plug::wrapper::standalone::nice_export_standalone_with_args;
 use physics_guitar::nih_plugin::PhysicsGuitar;
 
 fn main() {
@@ -26,5 +26,5 @@ fn main() {
         }
     }
 
-    nih_export_standalone_with_args::<PhysicsGuitar, _>(args);
+    nice_export_standalone_with_args::<PhysicsGuitar, _>(args);
 }

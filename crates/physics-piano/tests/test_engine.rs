@@ -1,11 +1,11 @@
 //! Comprehensive Rust Verification Tests for Piano Physical Modeling Engine.
 
-use physics_piano::params::grand_piano::generate_grand_piano_parameters;
-use physics_piano::core::string::StiffStringModal;
-use physics_piano::core::hammer::HuntCrossleyHammer;
 use physics_piano::core::bridge::BridgeSoundboard;
+use physics_piano::core::hammer::HuntCrossleyHammer;
+use physics_piano::core::string::StiffStringModal;
 use physics_piano::dsp::upols::UPOLSConvolver;
-use physics_piano::engine::{PianoEngine, EngineEvent};
+use physics_piano::engine::{EngineEvent, PianoEngine};
+use physics_piano::params::grand_piano::generate_grand_piano_parameters;
 
 #[test]
 fn test_database_88_keys_and_railsback() {
@@ -13,17 +13,29 @@ fn test_database_88_keys_and_railsback() {
     assert_eq!(keys.len(), 88);
 
     // Verify key boundaries: A0 (MIDI 21) to C8 (MIDI 108)
-    let a0 = keys.iter().find(|k| k.midi_note == 21).expect("A0 should exist");
+    let a0 = keys
+        .iter()
+        .find(|k| k.midi_note == 21)
+        .expect("A0 should exist");
     assert_eq!(a0.pitch_name, "A0");
     assert_eq!(a0.num_unisons, 1);
-    assert!(a0.target_f0 < 27.5 && a0.target_f0 > 26.5, "A0 should have negative Railsback stretch");
+    assert!(
+        a0.target_f0 < 27.5 && a0.target_f0 > 26.5,
+        "A0 should have negative Railsback stretch"
+    );
 
-    let c4 = keys.iter().find(|k| k.midi_note == 60).expect("C4 should exist");
+    let c4 = keys
+        .iter()
+        .find(|k| k.midi_note == 60)
+        .expect("C4 should exist");
     assert_eq!(c4.pitch_name, "C4");
     assert_eq!(c4.num_unisons, 3);
     assert!((c4.target_f0 - 261.63).abs() < 1.0);
 
-    let c8 = keys.iter().find(|k| k.midi_note == 108).expect("C8 should exist");
+    let c8 = keys
+        .iter()
+        .find(|k| k.midi_note == 108)
+        .expect("C8 should exist");
     assert_eq!(c8.pitch_name, "C8");
     assert_eq!(c8.num_unisons, 3);
     // C8 should be stretched higher than equal temperament 4186 Hz
@@ -101,7 +113,10 @@ fn test_bridge_and_soundboard_coupling() {
             has_nonzero = true;
         }
     }
-    assert!(has_nonzero, "Bridge must propagate force into soundboard output");
+    assert!(
+        has_nonzero,
+        "Bridge must propagate force into soundboard output"
+    );
 }
 
 #[test]
@@ -136,9 +151,11 @@ fn test_engine_full_synthesis_and_pedal() {
     let mut out_r = vec![0.0; block_size];
 
     // Trigger note A4 (MIDI 69)
-    let events = vec![
-        EngineEvent::NoteOn { time: 0, key: 69, velocity: 0.8 },
-    ];
+    let events = vec![EngineEvent::NoteOn {
+        time: 0,
+        key: 69,
+        velocity: 0.8,
+    }];
     let mut out_events = Vec::new();
     engine.process_block(block_size, &events, &mut out_events, &mut out_l, &mut out_r);
 
@@ -151,7 +168,13 @@ fn test_engine_full_synthesis_and_pedal() {
     engine.set_sustain_pedal(true, 0.5);
     let empty_events: Vec<EngineEvent> = Vec::new();
     for _ in 0..10 {
-        engine.process_block(block_size, &empty_events, &mut out_events, &mut out_l, &mut out_r);
+        engine.process_block(
+            block_size,
+            &empty_events,
+            &mut out_events,
+            &mut out_l,
+            &mut out_r,
+        );
         for i in 0..block_size {
             assert!(!out_l[i].is_nan() && !out_l[i].is_infinite());
             assert!(!out_r[i].is_nan() && !out_r[i].is_infinite());
@@ -159,25 +182,35 @@ fn test_engine_full_synthesis_and_pedal() {
     }
 
     // Release note
-    let release_events = vec![
-        EngineEvent::NoteOff { time: 0, key: 69 },
-    ];
-    engine.process_block(block_size, &release_events, &mut out_events, &mut out_l, &mut out_r);
+    let release_events = vec![EngineEvent::NoteOff { time: 0, key: 69 }];
+    engine.process_block(
+        block_size,
+        &release_events,
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
 
     // Fully release pedal
     engine.set_sustain_pedal(false, 0.0);
     for _ in 0..20 {
-        engine.process_block(block_size, &empty_events, &mut out_events, &mut out_l, &mut out_r);
+        engine.process_block(
+            block_size,
+            &empty_events,
+            &mut out_events,
+            &mut out_l,
+            &mut out_r,
+        );
     }
 }
 
 #[test]
 fn test_clap_plugin_c_abi_and_extensions() {
-    use clap_sys::factory::plugin_factory::{clap_plugin_factory, CLAP_PLUGIN_FACTORY_ID};
     use clap_sys::ext::audio_ports::{clap_plugin_audio_ports, CLAP_EXT_AUDIO_PORTS};
     use clap_sys::ext::note_ports::{clap_plugin_note_ports, CLAP_EXT_NOTE_PORTS};
     use clap_sys::ext::params::{clap_plugin_params, CLAP_EXT_PARAMS};
     use clap_sys::ext::thread_pool::CLAP_EXT_THREAD_POOL;
+    use clap_sys::factory::plugin_factory::{clap_plugin_factory, CLAP_PLUGIN_FACTORY_ID};
     use physics_piano::raw_clap_entry;
     use std::ffi::CStr;
     use std::ptr;
@@ -188,7 +221,9 @@ fn test_clap_plugin_c_abi_and_extensions() {
         assert!(init_fn(ptr::null()));
 
         // 2. Factory lookup
-        let get_factory_fn = raw_clap_entry.get_factory.expect("get_factory must be defined");
+        let get_factory_fn = raw_clap_entry
+            .get_factory
+            .expect("get_factory must be defined");
         let factory_ptr = get_factory_fn(CLAP_PLUGIN_FACTORY_ID.as_ptr());
         assert!(!factory_ptr.is_null());
 
@@ -269,7 +304,8 @@ fn test_polyphonic_stability_and_headroom() {
 
     let mut max_abs = 0.0f64;
 
-    for _ in 0..100 { // ~1.06 seconds
+    for _ in 0..100 {
+        // ~1.06 seconds
         engine.process_block(block_size, &[], &mut out_events, &mut out_l, &mut out_r);
         for s in 0..block_size {
             assert!(!out_l[s].is_nan(), "Left channel is NaN!");
@@ -309,7 +345,10 @@ fn test_damper_release_decay_and_high_register_damperless() {
     engine.process_block(block_size, &[], &mut out_events, &mut out_l, &mut out_r);
     let energy_at_10ms = engine.get_voice(60).unwrap().get_energy();
     // It should still have > 10% of energy (smooth felt descent)
-    assert!(energy_at_10ms > energy_before_release * 0.10, "Damper cut off too brutally in 10ms");
+    assert!(
+        energy_at_10ms > energy_before_release * 0.10,
+        "Damper cut off too brutally in 10ms"
+    );
 
     // After 300ms (56 blocks), energy should be attenuated significantly (> 98% decayed)
     for _ in 0..56 {
@@ -317,7 +356,10 @@ fn test_damper_release_decay_and_high_register_damperless() {
     }
     if let Some(v) = engine.get_voice(60) {
         let energy_at_300ms = v.get_energy();
-        assert!(energy_at_300ms < energy_before_release * 0.05, "Damper should have extinguished string by 300ms");
+        assert!(
+            energy_at_300ms < energy_before_release * 0.05,
+            "Damper should have extinguished string by 300ms"
+        );
     }
 
     // 2. High register C8 (MIDI 108) must NOT have dampers
@@ -327,7 +369,10 @@ fn test_damper_release_decay_and_high_register_damperless() {
     }
     let c8_voice = engine.get_voice(108).unwrap();
     for s in &c8_voice.strings {
-        assert!(!s.has_damper, "C8 strings must not have dampers on acoustic grand");
+        assert!(
+            !s.has_damper,
+            "C8 strings must not have dampers on acoustic grand"
+        );
     }
 }
 
@@ -352,7 +397,12 @@ fn test_melody_voice_accumulation_and_crackling() {
             }
         }
         engine.note_off(note);
-        println!("Note {}: active_keys count = {}, peak_amplitude = {}", i, engine.active_keys.len(), max_out);
+        println!(
+            "Note {}: active_keys count = {}, peak_amplitude = {}",
+            i,
+            engine.active_keys.len(),
+            max_out
+        );
     }
 }
 
@@ -362,7 +412,10 @@ fn test_una_corda_soft_pedal_dynamics() {
     let mut engine_normal = PianoEngine::new(48000.0, 30, false);
     engine_normal.note_on(60, 0.8);
     let (norm_l, norm_r) = engine_normal.render(0.3);
-    let norm_peak = norm_l.iter().chain(norm_r.iter()).fold(0.0f64, |acc, &x| acc.max(x.abs()));
+    let norm_peak = norm_l
+        .iter()
+        .chain(norm_r.iter())
+        .fold(0.0f64, |acc, &x| acc.max(x.abs()));
 
     let mut engine_una = PianoEngine::new(48000.0, 30, false);
     engine_una.set_una_corda(true);
@@ -374,18 +427,30 @@ fn test_una_corda_soft_pedal_dynamics() {
     assert!(voice.hammer.una_corda);
 
     let (una_l, una_r) = engine_una.render(0.3);
-    let una_peak = una_l.iter().chain(una_r.iter()).fold(0.0f64, |acc, &x| acc.max(x.abs()));
+    let una_peak = una_l
+        .iter()
+        .chain(una_r.iter())
+        .fold(0.0f64, |acc, &x| acc.max(x.abs()));
 
     println!("Normal peak: {norm_peak:.4}, Una Corda peak: {una_peak:.4}");
     // Una corda must reduce initial attack peak due to softer felt and 2-string strike
-    assert!(una_peak < norm_peak, "Una corda strike must be softer than normal strike");
-    assert!(una_peak > 0.01, "Una corda must still produce clear musical tone");
+    assert!(
+        una_peak < norm_peak,
+        "Una corda strike must be softer than normal strike"
+    );
+    assert!(
+        una_peak > 0.01,
+        "Una corda must still produce clear musical tone"
+    );
 
     // Check that the 3rd un-struck string has picked up energy from the bridge!
     let voice_after = engine_una.get_voice(60).unwrap();
     let e_str2 = voice_after.strings[2].get_energy();
     println!("Una Corda un-struck string 3 energy via bridge coupling: {e_str2:.6}");
-    assert!(e_str2 > 1e-6, "3rd string must be sympathetically driven by bridge coupling");
+    assert!(
+        e_str2 > 1e-6,
+        "3rd string must be sympathetically driven by bridge coupling"
+    );
 }
 
 #[test]
@@ -412,7 +477,10 @@ fn test_sustain_pedal_and_key_hold_independence() {
     assert!(voice.is_key_down, "Key must be held down");
     let energy_held = voice.get_energy();
     println!("Energy while holding key down after 500ms with pedal=0.5: {energy_held:.6}");
-    assert!(energy_held > 1e-3, "Held key must NEVER be prematurely damped by pedal adjustments");
+    assert!(
+        energy_held > 1e-3,
+        "Held key must NEVER be prematurely damped by pedal adjustments"
+    );
 
     // 4. Test sustain pedal hold after release:
     // With pedal at 0.8 (full sustain), releasing the key should CONTINUE ringing
@@ -424,16 +492,23 @@ fn test_sustain_pedal_and_key_hold_independence() {
     }
     let energy_sustained = engine.get_voice(60).unwrap().get_energy();
     println!("Energy after release with pedal=0.8: {energy_sustained:.6}");
-    assert!(energy_sustained > 1e-4, "Released key must sustain when pedal is down");
+    assert!(
+        energy_sustained > 1e-4,
+        "Released key must sustain when pedal is down"
+    );
 
     // 5. Release pedal completely: dampers must drop and extinguish note
     engine.set_sustain_pedal(false, 0.0);
-    for _ in 0..60 { // ~320ms
+    for _ in 0..60 {
+        // ~320ms
         engine.process_block(block_size, &[], &mut out_events, &mut out_l, &mut out_r);
     }
     let energy_damped = engine.get_voice(60).map(|v| v.get_energy()).unwrap_or(0.0);
     println!("Energy after pedal released: {energy_damped:.8}");
-    assert!(energy_damped < 1e-6, "Releasing pedal must promptly extinguish string vibration");
+    assert!(
+        energy_damped < 1e-6,
+        "Releasing pedal must promptly extinguish string vibration"
+    );
 }
 
 #[test]
@@ -456,22 +531,55 @@ fn test_piano_pitch_bend_and_expression() {
     assert_eq!(v.pitch_bend_cents, 0.0);
 
     // 2. Send pitch bend event (+150 cents)
-    let bend_ev = EngineEvent::PitchBend { time: 0, cents: 150.0 };
-    engine.process_block(block_size, &[bend_ev], &mut out_events, &mut out_l, &mut out_r);
+    let bend_ev = EngineEvent::PitchBend {
+        time: 0,
+        cents: 150.0,
+    };
+    engine.process_block(
+        block_size,
+        &[bend_ev],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
 
     let v_bent = engine.get_voice(60).unwrap();
     assert_eq!(v_bent.pitch_bend_cents, 150.0);
 
     // 3. Test CC 11 Expression gain control
     let expr_mute = EngineEvent::Expression { time: 0, gain: 0.0 };
-    engine.process_block(block_size, &[expr_mute], &mut out_events, &mut out_l, &mut out_r);
-    let peak_muted = out_l.iter().chain(out_r.iter()).fold(0.0f64, |acc, &x| acc.max(x.abs()));
-    assert!(peak_muted < 1e-12, "Expression gain 0.0 must completely mute audio output");
+    engine.process_block(
+        block_size,
+        &[expr_mute],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
+    let peak_muted = out_l
+        .iter()
+        .chain(out_r.iter())
+        .fold(0.0f64, |acc, &x| acc.max(x.abs()));
+    assert!(
+        peak_muted < 1e-12,
+        "Expression gain 0.0 must completely mute audio output"
+    );
 
     let expr_half = EngineEvent::Expression { time: 0, gain: 0.5 };
-    engine.process_block(block_size, &[expr_half], &mut out_events, &mut out_l, &mut out_r);
-    let peak_half = out_l.iter().chain(out_r.iter()).fold(0.0f64, |acc, &x| acc.max(x.abs()));
-    assert!(peak_half > 1e-6, "Expression gain 0.5 must produce audible sound");
+    engine.process_block(
+        block_size,
+        &[expr_half],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
+    let peak_half = out_l
+        .iter()
+        .chain(out_r.iter())
+        .fold(0.0f64, |acc, &x| acc.max(x.abs()));
+    assert!(
+        peak_half > 1e-6,
+        "Expression gain 0.5 must produce audible sound"
+    );
 }
 
 #[test]
@@ -499,14 +607,20 @@ fn test_piano_velocity_curve_calibration() {
     let energy_hard = engine.get_voice(64).unwrap().get_energy();
 
     println!("Energy Soft: {energy_soft:.6}, Linear: {energy_linear:.6}, Hard: {energy_hard:.6}");
-    assert!(energy_soft > energy_linear, "Soft velocity curve must deliver higher initial energy for moderate input");
-    assert!(energy_linear > energy_hard, "Hard velocity curve must require firmer touch, yielding lower energy for moderate input");
+    assert!(
+        energy_soft > energy_linear,
+        "Soft velocity curve must deliver higher initial energy for moderate input"
+    );
+    assert!(
+        energy_linear > energy_hard,
+        "Hard velocity curve must require firmer touch, yielding lower energy for moderate input"
+    );
 }
 
 #[test]
 fn test_piano_presets() {
-    use physics_piano::presets::FactoryPreset;
     use physics_piano::gui::Language;
+    use physics_piano::presets::FactoryPreset;
 
     let presets = FactoryPreset::all();
     assert_eq!(presets.len(), 6);
@@ -535,7 +649,3 @@ fn test_piano_presets() {
         assert!(vals.velocity_curve >= -1.0 && vals.velocity_curve <= 1.0);
     }
 }
-
-
-
-

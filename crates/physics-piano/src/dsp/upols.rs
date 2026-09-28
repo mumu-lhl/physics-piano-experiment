@@ -6,10 +6,10 @@
 //! - Zero-allocation sample-by-sample and block-by-block streaming
 //! - Orthotropic spruce soundboard analytical multi-perspective IR generator
 
+use num_complex::Complex;
+use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 use std::f64::consts::PI;
 use std::sync::Arc;
-use realfft::{RealFftPlanner, RealToComplex, ComplexToReal};
-use num_complex::Complex;
 
 #[derive(Debug, Clone)]
 pub struct StereoIR {
@@ -52,8 +52,9 @@ pub fn generate_multi_perspective_soundboard_irs(
         let kx = m as f64 * PI / lx;
         for n in 1..16 {
             let ky = n as f64 * PI / ly;
-            let omega_sq = (dx * kx.powi(4) + 2.0 * dxy * kx.powi(2) * ky.powi(2) + dy * ky.powi(4))
-                / (rho_wood * h_plate);
+            let omega_sq =
+                (dx * kx.powi(4) + 2.0 * dxy * kx.powi(2) * ky.powi(2) + dy * ky.powi(4))
+                    / (rho_wood * h_plate);
             let omega = omega_sq.sqrt();
             let freq = omega / (2.0 * PI);
             if (30.0..=12000.0).contains(&freq) {
@@ -125,9 +126,18 @@ pub fn generate_multi_perspective_soundboard_irs(
     normalize_and_scale(&mut ambient_l, &mut ambient_r, 0.35e-4);
 
     (
-        StereoIR { left: close_l, right: close_r },
-        StereoIR { left: player_l, right: player_r },
-        StereoIR { left: ambient_l, right: ambient_r },
+        StereoIR {
+            left: close_l,
+            right: close_r,
+        },
+        StereoIR {
+            left: player_l,
+            right: player_r,
+        },
+        StereoIR {
+            left: ambient_l,
+            right: ambient_r,
+        },
     )
 }
 
@@ -177,17 +187,14 @@ pub struct MultiPerspectiveUPOLS {
 }
 
 impl MultiPerspectiveUPOLS {
-    pub fn new(
-        close: &StereoIR,
-        player: &StereoIR,
-        ambient: &StereoIR,
-        block_size: usize,
-    ) -> Self {
+    pub fn new(close: &StereoIR, player: &StereoIR, ambient: &StereoIR, block_size: usize) -> Self {
         let b = block_size;
         let fft_size = 2 * b;
         let rfft_bins = fft_size / 2 + 1;
 
-        let ir_len = close.left.len()
+        let ir_len = close
+            .left
+            .len()
             .max(close.right.len())
             .max(player.left.len())
             .max(ambient.left.len());
@@ -266,7 +273,7 @@ impl MultiPerspectiveUPOLS {
             out_fifo_right: vec![0.0; b],
             fifo_idx: 0,
             close_gain: 1.0,
-            player_gain: 0.707, // -3dB
+            player_gain: 0.707,  // -3dB
             ambient_gain: 0.501, // -6dB
         }
     }
@@ -284,7 +291,9 @@ impl MultiPerspectiveUPOLS {
         self.prev_x.copy_from_slice(input);
 
         // 2. Shared single forward FFT
-        self.r2c.process(&mut self.time_frame, &mut self.freq_scratch).unwrap();
+        self.r2c
+            .process(&mut self.time_frame, &mut self.freq_scratch)
+            .unwrap();
 
         // 3. Store in circular history
         self.x_history[self.history_idx].copy_from_slice(&self.freq_scratch);
@@ -329,13 +338,17 @@ impl MultiPerspectiveUPOLS {
             }
 
             // Left
-            self.c2r.process(&mut self.y_freq_left[m], &mut self.y_time_scratch).unwrap();
+            self.c2r
+                .process(&mut self.y_freq_left[m], &mut self.y_time_scratch)
+                .unwrap();
             for i in 0..b {
                 out_left[i] += self.y_time_scratch[b + i] * norm * g;
             }
 
             // Right
-            self.c2r.process(&mut self.y_freq_right[m], &mut self.y_time_scratch).unwrap();
+            self.c2r
+                .process(&mut self.y_freq_right[m], &mut self.y_time_scratch)
+                .unwrap();
             for i in 0..b {
                 out_right[i] += self.y_time_scratch[b + i] * norm * g;
             }
@@ -356,7 +369,9 @@ impl MultiPerspectiveUPOLS {
             self.time_frame[b..].copy_from_slice(&self.in_fifo);
             self.prev_x.copy_from_slice(&self.in_fifo);
 
-            self.r2c.process(&mut self.time_frame, &mut self.freq_scratch).unwrap();
+            self.r2c
+                .process(&mut self.time_frame, &mut self.freq_scratch)
+                .unwrap();
             self.x_history[self.history_idx].copy_from_slice(&self.freq_scratch);
 
             for m in 0..3 {
@@ -396,12 +411,16 @@ impl MultiPerspectiveUPOLS {
                     continue;
                 }
 
-                self.c2r.process(&mut self.y_freq_left[m], &mut self.y_time_scratch).unwrap();
+                self.c2r
+                    .process(&mut self.y_freq_left[m], &mut self.y_time_scratch)
+                    .unwrap();
                 for i in 0..b {
                     self.out_fifo_left[i] += self.y_time_scratch[b + i] * norm * g;
                 }
 
-                self.c2r.process(&mut self.y_freq_right[m], &mut self.y_time_scratch).unwrap();
+                self.c2r
+                    .process(&mut self.y_freq_right[m], &mut self.y_time_scratch)
+                    .unwrap();
                 for i in 0..b {
                     self.out_fifo_right[i] += self.y_time_scratch[b + i] * norm * g;
                 }
@@ -525,7 +544,9 @@ impl UPOLSConvolver {
         self.time_frame[b..].copy_from_slice(input);
         self.prev_x.copy_from_slice(input);
 
-        self.r2c.process(&mut self.time_frame, &mut self.freq_scratch).unwrap();
+        self.r2c
+            .process(&mut self.time_frame, &mut self.freq_scratch)
+            .unwrap();
         self.x_history[self.history_idx].copy_from_slice(&self.freq_scratch);
 
         self.y_freq_left.fill(Complex::new(0.0, 0.0));
@@ -548,12 +569,16 @@ impl UPOLSConvolver {
 
         let norm = 1.0 / self.fft_size as f64;
 
-        self.c2r.process(&mut self.y_freq_left, &mut self.y_time_scratch).unwrap();
+        self.c2r
+            .process(&mut self.y_freq_left, &mut self.y_time_scratch)
+            .unwrap();
         for i in 0..b {
             out_left[i] = self.y_time_scratch[b + i] * norm;
         }
 
-        self.c2r.process(&mut self.y_freq_right, &mut self.y_time_scratch).unwrap();
+        self.c2r
+            .process(&mut self.y_freq_right, &mut self.y_time_scratch)
+            .unwrap();
         for i in 0..b {
             out_right[i] = self.y_time_scratch[b + i] * norm;
         }
@@ -572,7 +597,9 @@ impl UPOLSConvolver {
             self.time_frame[b..].copy_from_slice(&self.in_fifo);
             self.prev_x.copy_from_slice(&self.in_fifo);
 
-            self.r2c.process(&mut self.time_frame, &mut self.freq_scratch).unwrap();
+            self.r2c
+                .process(&mut self.time_frame, &mut self.freq_scratch)
+                .unwrap();
             self.x_history[self.history_idx].copy_from_slice(&self.freq_scratch);
 
             self.y_freq_left.fill(Complex::new(0.0, 0.0));
@@ -595,12 +622,16 @@ impl UPOLSConvolver {
 
             let norm = 1.0 / self.fft_size as f64;
 
-            self.c2r.process(&mut self.y_freq_left, &mut self.y_time_scratch).unwrap();
+            self.c2r
+                .process(&mut self.y_freq_left, &mut self.y_time_scratch)
+                .unwrap();
             for i in 0..b {
                 self.out_fifo_left[i] = self.y_time_scratch[b + i] * norm;
             }
 
-            self.c2r.process(&mut self.y_freq_right, &mut self.y_time_scratch).unwrap();
+            self.c2r
+                .process(&mut self.y_freq_right, &mut self.y_time_scratch)
+                .unwrap();
             for i in 0..b {
                 self.out_fifo_right[i] = self.y_time_scratch[b + i] * norm;
             }

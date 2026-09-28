@@ -36,7 +36,11 @@ impl PresetManager {
     }
 
     /// With custom user presets directory (useful for testing or customized configs)
-    pub fn with_custom_dir(instrument: &str, mut factory_presets: Vec<Preset>, dir: PathBuf) -> Self {
+    pub fn with_custom_dir(
+        instrument: &str,
+        mut factory_presets: Vec<Preset>,
+        dir: PathBuf,
+    ) -> Self {
         for p in &mut factory_presets {
             p.is_factory = true;
             p.instrument = instrument.to_string();
@@ -111,7 +115,13 @@ impl PresetManager {
         let safe_filename: String = preset
             .id
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         let path = self.user_presets_dir.join(format!("{safe_filename}.json"));
 
@@ -121,7 +131,11 @@ impl PresetManager {
         fs::write(path, json)?;
 
         // Update in-memory list
-        if let Some(pos) = self.presets.iter().position(|p| p.id == preset.id && !p.is_factory) {
+        if let Some(pos) = self
+            .presets
+            .iter()
+            .position(|p| p.id == preset.id && !p.is_factory)
+        {
             self.presets[pos] = preset;
         } else {
             self.presets.push(preset);
@@ -136,8 +150,16 @@ impl PresetManager {
     }
 
     /// Overwrite an existing user preset's parameters with new parameter values
-    pub fn overwrite_user_preset(&mut self, id: &str, params: std::collections::HashMap<String, f32>) -> Result<bool, std::io::Error> {
-        if let Some(pos) = self.presets.iter().position(|p| p.id == id && !p.is_factory) {
+    pub fn overwrite_user_preset(
+        &mut self,
+        id: &str,
+        params: std::collections::HashMap<String, f32>,
+    ) -> Result<bool, std::io::Error> {
+        if let Some(pos) = self
+            .presets
+            .iter()
+            .position(|p| p.id == id && !p.is_factory)
+        {
             self.presets[pos].params = params;
             let preset = self.presets[pos].clone();
             self.save_user_preset(preset)?;
@@ -149,7 +171,11 @@ impl PresetManager {
 
     /// Rename an existing user preset and persist change to disk
     pub fn rename_user_preset(&mut self, id: &str, new_name: &str) -> Result<bool, std::io::Error> {
-        if let Some(pos) = self.presets.iter().position(|p| p.id == id && !p.is_factory) {
+        if let Some(pos) = self
+            .presets
+            .iter()
+            .position(|p| p.id == id && !p.is_factory)
+        {
             self.presets[pos].name = new_name.to_string();
             let preset = self.presets[pos].clone();
             self.save_user_preset(preset)?;
@@ -168,7 +194,13 @@ impl PresetManager {
 
         let safe_filename: String = id
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         let path = self.user_presets_dir.join(format!("{safe_filename}.json"));
         if path.exists() {

@@ -8,9 +8,10 @@
 //! Each microphone features an acoustic sensitivity halo whose glowing radius and brightness
 //! dynamically scale with that perspective's gain level.
 
-use nih_plug_vizia::vizia::prelude::*;
-use nih_plug_vizia::vizia::vg;
+use super::skia_compat as vg;
+use super::skia_compat::CanvasExt;
 use std::sync::Arc;
+use vizia_plug::vizia::prelude::*;
 
 use crate::gui::i18n::Language;
 use crate::nih_plugin::PhysicsPianoParams;
@@ -21,15 +22,12 @@ pub struct MicStageWidget {
 }
 
 impl MicStageWidget {
-    pub fn new<L>(cx: &mut Context, params: L, language: Language) -> Handle<'_, Self>
-    where
-        L: Lens<Target = Arc<PhysicsPianoParams>> + Clone,
-    {
-        Self {
-            params: params.get(cx),
-            language,
-        }
-        .build(cx, |_| {})
+    pub fn new(
+        cx: &mut Context,
+        params: Arc<PhysicsPianoParams>,
+        language: Language,
+    ) -> Handle<'_, Self> {
+        Self { params, language }.build(cx, |_| {})
     }
 }
 
@@ -38,7 +36,7 @@ impl View for MicStageWidget {
         Some("mic-stage-widget")
     }
 
-    fn draw(&self, cx: &mut DrawContext, canvas: &mut Canvas) {
+    fn draw(&self, cx: &mut DrawContext, canvas: &Canvas) {
         let bounds = cx.bounds();
         if bounds.w < 10.0 || bounds.h < 10.0 {
             return;
@@ -79,7 +77,12 @@ impl View for MicStageWidget {
         let mut bridge_path = vg::Path::new();
         // Long Bridge (Tenor/Treble)
         bridge_path.move_to(px + pw * 0.25, py + ph * 0.75);
-        bridge_path.quad_to(px + pw * 0.65, py + ph * 0.45, px + pw * 0.72, py + ph * 0.25);
+        bridge_path.quad_to(
+            px + pw * 0.65,
+            py + ph * 0.45,
+            px + pw * 0.72,
+            py + ph * 0.25,
+        );
         // Short Bass Bridge
         bridge_path.move_to(px + pw * 0.08, py + ph * 0.45);
         bridge_path.line_to(px + pw * 0.22, py + ph * 0.20);
@@ -97,9 +100,7 @@ impl View for MicStageWidget {
         let player_db = self.params.mic_player.value();
         let amb_db = self.params.mic_ambient.value();
 
-        let norm_gain = |db: f32| -> f32 {
-            ((db + 40.0) / 46.0).clamp(0.05, 1.0)
-        };
+        let norm_gain = |db: f32| -> f32 { ((db + 40.0) / 46.0).clamp(0.05, 1.0) };
 
         let g_close = norm_gain(close_db);
         let g_player = norm_gain(player_db);
@@ -111,7 +112,12 @@ impl View for MicStageWidget {
         let close_r_x = px + pw * 0.62;
         let close_r_y = py + ph * 0.40;
 
-        let draw_mic = |canvas: &mut Canvas, mx: f32, my: f32, gain_norm: f32, r_base: f32, color_rgb: (f32, f32, f32)| {
+        let draw_mic = |canvas: &Canvas,
+                        mx: f32,
+                        my: f32,
+                        gain_norm: f32,
+                        r_base: f32,
+                        color_rgb: (f32, f32, f32)| {
             let halo_r = r_base * (0.6 + 0.9 * gain_norm);
             let mut halo = vg::Path::new();
             halo.circle(mx, my, halo_r);
@@ -126,20 +132,46 @@ impl View for MicStageWidget {
             // Center capsule icon
             let mut capsule = vg::Path::new();
             capsule.circle(mx, my, 3.5);
-            let cap_paint = vg::Paint::color(vg::Color::rgbaf(color_rgb.0, color_rgb.1, color_rgb.2, 0.95));
+            let cap_paint = vg::Paint::color(vg::Color::rgbaf(
+                color_rgb.0,
+                color_rgb.1,
+                color_rgb.2,
+                0.95,
+            ));
             canvas.fill_path(&capsule, &cap_paint);
             let cap_border = vg::Paint::color(vg::Color::rgb(255, 255, 255)).with_line_width(1.0);
             canvas.stroke_path(&capsule, &cap_border);
         };
 
         // Draw Close Mics (Gold/Cyan)
-        draw_mic(canvas, close_l_x, close_l_y, g_close, 14.0, (0.2, 0.85, 1.0));
-        draw_mic(canvas, close_r_x, close_r_y, g_close, 14.0, (0.2, 0.85, 1.0));
+        draw_mic(
+            canvas,
+            close_l_x,
+            close_l_y,
+            g_close,
+            14.0,
+            (0.2, 0.85, 1.0),
+        );
+        draw_mic(
+            canvas,
+            close_r_x,
+            close_r_y,
+            g_close,
+            14.0,
+            (0.2, 0.85, 1.0),
+        );
 
         // B. Player Seated Binaural Mics (in front of keyboard)
         let player_x = px + pw * 0.50;
         let player_y = py + ph + bounds.h * 0.08;
-        draw_mic(canvas, player_x, player_y, g_player, 16.0, (0.95, 0.75, 0.25));
+        draw_mic(
+            canvas,
+            player_x,
+            player_y,
+            g_player,
+            16.0,
+            (0.95, 0.75, 0.25),
+        );
 
         // C. Ambient Decca Tree Mics (in the room on the right side)
         let room_center_x = bounds.x + bounds.w * 0.76;
@@ -156,12 +188,34 @@ impl View for MicStageWidget {
         tree_lines.move_to(amb_tree_l_x, amb_tree_l_y);
         tree_lines.line_to(amb_tree_c_x, amb_tree_c_y);
         tree_lines.line_to(amb_tree_r_x, amb_tree_r_y);
-        let tree_stroke = vg::Paint::color(vg::Color::rgbaf(0.7, 0.4, 0.95, 0.35)).with_line_width(1.0);
+        let tree_stroke =
+            vg::Paint::color(vg::Color::rgbaf(0.7, 0.4, 0.95, 0.35)).with_line_width(1.0);
         canvas.stroke_path(&tree_lines, &tree_stroke);
 
-        draw_mic(canvas, amb_tree_l_x, amb_tree_l_y, g_amb, 18.0, (0.75, 0.45, 1.0));
-        draw_mic(canvas, amb_tree_r_x, amb_tree_r_y, g_amb, 18.0, (0.75, 0.45, 1.0));
-        draw_mic(canvas, amb_tree_c_x, amb_tree_c_y, g_amb, 18.0, (0.75, 0.45, 1.0));
+        draw_mic(
+            canvas,
+            amb_tree_l_x,
+            amb_tree_l_y,
+            g_amb,
+            18.0,
+            (0.75, 0.45, 1.0),
+        );
+        draw_mic(
+            canvas,
+            amb_tree_r_x,
+            amb_tree_r_y,
+            g_amb,
+            18.0,
+            (0.75, 0.45, 1.0),
+        );
+        draw_mic(
+            canvas,
+            amb_tree_c_x,
+            amb_tree_c_y,
+            g_amb,
+            18.0,
+            (0.75, 0.45, 1.0),
+        );
 
         // 4. Labels and Gain Readouts
         let title_str = match self.language {
@@ -180,10 +234,21 @@ impl View for MicStageWidget {
         legend_paint.set_text_align(vg::Align::Right);
 
         let info_str = match self.language {
-            Language::English => format!("Close: {:.1}dB | Player: {:.1}dB | Hall: {:.1}dB", close_db, player_db, amb_db),
-            Language::SimplifiedChinese => format!("近场: {:.1}dB | 演奏者: {:.1}dB | 空间厅堂: {:.1}dB", close_db, player_db, amb_db),
+            Language::English => format!(
+                "Close: {:.1}dB | Player: {:.1}dB | Hall: {:.1}dB",
+                close_db, player_db, amb_db
+            ),
+            Language::SimplifiedChinese => format!(
+                "近场: {:.1}dB | 演奏者: {:.1}dB | 空间厅堂: {:.1}dB",
+                close_db, player_db, amb_db
+            ),
         };
-        let _ = canvas.fill_text(bounds.x + bounds.w - 8.0, bounds.y + 14.0, &info_str, &legend_paint);
+        let _ = canvas.fill_text(
+            bounds.x + bounds.w - 8.0,
+            bounds.y + 14.0,
+            &info_str,
+            &legend_paint,
+        );
 
         // Perspective Annotations
         legend_paint.set_text_align(vg::Align::Center);

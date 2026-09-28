@@ -1,8 +1,8 @@
-pub mod upols;
 pub mod lid;
+pub mod upols;
 
-pub use upols::{
-    UPOLSConvolver, MultiPerspectiveUPOLS, StereoIR,
-    generate_orthotropic_soundboard_ir, generate_multi_perspective_soundboard_irs,
-};
 pub use lid::{LidBaffle, LidPosition};
+pub use upols::{
+    generate_multi_perspective_soundboard_irs, generate_orthotropic_soundboard_ir,
+    MultiPerspectiveUPOLS, StereoIR, UPOLSConvolver,
+};

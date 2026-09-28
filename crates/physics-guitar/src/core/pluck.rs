@@ -26,7 +26,7 @@ impl PluckExciter {
     pub fn new(style: PluckStyle) -> Self {
         let (half_width, release_time, angle_rad) = match style {
             PluckStyle::FingerFlesh => (0.0050, 0.0025, PI / 4.0), // 5.0 mm flesh width, 2.5ms release, 45 degrees
-            PluckStyle::Plectrum => (0.0015, 0.0006, PI / 6.0),    // 1.5 mm celluloid/tortex pick contact, 0.6ms release, 30 degrees
+            PluckStyle::Plectrum => (0.0015, 0.0006, PI / 6.0), // 1.5 mm celluloid/tortex pick contact, 0.6ms release, 30 degrees
         };
         Self {
             style,
@@ -97,7 +97,8 @@ impl PluckExciter {
             q_p.push(q_filtered * sin_theta);
 
             // 5. Initial tactile snap impulse on release
-            let v_snap = (2.0 / length).sqrt() * snap_velocity * sin_term * release_filter * cos_theta;
+            let v_snap =
+                (2.0 / length).sqrt() * snap_velocity * sin_term * release_filter * cos_theta;
             v_t.push(v_snap);
         }
 

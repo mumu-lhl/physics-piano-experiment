@@ -6,6 +6,7 @@ pub mod keyboard;
 pub mod lid;
 pub mod mics;
 pub mod scope;
+mod skia_compat;
 
 pub use editor::{create_vizia_piano_editor, default_vizia_state};
 pub use i18n::{I18n, Language};

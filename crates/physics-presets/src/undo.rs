@@ -53,7 +53,9 @@ impl UndoManager {
     /// Mark the start of a user interaction gesture (mouse press / drag begin).
     /// Saves the initial value for the parameter.
     pub fn begin_gesture(&mut self, param_id: &str, current_val: f32) {
-        self.active_gestures.entry(param_id.to_string()).or_insert(current_val);
+        self.active_gestures
+            .entry(param_id.to_string())
+            .or_insert(current_val);
     }
 
     /// Mark the completion of a user interaction gesture (mouse release / drag end).

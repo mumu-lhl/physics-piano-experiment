@@ -1,8 +1,8 @@
 //! Piano Voice with Unison String Triplet, Micro-Detuning, and Damper Control in Rust.
 
-use crate::params::KeyParams;
-use crate::core::string::StiffStringModal;
 use crate::core::hammer::HuntCrossleyHammer;
+use crate::core::string::StiffStringModal;
+use crate::params::KeyParams;
 
 pub struct PianoVoice {
     pub key_params: KeyParams,
@@ -146,7 +146,11 @@ impl PianoVoice {
             s.current_damper_depth = 0.0;
         }
 
-        let u_avg: f64 = self.strings.iter().map(|s| s.get_strike_displacement_and_velocity().0).sum::<f64>()
+        let u_avg: f64 = self
+            .strings
+            .iter()
+            .map(|s| s.get_strike_displacement_and_velocity().0)
+            .sum::<f64>()
             / self.strings.len() as f64;
         self.hammer.strike(velocity, u_avg);
     }
@@ -241,7 +245,11 @@ impl PianoVoice {
         let mut total_bridge_l = 0.0;
 
         for (i, s) in self.strings.iter_mut().enumerate() {
-            let f_h_i = if i < num_struck { f_hammer_per_struck } else { 0.0 };
+            let f_h_i = if i < num_struck {
+                f_hammer_per_struck
+            } else {
+                0.0
+            };
             let (fb_t, fb_p, fb_l) = s.step(f_h_i, coupling_per_string_t, coupling_per_string_p);
             total_bridge_t += fb_t;
             total_bridge_p += fb_p;

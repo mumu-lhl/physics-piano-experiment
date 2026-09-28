@@ -29,7 +29,7 @@ impl Default for FretboardRouter {
     fn default() -> Self {
         Self {
             open_notes: [64, 59, 55, 50, 45, 40], // String 1 (E4) -> String 6 (E2)
-            hand_position: 2, // Default 1st/2nd position
+            hand_position: 2,                     // Default 1st/2nd position
             weight_pos: 1.0,
             weight_span: 3.5,
             weight_open: 2.0,
@@ -99,7 +99,11 @@ impl FretboardRouter {
                     // If playing high up the neck (hand_pos >= 7), suppress accidental open strings;
                     // If in low positions (hand_pos <= 3), open strings have neutral/rewarded cost.
                     let p_open = if fret == 0 {
-                        if self.hand_position >= 7 { 45.0 } else { -5.0 }
+                        if self.hand_position >= 7 {
+                            45.0
+                        } else {
+                            -5.0
+                        }
                     } else {
                         0.0
                     };
@@ -125,7 +129,8 @@ impl FretboardRouter {
             // Dynamically update hand position if non-open fret was chosen
             if chosen_fret > 0 {
                 // Smooth hand inertia update (moves towards new active fret cluster)
-                let new_pos = (self.hand_position as f64 * 0.7 + chosen_fret as f64 * 0.3).round() as u8;
+                let new_pos =
+                    (self.hand_position as f64 * 0.7 + chosen_fret as f64 * 0.3).round() as u8;
                 self.hand_position = new_pos.clamp(0, 24);
             }
 

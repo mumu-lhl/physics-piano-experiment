@@ -4,7 +4,7 @@ use physics_piano::core::action::{Biquad, KeyActionNoise};
 use physics_piano::core::pedal::{DamperWhoosh, PlateShock, RestrikeBuzz};
 use physics_piano::dsp::lid::{LidBaffle, LidPosition};
 use physics_piano::dsp::upols::{MultiPerspectiveUPOLS, StereoIR};
-use physics_piano::engine::{PianoEngine, EngineEvent};
+use physics_piano::engine::{EngineEvent, PianoEngine};
 
 #[test]
 fn test_tier6_biquad_stability_and_modes() {
@@ -39,7 +39,10 @@ fn test_tier6_key_action_noise() {
         assert!(!l.is_nan() && !r.is_nan());
         peak = peak.max(l.abs()).max(r.abs());
     }
-    assert!(peak > 0.001, "Key strike thump and escapement must produce mechanical output");
+    assert!(
+        peak > 0.001,
+        "Key strike thump and escapement must produce mechanical output"
+    );
 
     // Release key: triggers key-up clack
     action.trigger_note_off(60, 0.6);
@@ -48,7 +51,10 @@ fn test_tier6_key_action_noise() {
         let (l, r) = action.step();
         clack_peak = clack_peak.max(l.abs()).max(r.abs());
     }
-    assert!(clack_peak > 0.0001, "Key release must produce back-rail felt clack");
+    assert!(
+        clack_peak > 0.0001,
+        "Key release must produce back-rail felt clack"
+    );
 }
 
 #[test]
@@ -114,9 +120,18 @@ fn test_tier7_lid_baffle_spectral_diffraction() {
 fn test_tier7_multi_perspective_upols_correctness() {
     let block_size = 128;
     // FIR kernels: Close = [1.0], Player = [0.5], Ambient = [0.25]
-    let close = StereoIR { left: vec![1.0; 1], right: vec![1.0; 1] };
-    let player = StereoIR { left: vec![0.5; 1], right: vec![0.5; 1] };
-    let ambient = StereoIR { left: vec![0.25; 1], right: vec![0.25; 1] };
+    let close = StereoIR {
+        left: vec![1.0; 1],
+        right: vec![1.0; 1],
+    };
+    let player = StereoIR {
+        left: vec![0.5; 1],
+        right: vec![0.5; 1],
+    };
+    let ambient = StereoIR {
+        left: vec![0.25; 1],
+        right: vec![0.25; 1],
+    };
 
     let mut upols = MultiPerspectiveUPOLS::new(&close, &player, &ambient, block_size);
     upols.close_gain = 1.0;
@@ -131,8 +146,16 @@ fn test_tier7_multi_perspective_upols_correctness() {
     upols.process_block(&in_block, &mut out_l, &mut out_r);
 
     // Expected mix: 1.0*1.0 + 0.5*1.0 + 0.25*1.0 = 1.75
-    assert!((out_l[0] - 1.75).abs() < 1e-4, "Expected mixed output ~1.75, got {}", out_l[0]);
-    assert!((out_r[0] - 1.75).abs() < 1e-4, "Expected mixed output ~1.75, got {}", out_r[0]);
+    assert!(
+        (out_l[0] - 1.75).abs() < 1e-4,
+        "Expected mixed output ~1.75, got {}",
+        out_l[0]
+    );
+    assert!(
+        (out_r[0] - 1.75).abs() < 1e-4,
+        "Expected mixed output ~1.75, got {}",
+        out_r[0]
+    );
 
     // Test fader isolation: mute player & ambient
     upols.reset();
@@ -155,8 +178,15 @@ fn test_tier6_and_tier7_engine_integration() {
 
     // NoteOn with velocity 0.85
     let events = vec![
-        EngineEvent::NoteOn { time: 0, key: 60, velocity: 0.85 },
-        EngineEvent::SustainPedal { time: 10, depth: 0.9 },
+        EngineEvent::NoteOn {
+            time: 0,
+            key: 60,
+            velocity: 0.85,
+        },
+        EngineEvent::SustainPedal {
+            time: 10,
+            depth: 0.9,
+        },
     ];
 
     let mut peak = 0.0f64;
@@ -170,14 +200,26 @@ fn test_tier6_and_tier7_engine_integration() {
         }
     }
     println!("PEAK AMPLITUDE WITH MULTI_UPOLS: {}", peak);
-    assert!(peak > 0.005, "Integrated engine must radiate audio with multi_upols & action noise, got peak {peak}");
+    assert!(
+        peak > 0.005,
+        "Integrated engine must radiate audio with multi_upols & action noise, got peak {peak}"
+    );
 
     // Fast pedal release to test frame shock
     let events2 = vec![
-        EngineEvent::SustainPedal { time: 0, depth: 0.0 },
+        EngineEvent::SustainPedal {
+            time: 0,
+            depth: 0.0,
+        },
         EngineEvent::NoteOff { time: 20, key: 60 },
     ];
-    engine.process_block(block_size, &events2, &mut out_events, &mut out_l, &mut out_r);
+    engine.process_block(
+        block_size,
+        &events2,
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
     for s in 0..block_size {
         assert!(!out_l[s].is_nan() && !out_r[s].is_nan());
     }
@@ -197,7 +239,10 @@ fn test_stereo_spatial_soundstage_bass_vs_treble() {
     let bass_energy_r: f64 = bass_r.iter().map(|x| x * x).sum();
 
     println!("Bass A0 energy L: {bass_energy_l:.6}, R: {bass_energy_r:.6}");
-    assert!(bass_energy_l > bass_energy_r * 1.5, "Bass notes must have significantly more Left channel energy than Right");
+    assert!(
+        bass_energy_l > bass_energy_r * 1.5,
+        "Bass notes must have significantly more Left channel energy than Right"
+    );
 
     // 2. Treble note C8 (key 108) - should be panned towards Right
     let mut engine_treble = PianoEngine::new(48000.0, 30, false);
@@ -211,7 +256,10 @@ fn test_stereo_spatial_soundstage_bass_vs_treble() {
     let treble_energy_r: f64 = treble_r.iter().map(|x| x * x).sum();
 
     println!("Treble C8 energy L: {treble_energy_l:.6}, R: {treble_energy_r:.6}");
-    assert!(treble_energy_r > treble_energy_l * 1.5, "Treble notes must have significantly more Right channel energy than Left");
+    assert!(
+        treble_energy_r > treble_energy_l * 1.5,
+        "Treble notes must have significantly more Right channel energy than Left"
+    );
 }
 
 #[test]
@@ -231,7 +279,10 @@ fn test_voicing_parameters_effect() {
     for (s, h) in soft_l.iter().zip(hard_l.iter()) {
         diff_hammer += (s - h).abs();
     }
-    assert!(diff_hammer > 0.05, "Hammer hardness change must noticeably alter acoustic response, got diff {diff_hammer}");
+    assert!(
+        diff_hammer > 0.05,
+        "Hammer hardness change must noticeably alter acoustic response, got diff {diff_hammer}"
+    );
 
     // Test Inharmonicity Scale: 0.2 vs 2.5 must produce noticeably shifted partials
     let mut engine_inharm1 = PianoEngine::new(48000.0, 30, false);
@@ -248,7 +299,10 @@ fn test_voicing_parameters_effect() {
     for (a, b) in inh1_l.iter().zip(inh2_l.iter()) {
         diff_inharm += (a - b).abs();
     }
-    assert!(diff_inharm > 0.05, "Inharmonicity scale change must noticeably alter modal dispersion, got diff {diff_inharm}");
+    assert!(
+        diff_inharm > 0.05,
+        "Inharmonicity scale change must noticeably alter modal dispersion, got diff {diff_inharm}"
+    );
 
     // Test Unison Detuning: 0.0 (pure) vs 3.0 (wide detune)
     let mut engine_detune0 = PianoEngine::new(48000.0, 30, false);
@@ -265,7 +319,10 @@ fn test_voicing_parameters_effect() {
     for (a, b) in det0_l.iter().zip(det3_l.iter()) {
         diff_detune += (a - b).abs();
     }
-    assert!(diff_detune > 0.05, "Unison detuning change must noticeably alter beating pattern, got diff {diff_detune}");
+    assert!(
+        diff_detune > 0.05,
+        "Unison detuning change must noticeably alter beating pattern, got diff {diff_detune}"
+    );
 }
 
 #[test]
@@ -276,12 +333,18 @@ fn test_tier10_adaptive_modal_culling_and_high_polyphony() {
     let bass_v = engine.get_or_create_voice(21); // A0 (27.5 Hz)
     let bass_modes = bass_v.strings[0].num_modes;
     println!("Bass A0 modal count: {}", bass_modes);
-    assert_eq!(bass_modes, 35, "Bass notes must retain full modal resolution");
+    assert_eq!(
+        bass_modes, 35,
+        "Bass notes must retain full modal resolution"
+    );
 
     let treble_c7 = engine.get_or_create_voice(96); // C7 (2093 Hz)
     let c7_modes = treble_c7.strings[0].num_modes;
     println!("Treble C7 modal count: {}", c7_modes);
-    assert!(c7_modes <= 12, "C7 modes must be culled by Nyquist hearing limit");
+    assert!(
+        c7_modes <= 12,
+        "C7 modes must be culled by Nyquist hearing limit"
+    );
 
     let treble_c8 = engine.get_or_create_voice(108); // C8 (4186 Hz)
     let c8_modes = treble_c8.strings[0].num_modes;
@@ -292,7 +355,11 @@ fn test_tier10_adaptive_modal_culling_and_high_polyphony() {
     for note in 40..72 {
         engine.note_on(note, 0.7);
     }
-    assert_eq!(engine.active_keys.len(), 32, "Engine must support 32 concurrent voices under Tier 10 architecture");
+    assert_eq!(
+        engine.active_keys.len(),
+        32,
+        "Engine must support 32 concurrent voices under Tier 10 architecture"
+    );
 
     let block_size = 256;
     let mut out_l = vec![0.0; block_size];
@@ -308,5 +375,3 @@ fn test_tier10_adaptive_modal_culling_and_high_polyphony() {
         }
     }
 }
-
-

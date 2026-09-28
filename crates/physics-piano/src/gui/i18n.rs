@@ -189,11 +189,7 @@ impl I18n {
 }
 
 /// Discovers available system CJK fonts and installs fallback font definitions into Vizia context.
-pub fn setup_vizia_fonts(cx: &mut nih_plug_vizia::vizia::prelude::Context) {
-    nih_plug_vizia::assets::register_noto_sans_regular(cx);
-    nih_plug_vizia::assets::register_noto_sans_bold(cx);
-    nih_plug_vizia::assets::register_noto_sans_light(cx);
-
+pub fn setup_vizia_fonts(cx: &mut vizia_plug::vizia::prelude::Context) {
     // Priority list of common Chinese fonts on Linux, Windows, macOS
     let candidate_paths = [
         // Linux system fonts

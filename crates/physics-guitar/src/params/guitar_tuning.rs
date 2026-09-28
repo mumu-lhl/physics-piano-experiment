@@ -62,7 +62,10 @@ impl GuitarStringParams {
 }
 
 /// Generates the standard 6-string physical parameters based on set type.
-pub fn generate_guitar_string_set(set_type: GuitarStringSetType, num_modes: usize) -> Vec<GuitarStringParams> {
+pub fn generate_guitar_string_set(
+    set_type: GuitarStringSetType,
+    num_modes: usize,
+) -> Vec<GuitarStringParams> {
     let scale_length = 0.648; // 25.5 inches standard
 
     match set_type {

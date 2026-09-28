@@ -44,7 +44,8 @@ fn test_factory_presets_loading() {
 
 #[test]
 fn test_preset_manager_save_and_delete() {
-    let temp_dir = std::env::temp_dir().join(format!("physics_presets_test_{}", std::process::id()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("physics_presets_test_{}", std::process::id()));
     let factory = piano_factory_presets();
     let mut mgr = PresetManager::with_custom_dir("piano", factory, temp_dir.clone());
 
@@ -54,7 +55,8 @@ fn test_preset_manager_save_and_delete() {
     let mut custom_params = HashMap::new();
     custom_params.insert("inharm".to_string(), 1.8);
     let custom = Preset::new("my_custom_piano", "My Custom Piano", "piano", custom_params);
-    mgr.save_user_preset(custom.clone()).expect("Failed to save");
+    mgr.save_user_preset(custom.clone())
+        .expect("Failed to save");
 
     assert_eq!(mgr.presets().len(), 7);
     let loaded = mgr.get_preset("my_custom_piano").expect("Preset not found");
@@ -67,7 +69,9 @@ fn test_preset_manager_save_and_delete() {
     assert_eq!(mgr.presets().len(), 7);
 
     // Delete user preset
-    let deleted = mgr.delete_user_preset("my_custom_piano").expect("Failed to delete");
+    let deleted = mgr
+        .delete_user_preset("my_custom_piano")
+        .expect("Failed to delete");
     assert!(deleted);
     assert_eq!(mgr.presets().len(), 6);
     assert!(mgr.get_preset("my_custom_piano").is_none());
@@ -144,7 +148,8 @@ fn test_undo_manager_batch_param_preset() {
 
 #[test]
 fn test_preset_manager_rename_and_overwrite() {
-    let temp_dir = std::env::temp_dir().join(format!("physics_presets_test_edit_{}", std::process::id()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("physics_presets_test_edit_{}", std::process::id()));
     let factory = piano_factory_presets();
     let mut mgr = PresetManager::with_custom_dir("piano", factory, temp_dir);
 
@@ -160,14 +165,20 @@ fn test_preset_manager_rename_and_overwrite() {
     // Overwrite parameters
     let mut new_params = HashMap::new();
     new_params.insert("inharm".to_string(), 2.5);
-    assert!(mgr.overwrite_user_preset("user_1", new_params).expect("Failed to overwrite"));
-    assert_eq!(mgr.get_preset("user_1").unwrap().params.get("inharm"), Some(&2.5));
+    assert!(mgr
+        .overwrite_user_preset("user_1", new_params)
+        .expect("Failed to overwrite"));
+    assert_eq!(
+        mgr.get_preset("user_1").unwrap().params.get("inharm"),
+        Some(&2.5)
+    );
 
     // Rename
-    assert!(mgr.rename_user_preset("user_1", "Renamed Piano").expect("Failed to rename"));
+    assert!(mgr
+        .rename_user_preset("user_1", "Renamed Piano")
+        .expect("Failed to rename"));
     assert_eq!(mgr.get_preset("user_1").unwrap().name, "Renamed Piano");
 
     // Clean up
     let _ = mgr.delete_user_preset("user_1");
 }
-

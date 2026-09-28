@@ -1,10 +1,10 @@
 //! Native CLAP Plugin & Standalone Synthesizer built with nih-plug and vizia for Physics Guitar.
 
-use nih_plug::prelude::*;
-use nih_plug_vizia::ViziaState;
+use nice_plug::prelude::*;
 use physics_presets::{guitar_factory_presets, PresetManager, UndoManager};
 use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
+use vizia_plug::ViziaState;
 
 use crate::core::groove::GroovePattern;
 use crate::core::pickup::{PickupSelector, PickupType};
@@ -98,19 +98,18 @@ impl Default for PhysicsGuitarParams {
             .with_value_to_string(formatters::v2s_f32_percentage(0))
             .with_string_to_value(formatters::s2v_f32_percentage()),
 
-            palm_mute: FloatParam::new(
-                "Palm Mute",
-                0.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
-            )
-            .with_unit(" %")
-            .with_value_to_string(formatters::v2s_f32_percentage(0))
-            .with_string_to_value(formatters::s2v_f32_percentage()),
+            palm_mute: FloatParam::new("Palm Mute", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_unit(" %")
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
 
             pluck_pos: FloatParam::new(
                 "Pluck Position",
                 0.15,
-                FloatRange::Linear { min: 0.05, max: 0.35 },
+                FloatRange::Linear {
+                    min: 0.05,
+                    max: 0.35,
+                },
             )
             .with_unit(" L")
             .with_value_to_string(formatters::v2s_f32_rounded(2)),
@@ -129,7 +128,10 @@ impl Default for PhysicsGuitarParams {
             strum_speed: FloatParam::new(
                 "Strum Speed",
                 18.0,
-                FloatRange::Linear { min: 0.0, max: 50.0 },
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 50.0,
+                },
             )
             .with_unit(" ms")
             .with_value_to_string(formatters::v2s_f32_rounded(1)),
@@ -157,7 +159,10 @@ impl Default for PhysicsGuitarParams {
             groove_bpm: FloatParam::new(
                 "Groove BPM",
                 120.0,
-                FloatRange::Linear { min: 40.0, max: 240.0 },
+                FloatRange::Linear {
+                    min: 40.0,
+                    max: 240.0,
+                },
             )
             .with_unit(" BPM")
             .with_value_to_string(formatters::v2s_f32_rounded(0)),
@@ -210,7 +215,11 @@ impl Default for PhysicsGuitar {
         );
 
         let default_lang = Language::from_system_locale();
-        let lang_code = if default_lang == Language::SimplifiedChinese { 1 } else { 0 };
+        let lang_code = if default_lang == Language::SimplifiedChinese {
+            1
+        } else {
+            0
+        };
 
         let active_frets_shared = Arc::new([
             AtomicU8::new(255),
@@ -282,15 +291,17 @@ impl Plugin for PhysicsGuitar {
         self.sample_rate = buffer_config.sample_rate;
         let mode_val = self.params.mode.value();
         let (initial_set, initial_mode) = if mode_val == 1 {
-            (GuitarStringSetType::Acoustic012, GuitarInstrumentMode::Acoustic)
+            (
+                GuitarStringSetType::Acoustic012,
+                GuitarInstrumentMode::Acoustic,
+            )
         } else {
-            (GuitarStringSetType::Electric010, GuitarInstrumentMode::Electric)
+            (
+                GuitarStringSetType::Electric010,
+                GuitarInstrumentMode::Electric,
+            )
         };
-        self.engine = GuitarEngine::new(
-            self.sample_rate as f64,
-            initial_set,
-            initial_mode,
-        );
+        self.engine = GuitarEngine::new(self.sample_rate as f64, initial_set, initial_mode);
         true
     }
 
@@ -309,7 +320,11 @@ impl Plugin for PhysicsGuitar {
                         let open_note = self.engine.router.open_notes[s_i];
                         let midi_note = open_note + fret;
                         self.engine.strings[s_i].set_fret(fret);
-                        self.engine.strings[s_i].pluck(&self.engine.exciter, self.engine.pluck_pos_ratio, 0.85);
+                        self.engine.strings[s_i].pluck(
+                            &self.engine.exciter,
+                            self.engine.pluck_pos_ratio,
+                            0.85,
+                        );
                         self.engine.active_notes_on_string[s_i] = Some(midi_note);
                     }
                 }
@@ -354,15 +369,23 @@ impl Plugin for PhysicsGuitar {
         });
 
         self.engine.set_tone(self.params.tone.value() as f64);
-        self.engine.set_palm_mute(self.params.palm_mute.value() as f64);
-        self.engine.set_fret_buzz(self.params.fret_buzz.value() as f64);
-        self.engine.strummer.set_strum_speed_ms(self.params.strum_speed.value() as f64);
+        self.engine
+            .set_palm_mute(self.params.palm_mute.value() as f64);
+        self.engine
+            .set_fret_buzz(self.params.fret_buzz.value() as f64);
+        self.engine
+            .strummer
+            .set_strum_speed_ms(self.params.strum_speed.value() as f64);
         self.engine.squeak.squeak_level = self.params.finger_squeak.value() as f64;
-        self.engine.groove.set_pattern(GroovePattern::from_index(self.params.groove_pattern.value()));
+        self.engine.groove.set_pattern(GroovePattern::from_index(
+            self.params.groove_pattern.value(),
+        ));
         if let Some(tempo) = context.transport().tempo {
             self.engine.groove.set_bpm(tempo);
         } else {
-            self.engine.groove.set_bpm(self.params.groove_bpm.value() as f64);
+            self.engine
+                .groove
+                .set_bpm(self.params.groove_bpm.value() as f64);
         }
         self.engine.amp_cab.drive = self.params.amp_drive.value() as f64;
         self.engine.amp_cab.cab_enabled = self.params.cab_enabled.value();
@@ -377,7 +400,12 @@ impl Plugin for PhysicsGuitar {
                     break;
                 }
                 match event {
-                    NoteEvent::NoteOn { channel, note, velocity, .. } => {
+                    NoteEvent::NoteOn {
+                        channel,
+                        note,
+                        velocity,
+                        ..
+                    } => {
                         self.engine.note_on(channel, note, velocity as f64);
                     }
                     NoteEvent::NoteOff { channel, note, .. } => {
@@ -407,7 +435,11 @@ impl Plugin for PhysicsGuitar {
         // 4. Update atomic shared states for GUI visualization
         for i in 0..6 {
             let string = &self.engine.strings[i];
-            let fret_val = if string.is_held { string.current_fret } else { 255 };
+            let fret_val = if string.is_held {
+                string.current_fret
+            } else {
+                255
+            };
             self.active_frets_shared[i].store(fret_val, Ordering::Relaxed);
 
             let energy = (string.total_energy() * 1000.0).clamp(0.0, 1.0) as f32;
@@ -433,9 +465,12 @@ impl Plugin for PhysicsGuitar {
 
 impl ClapPlugin for PhysicsGuitar {
     const CLAP_ID: &'static str = "org.mumulhl.physics-guitar";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("Physical modeling acoustic & electric guitar synthesizer");
-    const CLAP_MANUAL_URL: Option<&'static str> = Some("https://github.com/mumu-lhl/physics-piano-experiment");
-    const CLAP_SUPPORT_URL: Option<&'static str> = Some("https://github.com/mumu-lhl/physics-piano-experiment");
+    const CLAP_DESCRIPTION: Option<&'static str> =
+        Some("Physical modeling acoustic & electric guitar synthesizer");
+    const CLAP_MANUAL_URL: Option<&'static str> =
+        Some("https://github.com/mumu-lhl/physics-piano-experiment");
+    const CLAP_SUPPORT_URL: Option<&'static str> =
+        Some("https://github.com/mumu-lhl/physics-piano-experiment");
     const CLAP_FEATURES: &'static [ClapFeature] = &[
         ClapFeature::Instrument,
         ClapFeature::Synthesizer,
@@ -445,11 +480,9 @@ impl ClapPlugin for PhysicsGuitar {
 
 impl Vst3Plugin for PhysicsGuitar {
     const VST3_CLASS_ID: [u8; 16] = *b"PhysicsGuitarSyn";
-    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
-        Vst3SubCategory::Instrument,
-        Vst3SubCategory::Synth,
-    ];
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
+        &[Vst3SubCategory::Instrument, Vst3SubCategory::Synth];
 }
 
-nih_export_clap!(PhysicsGuitar);
-nih_export_vst3!(PhysicsGuitar);
+nice_export_clap!(PhysicsGuitar);
+nice_export_vst3!(PhysicsGuitar);

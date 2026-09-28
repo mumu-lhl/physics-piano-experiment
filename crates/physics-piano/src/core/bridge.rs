@@ -39,7 +39,9 @@ pub struct BridgeSoundboard {
 impl BridgeSoundboard {
     pub fn new(sample_rate: f64) -> Self {
         let dt = 1.0 / sample_rate;
-        let body_freqs = [85.0, 140.0, 220.0, 310.0, 480.0, 720.0, 1150.0, 1900.0, 3200.0];
+        let body_freqs = [
+            85.0, 140.0, 220.0, 310.0, 480.0, 720.0, 1150.0, 1900.0, 3200.0,
+        ];
         let body_q = [12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 25.0, 28.0, 30.0];
         let body_gains = [1.2, 1.5, 1.4, 1.1, 0.9, 0.7, 0.5, 0.35, 0.2];
 
@@ -139,8 +141,12 @@ impl BridgeSoundboard {
         let amb_l = 0.50 * modes_l + 0.50 * modes_r;
         let amb_r = 0.50 * modes_l + 0.50 * modes_r;
 
-        let out_l = (self.close_gain * close_l + self.player_gain * player_l + self.ambient_gain * amb_l) * 0.6;
-        let out_r = (self.close_gain * close_r + self.player_gain * player_r + self.ambient_gain * amb_r) * 0.6;
+        let out_l =
+            (self.close_gain * close_l + self.player_gain * player_l + self.ambient_gain * amb_l)
+                * 0.6;
+        let out_r =
+            (self.close_gain * close_r + self.player_gain * player_r + self.ambient_gain * amb_r)
+                * 0.6;
 
         (out_l, out_r)
     }

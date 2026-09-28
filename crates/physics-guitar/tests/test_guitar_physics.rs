@@ -1,11 +1,11 @@
 //! Integration tests for physics-guitar first-principles modeling.
 
-use physics_guitar::params::{generate_guitar_string_set, GuitarStringSetType};
-use physics_guitar::core::pluck::{PluckExciter, PluckStyle};
-use physics_guitar::core::guitar_string::GuitarString;
 use physics_guitar::core::fretboard::FretboardRouter;
-use physics_guitar::core::pickup::{MagneticPickup, PickupType, PickupPosition};
+use physics_guitar::core::guitar_string::GuitarString;
+use physics_guitar::core::pickup::{MagneticPickup, PickupPosition, PickupType};
+use physics_guitar::core::pluck::{PluckExciter, PluckStyle};
 use physics_guitar::engine::{GuitarEngine, GuitarInstrumentMode};
+use physics_guitar::params::{generate_guitar_string_set, GuitarStringSetType};
 
 #[test]
 fn test_guitar_string_set_parameters() {
@@ -33,8 +33,10 @@ fn test_pluck_dynamics_and_window_filtering() {
     let exciter_plectrum = PluckExciter::new(PluckStyle::Plectrum);
     let exciter_finger = PluckExciter::new(PluckStyle::FingerFlesh);
 
-    let (q_t_plec, _, _) = exciter_plectrum.compute_initial_modal_displacements(0.648, 329.63, 0.15, 0.8, 30);
-    let (q_t_finger, _, _) = exciter_finger.compute_initial_modal_displacements(0.648, 329.63, 0.15, 0.8, 30);
+    let (q_t_plec, _, _) =
+        exciter_plectrum.compute_initial_modal_displacements(0.648, 329.63, 0.15, 0.8, 30);
+    let (q_t_finger, _, _) =
+        exciter_finger.compute_initial_modal_displacements(0.648, 329.63, 0.15, 0.8, 30);
 
     assert_eq!(q_t_plec.len(), 30);
     assert_eq!(q_t_finger.len(), 30);
@@ -42,7 +44,10 @@ fn test_pluck_dynamics_and_window_filtering() {
     // High frequency modes (e.g. mode 8 ~ 2.6 kHz) should have much higher relative energy with plectrum than soft finger
     let plec_ratio = (q_t_plec[7] / q_t_plec[0]).abs();
     let finger_ratio = (q_t_finger[7] / q_t_finger[0]).abs();
-    assert!(plec_ratio > finger_ratio, "Plectrum should generate brighter higher-order harmonics than finger");
+    assert!(
+        plec_ratio > finger_ratio,
+        "Plectrum should generate brighter higher-order harmonics than finger"
+    );
 }
 
 #[test]
@@ -52,21 +57,29 @@ fn test_fretboard_routing_and_mpe() {
 
     // Note 40 (E2) should map to String 6, fret 0
     let dummy_frets = [None; 6];
-    let loc_e2 = router.allocate_note(40, &strings_held, &dummy_frets).expect("Should allocate E2");
+    let loc_e2 = router
+        .allocate_note(40, &strings_held, &dummy_frets)
+        .expect("Should allocate E2");
     assert_eq!(loc_e2.string_index, 6);
     assert_eq!(loc_e2.fret, 0);
 
     // Note 60 (C4) can be played on String 2 (fret 1)
-    let loc_c4 = router.allocate_note(60, &strings_held, &dummy_frets).expect("Should allocate C4");
+    let loc_c4 = router
+        .allocate_note(60, &strings_held, &dummy_frets)
+        .expect("Should allocate C4");
     assert_eq!(loc_c4.string_index, 2);
     assert_eq!(loc_c4.fret, 1);
 
     // MPE Routing: Channel 2 is String 1, Channel 7 is String 6
-    let mpe_loc = router.allocate_mpe_note(2, 64).expect("MPE Channel 2 should allocate String 1");
+    let mpe_loc = router
+        .allocate_mpe_note(2, 64)
+        .expect("MPE Channel 2 should allocate String 1");
     assert_eq!(mpe_loc.string_index, 1);
     assert_eq!(mpe_loc.fret, 0);
 
-    let mpe_loc_s6 = router.allocate_mpe_note(7, 45).expect("MPE Channel 7 should allocate String 6");
+    let mpe_loc_s6 = router
+        .allocate_mpe_note(7, 45)
+        .expect("MPE Channel 7 should allocate String 6");
     assert_eq!(mpe_loc_s6.string_index, 6);
     assert_eq!(mpe_loc_s6.fret, 5); // E2 + 5 semitones = A2
 }
@@ -81,14 +94,22 @@ fn test_magnetic_pickup_single_vs_humbucker() {
     string.step();
     string.step();
 
-    let mut pu_single = MagneticPickup::new(PickupType::SingleCoil, PickupPosition::Bridge, 44100.0);
-    let mut pu_humbucker = MagneticPickup::new(PickupType::Humbucker, PickupPosition::Bridge, 44100.0);
+    let mut pu_single =
+        MagneticPickup::new(PickupType::SingleCoil, PickupPosition::Bridge, 44100.0);
+    let mut pu_humbucker =
+        MagneticPickup::new(PickupType::Humbucker, PickupPosition::Bridge, 44100.0);
 
     let sig_single = pu_single.sample_string(&string);
     let sig_hum = pu_humbucker.sample_string(&string);
 
-    assert!(sig_single.abs() > 0.0, "Single coil pickup signal must be non-zero");
-    assert!(sig_hum.abs() > 0.0, "Humbucker pickup signal must be non-zero");
+    assert!(
+        sig_single.abs() > 0.0,
+        "Single coil pickup signal must be non-zero"
+    );
+    assert!(
+        sig_hum.abs() > 0.0,
+        "Humbucker pickup signal must be non-zero"
+    );
 }
 
 #[test]
@@ -120,13 +141,24 @@ fn test_palm_mute_decay_acceleration() {
     let decay_ratio_open = s_open.total_energy() / initial_energy_open;
     let decay_ratio_mute = s_mute.total_energy() / initial_energy_mute;
 
-    assert!(decay_ratio_mute < decay_ratio_open, "Palm mute must accelerate string energy decay");
+    assert!(
+        decay_ratio_mute < decay_ratio_open,
+        "Palm mute must accelerate string energy decay"
+    );
 }
 
 #[test]
 fn test_guitar_engine_rendering_stability() {
-    let mut engine_elec = GuitarEngine::new(44100.0, GuitarStringSetType::Electric010, GuitarInstrumentMode::Electric);
-    let mut engine_acous = GuitarEngine::new(44100.0, GuitarStringSetType::Acoustic012, GuitarInstrumentMode::Acoustic);
+    let mut engine_elec = GuitarEngine::new(
+        44100.0,
+        GuitarStringSetType::Electric010,
+        GuitarInstrumentMode::Electric,
+    );
+    let mut engine_acous = GuitarEngine::new(
+        44100.0,
+        GuitarStringSetType::Acoustic012,
+        GuitarInstrumentMode::Acoustic,
+    );
 
     // Trigger open E2 note
     engine_elec.note_on(1, 40, 0.9);
@@ -138,12 +170,18 @@ fn test_guitar_engine_rendering_stability() {
     for _ in 0..10 {
         engine_elec.process_block(&mut left, &mut right);
         for &s in left.iter().chain(right.iter()) {
-            assert!(!s.is_nan() && !s.is_infinite(), "Electric engine output must be finite");
+            assert!(
+                !s.is_nan() && !s.is_infinite(),
+                "Electric engine output must be finite"
+            );
         }
 
         engine_acous.process_block(&mut left, &mut right);
         for &s in left.iter().chain(right.iter()) {
-            assert!(!s.is_nan() && !s.is_infinite(), "Acoustic engine output must be finite");
+            assert!(
+                !s.is_nan() && !s.is_infinite(),
+                "Acoustic engine output must be finite"
+            );
         }
     }
 }
@@ -212,7 +250,10 @@ fn test_christensen_3dof_acoustic_body() {
             ring_samples += 1;
         }
     }
-    assert!(ring_samples > 100, "Acoustic body must sustain resonant ring");
+    assert!(
+        ring_samples > 100,
+        "Acoustic body must sustain resonant ring"
+    );
 }
 
 #[test]
@@ -226,8 +267,12 @@ fn test_acoustic_two_stage_decay() {
     let mut energy_t_init = 0.0;
     let mut energy_p_init = 0.0;
     for m in 0..string.num_modes {
-        energy_t_init += 0.5 * (string.state_t[m].v.powi(2) + string.omega_t[m].powi(2) * string.state_t[m].q.powi(2));
-        energy_p_init += 0.5 * (string.state_p[m].v.powi(2) + string.omega_p[m].powi(2) * string.state_p[m].q.powi(2));
+        energy_t_init += 0.5
+            * (string.state_t[m].v.powi(2)
+                + string.omega_t[m].powi(2) * string.state_t[m].q.powi(2));
+        energy_p_init += 0.5
+            * (string.state_p[m].v.powi(2)
+                + string.omega_p[m].powi(2) * string.state_p[m].q.powi(2));
     }
 
     // Step 15000 samples (~340ms)
@@ -238,15 +283,22 @@ fn test_acoustic_two_stage_decay() {
     let mut energy_t_later = 0.0;
     let mut energy_p_later = 0.0;
     for m in 0..string.num_modes {
-        energy_t_later += 0.5 * (string.state_t[m].v.powi(2) + string.omega_t[m].powi(2) * string.state_t[m].q.powi(2));
-        energy_p_later += 0.5 * (string.state_p[m].v.powi(2) + string.omega_p[m].powi(2) * string.state_p[m].q.powi(2));
+        energy_t_later += 0.5
+            * (string.state_t[m].v.powi(2)
+                + string.omega_t[m].powi(2) * string.state_t[m].q.powi(2));
+        energy_p_later += 0.5
+            * (string.state_p[m].v.powi(2)
+                + string.omega_p[m].powi(2) * string.state_p[m].q.powi(2));
     }
 
     let ratio_t = energy_t_later / energy_t_init;
     let ratio_p = energy_p_later / energy_p_init;
 
     // Horizontal polarization P must decay significantly slower than vertical polarization T
-    assert!(ratio_p > ratio_t * 1.5, "Horizontal polarization must sustain longer than vertical (two-stage decay)");
+    assert!(
+        ratio_p > ratio_t * 1.5,
+        "Horizontal polarization must sustain longer than vertical (two-stage decay)"
+    );
 }
 
 #[test]
@@ -264,7 +316,10 @@ fn test_sympathetic_resonance_coupling() {
     }
 
     // Open string must build up energy via sympathetic resonance
-    assert!(s_open.total_energy() > 1e-12, "Sympathetic resonance must excite tuned open string");
+    assert!(
+        s_open.total_energy() > 1e-12,
+        "Sympathetic resonance must excite tuned open string"
+    );
 }
 
 #[test]
@@ -276,12 +331,19 @@ fn test_dynamic_tension_modulation() {
 
     string.step();
     // Dynamic tension delta_T must be positive on hard attack
-    assert!(string.current_delta_t > 0.0, "Hard pluck must induce dynamic geometric tension increase");
+    assert!(
+        string.current_delta_t > 0.0,
+        "Hard pluck must induce dynamic geometric tension increase"
+    );
 }
 
 #[test]
 fn test_acoustic_stereo_spatial_radiation() {
-    let mut engine = GuitarEngine::new(44100.0, GuitarStringSetType::Acoustic012, GuitarInstrumentMode::Acoustic);
+    let mut engine = GuitarEngine::new(
+        44100.0,
+        GuitarStringSetType::Acoustic012,
+        GuitarInstrumentMode::Acoustic,
+    );
     engine.note_on(1, 40, 0.9); // Low E2
 
     let mut left = [0.0f32; 1024];
@@ -293,13 +355,24 @@ fn test_acoustic_stereo_spatial_radiation() {
     let sum_r: f32 = right.iter().map(|s| s.abs()).sum();
     assert!(sum_l > 0.0 && sum_r > 0.0);
 
-    let diff_sq: f32 = left.iter().zip(right.iter()).map(|(l, r)| (l - r).powi(2)).sum();
-    assert!(diff_sq > 1e-6, "Acoustic body must produce natural spatial stereo image (not dead mono)");
+    let diff_sq: f32 = left
+        .iter()
+        .zip(right.iter())
+        .map(|(l, r)| (l - r).powi(2))
+        .sum();
+    assert!(
+        diff_sq > 1e-6,
+        "Acoustic body must produce natural spatial stereo image (not dead mono)"
+    );
 }
 
 #[test]
 fn test_single_channel_pitch_bend_and_pre_bend() {
-    let mut engine = GuitarEngine::new(44100.0, GuitarStringSetType::Acoustic012, GuitarInstrumentMode::Acoustic);
+    let mut engine = GuitarEngine::new(
+        44100.0,
+        GuitarStringSetType::Acoustic012,
+        GuitarInstrumentMode::Acoustic,
+    );
 
     // 1. Send pitch bend on standard MIDI channel 1 (Channel 1, +2.0 semitones) BEFORE playing
     engine.pitch_bend(1, 2.0);
@@ -315,5 +388,3 @@ fn test_single_channel_pitch_bend_and_pre_bend() {
     engine.pitch_bend(1, 4.0);
     assert!((engine.strings[5].pitch_bend_semitones - 4.0).abs() < 1e-4);
 }
-
-

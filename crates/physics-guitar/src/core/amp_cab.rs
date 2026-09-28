@@ -28,16 +28,37 @@ fn tube_saturate(x: f64, drive: f64) -> f64 {
 #[derive(Debug, Clone)]
 pub struct GuitarCabinet {
     // 2-pole highpass (75 Hz)
-    hp_x1: f64, hp_x2: f64, hp_y1: f64, hp_y2: f64,
-    hp_b0: f64, hp_b1: f64, hp_b2: f64, hp_a1: f64, hp_a2: f64,
+    hp_x1: f64,
+    hp_x2: f64,
+    hp_y1: f64,
+    hp_y2: f64,
+    hp_b0: f64,
+    hp_b1: f64,
+    hp_b2: f64,
+    hp_a1: f64,
+    hp_a2: f64,
 
     // 2-pole presence peak (2800 Hz, Q=2.2, +4dB)
-    pk_x1: f64, pk_x2: f64, pk_y1: f64, pk_y2: f64,
-    pk_b0: f64, pk_b1: f64, pk_b2: f64, pk_a1: f64, pk_a2: f64,
+    pk_x1: f64,
+    pk_x2: f64,
+    pk_y1: f64,
+    pk_y2: f64,
+    pk_b0: f64,
+    pk_b1: f64,
+    pk_b2: f64,
+    pk_a1: f64,
+    pk_a2: f64,
 
     // 2-pole lowpass fizz cut (4800 Hz, Q=0.85)
-    lp_x1: f64, lp_x2: f64, lp_y1: f64, lp_y2: f64,
-    lp_b0: f64, lp_b1: f64, lp_b2: f64, lp_a1: f64, lp_a2: f64,
+    lp_x1: f64,
+    lp_x2: f64,
+    lp_y1: f64,
+    lp_y2: f64,
+    lp_b0: f64,
+    lp_b1: f64,
+    lp_b2: f64,
+    lp_a1: f64,
+    lp_a2: f64,
 }
 
 impl GuitarCabinet {
@@ -80,14 +101,35 @@ impl GuitarCabinet {
         let lp_a2 = (1.0 - alpha_lp) / a0_lp;
 
         Self {
-            hp_x1: 0.0, hp_x2: 0.0, hp_y1: 0.0, hp_y2: 0.0,
-            hp_b0, hp_b1, hp_b2, hp_a1, hp_a2,
+            hp_x1: 0.0,
+            hp_x2: 0.0,
+            hp_y1: 0.0,
+            hp_y2: 0.0,
+            hp_b0,
+            hp_b1,
+            hp_b2,
+            hp_a1,
+            hp_a2,
 
-            pk_x1: 0.0, pk_x2: 0.0, pk_y1: 0.0, pk_y2: 0.0,
-            pk_b0, pk_b1, pk_b2, pk_a1, pk_a2,
+            pk_x1: 0.0,
+            pk_x2: 0.0,
+            pk_y1: 0.0,
+            pk_y2: 0.0,
+            pk_b0,
+            pk_b1,
+            pk_b2,
+            pk_a1,
+            pk_a2,
 
-            lp_x1: 0.0, lp_x2: 0.0, lp_y1: 0.0, lp_y2: 0.0,
-            lp_b0, lp_b1, lp_b2, lp_a1, lp_a2,
+            lp_x1: 0.0,
+            lp_x2: 0.0,
+            lp_y1: 0.0,
+            lp_y2: 0.0,
+            lp_b0,
+            lp_b1,
+            lp_b2,
+            lp_a1,
+            lp_a2,
         }
     }
 
@@ -95,7 +137,8 @@ impl GuitarCabinet {
     pub fn process(&mut self, input: f64) -> f64 {
         // Highpass
         let hp_out = self.hp_b0 * input + self.hp_b1 * self.hp_x1 + self.hp_b2 * self.hp_x2
-            - self.hp_a1 * self.hp_y1 - self.hp_a2 * self.hp_y2;
+            - self.hp_a1 * self.hp_y1
+            - self.hp_a2 * self.hp_y2;
         self.hp_x2 = self.hp_x1;
         self.hp_x1 = input;
         self.hp_y2 = self.hp_y1;
@@ -103,7 +146,8 @@ impl GuitarCabinet {
 
         // Presence peaking
         let pk_out = self.pk_b0 * hp_out + self.pk_b1 * self.pk_x1 + self.pk_b2 * self.pk_x2
-            - self.pk_a1 * self.pk_y1 - self.pk_a2 * self.pk_y2;
+            - self.pk_a1 * self.pk_y1
+            - self.pk_a2 * self.pk_y2;
         self.pk_x2 = self.pk_x1;
         self.pk_x1 = hp_out;
         self.pk_y2 = self.pk_y1;
@@ -111,7 +155,8 @@ impl GuitarCabinet {
 
         // Lowpass
         let lp_out = self.lp_b0 * pk_out + self.lp_b1 * self.lp_x1 + self.lp_b2 * self.lp_x2
-            - self.lp_a1 * self.lp_y1 - self.lp_a2 * self.lp_y2;
+            - self.lp_a1 * self.lp_y1
+            - self.lp_a2 * self.lp_y2;
         self.lp_x2 = self.lp_x1;
         self.lp_x1 = pk_out;
         self.lp_y2 = self.lp_y1;

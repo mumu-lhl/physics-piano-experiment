@@ -1,7 +1,7 @@
 //! Euler-Bernoulli Damped Stiff String Engine with Dual Polarization in Rust.
 
-use std::f64::consts::PI;
 use crate::params::StringPhysicalParams;
+use std::f64::consts::PI;
 
 #[repr(C, align(64))]
 #[derive(Debug, Clone)]
@@ -87,7 +87,8 @@ impl StiffStringModal {
         let area = PI * radius.powi(2);
         let mu = density * area;
         let omega_0 = (PI / length) * (tension / mu).sqrt();
-        let b_factor = (PI.powi(3) * youngs_modulus * radius.powi(4)) / (4.0 * tension * length.powi(2));
+        let b_factor =
+            (PI.powi(3) * youngs_modulus * radius.powi(4)) / (4.0 * tension * length.powi(2));
 
         // Truncate modes at 0.95 * Nyquist to prevent ultrasonic aliasing
         let max_omega = 0.95 * PI * sample_rate;
@@ -115,7 +116,11 @@ impl StiffStringModal {
         for &n in &n_modes {
             let sinc_val = {
                 let x = PI * (n * w_h) / (2.0 * length);
-                if x.abs() < 1e-9 { 1.0 } else { x.sin() / x }
+                if x.abs() < 1e-9 {
+                    1.0
+                } else {
+                    x.sin() / x
+                }
             };
             let phi = (n * PI * strike_x / length).sin() * sinc_val;
             phi_h.push(phi);
@@ -214,7 +219,9 @@ impl StiffStringModal {
         let freq_ratio = 2.0f64.powf(self.tuning_offset_cents / 1200.0);
         let eff_t0 = self.tension * freq_ratio.powi(2);
         let eff_omega_0 = (PI / self.length) * (eff_t0 / self.mu).sqrt();
-        let eff_b = ((PI.powi(3) * self.youngs_modulus * self.radius.powi(4)) / (4.0 * eff_t0 * self.length.powi(2))) * self.inharmonicity_scale;
+        let eff_b = ((PI.powi(3) * self.youngs_modulus * self.radius.powi(4))
+            / (4.0 * eff_t0 * self.length.powi(2)))
+            * self.inharmonicity_scale;
 
         self.phi_t.clear();
         self.gamma_t.clear();
@@ -244,7 +251,11 @@ impl StiffStringModal {
     }
 
     #[inline]
-    fn compute_discrete_transition(omega: f64, gamma: f64, dt: f64) -> ((f64, f64, f64, f64), (f64, f64)) {
+    fn compute_discrete_transition(
+        omega: f64,
+        gamma: f64,
+        dt: f64,
+    ) -> ((f64, f64, f64, f64), (f64, f64)) {
         let omega_d = (omega.powi(2) - gamma.powi(2)).max(1e-6).sqrt();
         let decay = (-gamma * dt).exp();
         let sin_wd = (omega_d * dt).sin();
@@ -271,7 +282,12 @@ impl StiffStringModal {
         }
         self.damper_depth = depth.clamp(0.0, 1.0);
         self.target_damper_depth = if active { self.damper_depth } else { 0.0 };
-        self.damper_decay_mult = 1.0 + (if active { 15.0 * self.damper_depth } else { 0.0 });
+        self.damper_decay_mult = 1.0
+            + (if active {
+                15.0 * self.damper_depth
+            } else {
+                0.0
+            });
     }
 
     #[inline]
@@ -311,8 +327,10 @@ impl StiffStringModal {
         let mut energy = 0.0;
         let factor = 0.5 * self.mu * self.length;
         for i in 0..self.num_modes {
-            energy += factor * (self.state_t[i].v.powi(2) + self.omega_t[i].powi(2) * self.state_t[i].q.powi(2));
-            energy += factor * (self.state_p[i].v.powi(2) + self.omega_p[i].powi(2) * self.state_p[i].q.powi(2));
+            energy += factor
+                * (self.state_t[i].v.powi(2) + self.omega_t[i].powi(2) * self.state_t[i].q.powi(2));
+            energy += factor
+                * (self.state_p[i].v.powi(2) + self.omega_p[i].powi(2) * self.state_p[i].q.powi(2));
         }
         energy
     }
@@ -346,7 +364,8 @@ impl StiffStringModal {
             } else {
                 self.damper_lift_rate
             };
-            self.current_damper_depth += (self.target_damper_depth - self.current_damper_depth) * alpha;
+            self.current_damper_depth +=
+                (self.target_damper_depth - self.current_damper_depth) * alpha;
         } else {
             self.current_damper_depth = self.target_damper_depth;
         }
@@ -358,7 +377,11 @@ impl StiffStringModal {
 
         if is_damping {
             for i in 0..self.num_modes {
-                let f_t = if has_hammer { f_hammer_scaled * self.phi_h[i] + f_ext_t } else { f_ext_t };
+                let f_t = if has_hammer {
+                    f_hammer_scaled * self.phi_h[i] + f_ext_t
+                } else {
+                    f_ext_t
+                };
                 let f_p = f_ext_p;
 
                 let (p11_t, p12_t, p21_t, p22_t) = self.phi_t[i];
@@ -400,7 +423,11 @@ impl StiffStringModal {
             }
         } else {
             for i in 0..self.num_modes {
-                let f_t = if has_hammer { f_hammer_scaled * self.phi_h[i] + f_ext_t } else { f_ext_t };
+                let f_t = if has_hammer {
+                    f_hammer_scaled * self.phi_h[i] + f_ext_t
+                } else {
+                    f_ext_t
+                };
                 let f_p = f_ext_p;
 
                 let (p11_t, p12_t, p21_t, p22_t) = self.phi_t[i];

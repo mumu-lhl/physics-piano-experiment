@@ -1,9 +1,9 @@
 //! Dual-polarization stiff string modal engine specialized for 6-string guitar.
 //! Supports dynamic fretting, geometric tension modulation, palm muting, and pitch bending.
 
-use std::f64::consts::PI;
-use crate::params::GuitarStringParams;
 use crate::core::pluck::PluckExciter;
+use crate::params::GuitarStringParams;
+use std::f64::consts::PI;
 
 #[repr(C, align(64))]
 #[derive(Debug, Clone)]
@@ -181,18 +181,25 @@ impl GuitarString {
             self.omega_p.push(omega_m_p);
 
             // Mode shape spatial gradient at bridge pin x = L: d/dx phi_m(L) = sqrt(2/L) * (m*pi/L) * (-1)^m
-            let bridge_grad = (2.0 / length).sqrt() * (m_f * PI / length) * if m % 2 == 0 { 1.0 } else { -1.0 };
+            let bridge_grad =
+                (2.0 / length).sqrt() * (m_f * PI / length) * if m % 2 == 0 { 1.0 } else { -1.0 };
             self.bridge_phi.push(bridge_grad);
         }
 
         self.num_modes = active_modes;
-        self.state_t.resize(active_modes, ModalState { q: 0.0, v: 0.0 });
-        self.state_p.resize(active_modes, ModalState { q: 0.0, v: 0.0 });
+        self.state_t
+            .resize(active_modes, ModalState { q: 0.0, v: 0.0 });
+        self.state_p
+            .resize(active_modes, ModalState { q: 0.0, v: 0.0 });
     }
 
     /// Discrete transition matrix via analytical matrix exponential:
     /// [q(n+1); v(n+1)] = Phi * [q(n); v(n)] + Gamma * F(n)
-    fn compute_discrete_operators(omega: f64, sigma: f64, dt: f64) -> ((f64, f64, f64, f64), (f64, f64)) {
+    fn compute_discrete_operators(
+        omega: f64,
+        sigma: f64,
+        dt: f64,
+    ) -> ((f64, f64, f64, f64), (f64, f64)) {
         let omega_d_sq = omega.powi(2) - sigma.powi(2);
         let decay = (-sigma * dt).exp();
 
@@ -327,7 +334,8 @@ impl GuitarString {
         // Clamped to 0.04 (max ~35 cents pitch drift on attack) for absolute numerical stability
         let rel_delta_t = (self.current_delta_t / self.params.tension).clamp(0.0, 0.04);
         if rel_delta_t > 1e-6 {
-            let tension_factor = rel_delta_t * (self.params.tension / self.params.linear_density) * self.dt;
+            let tension_factor =
+                rel_delta_t * (self.params.tension / self.params.linear_density) * self.dt;
             for m in 0..self.num_modes {
                 let m_f = (m + 1) as f64;
                 let k_sq = (m_f * PI / self.effective_length).powi(2);
@@ -357,8 +365,10 @@ impl GuitarString {
     pub fn total_energy(&self) -> f64 {
         let mut energy = 0.0;
         for m in 0..self.num_modes {
-            energy += 0.5 * (self.state_t[m].v.powi(2) + self.omega_t[m].powi(2) * self.state_t[m].q.powi(2));
-            energy += 0.5 * (self.state_p[m].v.powi(2) + self.omega_p[m].powi(2) * self.state_p[m].q.powi(2));
+            energy += 0.5
+                * (self.state_t[m].v.powi(2) + self.omega_t[m].powi(2) * self.state_t[m].q.powi(2));
+            energy += 0.5
+                * (self.state_p[m].v.powi(2) + self.omega_p[m].powi(2) * self.state_p[m].q.powi(2));
         }
         energy
     }

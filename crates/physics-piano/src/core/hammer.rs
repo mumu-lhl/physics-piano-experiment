@@ -99,8 +99,16 @@ impl HuntCrossleyHammer {
         self.contact_time += self.dt;
 
         let v_rel = self.v_h - v_string;
-        let k_felt = if self.una_corda { self.k_h * 0.72 } else { self.k_h };
-        let lambda_felt = if self.una_corda { self.lambda_h * 1.15 } else { self.lambda_h };
+        let k_felt = if self.una_corda {
+            self.k_h * 0.72
+        } else {
+            self.k_h
+        };
+        let lambda_felt = if self.una_corda {
+            self.lambda_h * 1.15
+        } else {
+            self.lambda_h
+        };
 
         let eta_p = eta.powf(self.p);
         let damping_term = lambda_felt * eta_p * v_rel;

@@ -9,11 +9,12 @@
 //! - Mouse click and glissando drag support with vertical touch sensitivity.
 //! - Laptop QWERTY keyboard octave playing (A-K / W,E,T,Y,U).
 
+use super::skia_compat as vg;
+use super::skia_compat::CanvasExt;
 use crossbeam_channel::Sender;
-use nih_plug_vizia::vizia::prelude::*;
-use nih_plug_vizia::vizia::vg;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use vizia_plug::vizia::prelude::*;
 
 use crate::engine::EngineEvent;
 
@@ -26,23 +27,18 @@ pub struct PianoKeyboardWidget {
 }
 
 impl PianoKeyboardWidget {
-    pub fn new<L1, L2, L3>(
+    pub fn new(
         cx: &mut Context,
         gui_tx: Sender<EngineEvent>,
-        active_keys_low: L1,
-        active_keys_high: L2,
-        key_velocities: L3,
-    ) -> Handle<'_, Self>
-    where
-        L1: Lens<Target = Arc<AtomicU64>>,
-        L2: Lens<Target = Arc<AtomicU64>>,
-        L3: Lens<Target = Arc<parking_lot::RwLock<[f32; 88]>>>,
-    {
+        active_keys_low: Arc<AtomicU64>,
+        active_keys_high: Arc<AtomicU64>,
+        key_velocities: Arc<parking_lot::RwLock<[f32; 88]>>,
+    ) -> Handle<'_, Self> {
         Self {
             gui_tx,
-            active_keys_low: active_keys_low.get(cx),
-            active_keys_high: active_keys_high.get(cx),
-            key_velocities: key_velocities.get(cx),
+            active_keys_low,
+            active_keys_high,
+            key_velocities,
             held_mouse_key: None,
         }
         .build(cx, |_| {})
@@ -114,10 +110,7 @@ impl PianoKeyboardWidget {
     }
 
     fn release_note(&mut self, key: u8) {
-        let _ = self.gui_tx.send(EngineEvent::NoteOff {
-            time: 0,
-            key,
-        });
+        let _ = self.gui_tx.send(EngineEvent::NoteOff { time: 0, key });
     }
 }
 
@@ -131,8 +124,8 @@ impl View for PianoKeyboardWidget {
             WindowEvent::MouseDown(MouseButton::Left) => {
                 cx.focus();
                 let bounds = cx.bounds();
-                let mouse_x = cx.mouse().cursorx;
-                let mouse_y = cx.mouse().cursory;
+                let mouse_x = cx.mouse().cursor_x;
+                let mouse_y = cx.mouse().cursor_y;
                 if let Some((key, vel)) = self.find_key_at(&bounds, mouse_x, mouse_y) {
                     if let Some(prev) = self.held_mouse_key {
                         if prev != key {
@@ -180,7 +173,7 @@ impl View for PianoKeyboardWidget {
         });
     }
 
-    fn draw(&self, cx: &mut DrawContext, canvas: &mut Canvas) {
+    fn draw(&self, cx: &mut DrawContext, canvas: &Canvas) {
         let bounds = cx.bounds();
         if bounds.w < 20.0 || bounds.h < 20.0 {
             return;
@@ -306,7 +299,12 @@ impl View for PianoKeyboardWidget {
                 // Top highlight line for ebony bevel
                 let mut hl_path = vg::Path::new();
                 hl_path.rect(kx + 1.2, ky + 1.0, black_w - 2.4, kh * 0.88);
-                let hl_paint = vg::Paint::color(vg::Color::rgbaf(1.0, 1.0, 1.0, if active { 0.28 } else { 0.08 }));
+                let hl_paint = vg::Paint::color(vg::Color::rgbaf(
+                    1.0,
+                    1.0,
+                    1.0,
+                    if active { 0.28 } else { 0.08 },
+                ));
                 canvas.fill_path(&hl_path, &hl_paint);
             } else {
                 curr_white += 1;

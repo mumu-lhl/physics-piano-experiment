@@ -80,7 +80,9 @@ impl FingerSqueakGenerator {
             _ => 0.0,  // Plain unwound strings G, B, high E have smooth surfaces (no squeak)
         };
 
-        let initial_amp = ((delta_frets as f64 * 0.15).min(1.0) * string_rib_weight * self.squeak_level).min(0.85);
+        let initial_amp =
+            ((delta_frets as f64 * 0.15).min(1.0) * string_rib_weight * self.squeak_level)
+                .min(0.85);
         self.envelope = initial_amp;
 
         // Decay duration between 50ms (short jump) and 130ms (long slide across neck)

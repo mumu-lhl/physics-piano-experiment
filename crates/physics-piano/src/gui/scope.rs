@@ -1,10 +1,11 @@
 //! Real-time Lissajous Scope and Stereo Peak VU Meter Widgets for Vizia.
 
+use super::skia_compat as vg;
+use super::skia_compat::CanvasExt;
 use atomic_float::AtomicF32;
-use nih_plug_vizia::vizia::prelude::*;
-use nih_plug_vizia::vizia::vg;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use vizia_plug::vizia::prelude::*;
 
 pub struct LissajousScopeWidget {
     orbit_t: Arc<parking_lot::RwLock<Vec<f32>>>,
@@ -12,16 +13,12 @@ pub struct LissajousScopeWidget {
 }
 
 impl LissajousScopeWidget {
-    pub fn new<L1, L2>(cx: &mut Context, orbit_t: L1, orbit_p: L2) -> Handle<'_, Self>
-    where
-        L1: Lens<Target = Arc<parking_lot::RwLock<Vec<f32>>>>,
-        L2: Lens<Target = Arc<parking_lot::RwLock<Vec<f32>>>>,
-    {
-        Self {
-            orbit_t: orbit_t.get(cx),
-            orbit_p: orbit_p.get(cx),
-        }
-        .build(cx, |_| {})
+    pub fn new(
+        cx: &mut Context,
+        orbit_t: Arc<parking_lot::RwLock<Vec<f32>>>,
+        orbit_p: Arc<parking_lot::RwLock<Vec<f32>>>,
+    ) -> Handle<'_, Self> {
+        Self { orbit_t, orbit_p }.build(cx, |_| {})
     }
 }
 
@@ -30,7 +27,7 @@ impl View for LissajousScopeWidget {
         Some("lissajous-scope-widget")
     }
 
-    fn draw(&self, cx: &mut DrawContext, canvas: &mut Canvas) {
+    fn draw(&self, cx: &mut DrawContext, canvas: &Canvas) {
         let bounds = cx.bounds();
         if bounds.w < 10.0 || bounds.h < 10.0 {
             return;
@@ -54,7 +51,8 @@ impl View for LissajousScopeWidget {
         grid_path.line_to(cx_mid + radius * 0.85, cy_mid);
         grid_path.move_to(cx_mid, cy_mid - radius * 0.85);
         grid_path.line_to(cx_mid, cy_mid + radius * 0.85);
-        let grid_paint = vg::Paint::color(vg::Color::rgbaf(0.3, 0.4, 0.55, 0.25)).with_line_width(0.8);
+        let grid_paint =
+            vg::Paint::color(vg::Color::rgbaf(0.3, 0.4, 0.55, 0.25)).with_line_width(0.8);
         canvas.stroke_path(&grid_path, &grid_paint);
 
         // Render Orbit
@@ -74,7 +72,8 @@ impl View for LissajousScopeWidget {
                 orbit_path.line_to(px, py);
             }
 
-            let orbit_paint = vg::Paint::color(vg::Color::rgbaf(1.0, 0.82, 0.35, 0.88)).with_line_width(1.2);
+            let orbit_paint =
+                vg::Paint::color(vg::Color::rgbaf(1.0, 0.82, 0.35, 0.88)).with_line_width(1.2);
             canvas.stroke_path(&orbit_path, &orbit_paint);
         }
     }
@@ -86,16 +85,12 @@ pub struct StereoVuMeterWidget {
 }
 
 impl StereoVuMeterWidget {
-    pub fn new<L1, L2>(cx: &mut Context, peak_l: L1, peak_r: L2) -> Handle<'_, Self>
-    where
-        L1: Lens<Target = Arc<AtomicF32>>,
-        L2: Lens<Target = Arc<AtomicF32>>,
-    {
-        Self {
-            peak_l: peak_l.get(cx),
-            peak_r: peak_r.get(cx),
-        }
-        .build(cx, |_| {})
+    pub fn new(
+        cx: &mut Context,
+        peak_l: Arc<AtomicF32>,
+        peak_r: Arc<AtomicF32>,
+    ) -> Handle<'_, Self> {
+        Self { peak_l, peak_r }.build(cx, |_| {})
     }
 }
 
@@ -104,7 +99,7 @@ impl View for StereoVuMeterWidget {
         Some("stereo-vu-meter-widget")
     }
 
-    fn draw(&self, cx: &mut DrawContext, canvas: &mut Canvas) {
+    fn draw(&self, cx: &mut DrawContext, canvas: &Canvas) {
         let bounds = cx.bounds();
         if bounds.w < 10.0 || bounds.h < 10.0 {
             return;
@@ -128,7 +123,7 @@ impl View for StereoVuMeterWidget {
         let bar_h = (bounds.h - 4.0) * 0.5;
         let bar_w = bounds.w;
 
-        let draw_bar = |canvas: &mut Canvas, by: f32, norm: f32| {
+        let draw_bar = |canvas: &Canvas, by: f32, norm: f32| {
             // Track background
             let mut track_path = vg::Path::new();
             track_path.rounded_rect(bounds.x, by, bar_w, bar_h, 2.0);

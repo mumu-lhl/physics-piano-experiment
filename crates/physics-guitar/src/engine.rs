@@ -1,16 +1,16 @@
 //! Real-time 6-string physical modeling guitar engine.
 //! Zero allocation during audio loop, supports both acoustic body resonance and electric pickups.
 
-use crate::params::{generate_guitar_string_set, GuitarStringSetType};
-use crate::core::guitar_string::GuitarString;
-use crate::core::pluck::{PluckExciter, PluckStyle};
-use crate::core::fretboard::FretboardRouter;
-use crate::core::pickup::{MagneticPickup, PickupType, PickupSelector};
-use crate::core::body::AcousticGuitarBody;
 use crate::core::amp_cab::GuitarAmpCab;
-use crate::core::strummer::{SmartStrummer, StrumPluckEvent};
+use crate::core::body::AcousticGuitarBody;
+use crate::core::fretboard::FretboardRouter;
+use crate::core::groove::{GrooveAction, GrooveEngine};
+use crate::core::guitar_string::GuitarString;
+use crate::core::pickup::{MagneticPickup, PickupSelector, PickupType};
+use crate::core::pluck::{PluckExciter, PluckStyle};
 use crate::core::squeak::FingerSqueakGenerator;
-use crate::core::groove::{GrooveEngine, GrooveAction};
+use crate::core::strummer::{SmartStrummer, StrumPluckEvent};
+use crate::params::{generate_guitar_string_set, GuitarStringSetType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuitarInstrumentMode {
@@ -56,7 +56,11 @@ pub struct GuitarEngine {
 }
 
 impl GuitarEngine {
-    pub fn new(sample_rate: f64, set_type: GuitarStringSetType, mode: GuitarInstrumentMode) -> Self {
+    pub fn new(
+        sample_rate: f64,
+        set_type: GuitarStringSetType,
+        mode: GuitarInstrumentMode,
+    ) -> Self {
         let dt = 1.0 / sample_rate;
         let string_params = generate_guitar_string_set(set_type, 30);
         let mut strings = Vec::with_capacity(6);
@@ -77,7 +81,11 @@ impl GuitarEngine {
             strings,
             exciter,
             router: FretboardRouter::new(),
-            pickup: MagneticPickup::new(PickupType::SingleCoil, PickupSelector::Bridge, sample_rate),
+            pickup: MagneticPickup::new(
+                PickupType::SingleCoil,
+                PickupSelector::Bridge,
+                sample_rate,
+            ),
             amp_cab: GuitarAmpCab::new(sample_rate),
             body: AcousticGuitarBody::new(sample_rate),
             strummer: SmartStrummer::new(sample_rate),
@@ -134,7 +142,8 @@ impl GuitarEngine {
         let loc = if (2..=7).contains(&channel) {
             self.router.allocate_mpe_note(channel, midi_note)
         } else {
-            self.router.allocate_note(midi_note, &strings_held, &active_frets)
+            self.router
+                .allocate_note(midi_note, &strings_held, &active_frets)
         };
 
         if let Some(loc) = loc {
@@ -245,7 +254,11 @@ impl GuitarEngine {
         let groove_act = self.groove.step_sample();
         match groove_act {
             GrooveAction::None => {}
-            GrooveAction::Strum { direction, velocity, palm_mute_override } => {
+            GrooveAction::Strum {
+                direction,
+                velocity,
+                palm_mute_override,
+            } => {
                 let mut count = 0;
                 let mut notes = [(0usize, 0u8, 0.0f64); 6];
                 for (i, s) in self.strings.iter().enumerate() {
@@ -270,7 +283,10 @@ impl GuitarEngine {
                     self.strummer.direction = prev_dir;
                 }
             }
-            GrooveAction::PluckString { string_rel_index, velocity } => {
+            GrooveAction::PluckString {
+                string_rel_index,
+                velocity,
+            } => {
                 let mut held = [0usize; 6];
                 let mut count = 0;
                 for (i, s) in self.strings.iter().enumerate() {

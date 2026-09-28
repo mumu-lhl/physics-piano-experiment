@@ -4,11 +4,12 @@
 //! the continuous rotating acoustic lid baffle. Clicking or dragging the lid directly
 //! adjusts the lid opening angle from 0° (fully closed) to 60° (full concert hall radiation).
 
-use nih_plug_vizia::vizia::prelude::*;
-use nih_plug_vizia::vizia::vg;
-use nih_plug_vizia::widgets::param_base::ParamWidgetBase;
+use super::skia_compat as vg;
+use super::skia_compat::CanvasExt;
 use std::f32::consts::PI;
 use std::sync::Arc;
+use vizia_plug::vizia::prelude::*;
+use vizia_plug::widgets::param_base::ParamWidgetBase;
 
 use crate::gui::i18n::Language;
 use crate::nih_plugin::PhysicsPianoParams;
@@ -21,15 +22,15 @@ pub struct PianoLidWidget {
 }
 
 impl PianoLidWidget {
-    pub fn new<L>(cx: &mut Context, params: L, language: Language) -> Handle<'_, Self>
-    where
-        L: Lens<Target = Arc<PhysicsPianoParams>> + Clone,
-    {
-        let params_ref = params.get(cx);
-        let param_base = ParamWidgetBase::new(cx, params, |p| &p.lid_angle);
+    pub fn new(
+        cx: &mut Context,
+        params: Arc<PhysicsPianoParams>,
+        language: Language,
+    ) -> Handle<'_, Self> {
+        let param_base = ParamWidgetBase::new(cx, &params.lid_angle);
 
         Self {
-            params: params_ref,
+            params,
             param_base,
             is_dragging: false,
             language,
@@ -75,7 +76,7 @@ impl View for PianoLidWidget {
         });
     }
 
-    fn draw(&self, cx: &mut DrawContext, canvas: &mut Canvas) {
+    fn draw(&self, cx: &mut DrawContext, canvas: &Canvas) {
         let bounds = cx.bounds();
         if bounds.w < 10.0 || bounds.h < 10.0 {
             return;
@@ -150,8 +151,8 @@ impl View for PianoLidWidget {
                     -PI * (0.15 + 0.25 * (1.0 - emission_strength)),
                     vg::Solidity::Hole,
                 );
-                let wave_paint = vg::Paint::color(vg::Color::rgbaf(1.0, 0.85, 0.45, alpha))
-                    .with_line_width(1.2);
+                let wave_paint =
+                    vg::Paint::color(vg::Color::rgbaf(1.0, 0.85, 0.45, alpha)).with_line_width(1.2);
                 canvas.stroke_path(&wave_path, &wave_paint);
             }
         }
@@ -246,6 +247,11 @@ impl View for PianoLidWidget {
         let mut stat_paint = vg::Paint::color(vg::Color::rgb(255, 215, 120));
         stat_paint.set_font_size(10.5);
         stat_paint.set_text_align(vg::Align::Right);
-        let _ = canvas.fill_text(bounds.x + bounds.w - 8.0, bounds.y + 14.0, &status_str, &stat_paint);
+        let _ = canvas.fill_text(
+            bounds.x + bounds.w - 8.0,
+            bounds.y + 14.0,
+            &status_str,
+            &stat_paint,
+        );
     }
 }

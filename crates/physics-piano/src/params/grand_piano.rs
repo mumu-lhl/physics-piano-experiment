@@ -2,7 +2,9 @@
 
 use std::f64::consts::PI;
 
-pub const PITCH_NAMES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+pub const PITCH_NAMES: [&str; 12] = [
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+];
 
 #[derive(Debug, Clone)]
 pub struct StringPhysicalParams {
@@ -76,7 +78,11 @@ pub fn generate_grand_piano_parameters(num_modes: usize, stretch_tuning: bool) -
 
     for midi in 21..=108u8 {
         let norm_key = (midi as f64 - 21.0) / (108.0 - 21.0);
-        let stretch = if stretch_tuning { compute_railsback_cents(midi) } else { 0.0 };
+        let stretch = if stretch_tuning {
+            compute_railsback_cents(midi)
+        } else {
+            0.0
+        };
         let f0 = 440.0 * 2.0f64.powf((midi as f64 - 69.0 + stretch / 100.0) / 12.0);
         let pitch_name = midi_to_pitch_name(midi);
 

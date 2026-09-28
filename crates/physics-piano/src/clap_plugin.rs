@@ -1,36 +1,35 @@
 //! Native CLAP Plugin Implementation in Rust with Host Thread Pool Integration.
 
-use std::ffi::{c_char, c_void, CStr};
-use std::ptr;
 use clap_sys::entry::clap_plugin_entry;
-use clap_sys::plugin::{clap_plugin, clap_plugin_descriptor};
-use clap_sys::factory::plugin_factory::{clap_plugin_factory, CLAP_PLUGIN_FACTORY_ID};
-use clap_sys::host::clap_host;
-use clap_sys::process::{clap_process, clap_process_status, CLAP_PROCESS_CONTINUE};
-use clap_sys::version::CLAP_VERSION;
-use clap_sys::id::{clap_id, CLAP_INVALID_ID};
-use clap_sys::ext::thread_pool::{clap_host_thread_pool, clap_plugin_thread_pool, CLAP_EXT_THREAD_POOL};
+use clap_sys::events::{
+    clap_event_header, clap_event_midi, clap_event_note, clap_event_note_expression,
+    clap_event_param_value, CLAP_EVENT_MIDI, CLAP_EVENT_NOTE_END, CLAP_EVENT_NOTE_EXPRESSION,
+    CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_VALUE, CLAP_NOTE_EXPRESSION_TUNING,
+};
 use clap_sys::ext::audio_ports::{
-    clap_plugin_audio_ports, clap_audio_port_info,
-    CLAP_EXT_AUDIO_PORTS, CLAP_PORT_STEREO, CLAP_AUDIO_PORT_IS_MAIN, CLAP_AUDIO_PORT_SUPPORTS_64BITS,
+    clap_audio_port_info, clap_plugin_audio_ports, CLAP_AUDIO_PORT_IS_MAIN,
+    CLAP_AUDIO_PORT_SUPPORTS_64BITS, CLAP_EXT_AUDIO_PORTS, CLAP_PORT_STEREO,
 };
 use clap_sys::ext::note_ports::{
-    clap_plugin_note_ports, clap_note_port_info,
-    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI,
+    clap_note_port_info, clap_plugin_note_ports, CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP,
+    CLAP_NOTE_DIALECT_MIDI,
 };
 use clap_sys::ext::params::{
-    clap_plugin_params, clap_param_info,
-    CLAP_EXT_PARAMS, CLAP_PARAM_IS_AUTOMATABLE,
+    clap_param_info, clap_plugin_params, CLAP_EXT_PARAMS, CLAP_PARAM_IS_AUTOMATABLE,
 };
-use clap_sys::events::{
-    CLAP_EVENT_NOTE_ON, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_END,
-    CLAP_EVENT_NOTE_EXPRESSION, CLAP_NOTE_EXPRESSION_TUNING,
-    CLAP_EVENT_PARAM_VALUE, CLAP_EVENT_MIDI,
-    clap_event_header, clap_event_note, clap_event_note_expression,
-    clap_event_param_value, clap_event_midi,
+use clap_sys::ext::thread_pool::{
+    clap_host_thread_pool, clap_plugin_thread_pool, CLAP_EXT_THREAD_POOL,
 };
+use clap_sys::factory::plugin_factory::{clap_plugin_factory, CLAP_PLUGIN_FACTORY_ID};
+use clap_sys::host::clap_host;
+use clap_sys::id::{clap_id, CLAP_INVALID_ID};
+use clap_sys::plugin::{clap_plugin, clap_plugin_descriptor};
+use clap_sys::process::{clap_process, clap_process_status, CLAP_PROCESS_CONTINUE};
+use clap_sys::version::CLAP_VERSION;
+use std::ffi::{c_char, c_void, CStr};
+use std::ptr;
 
-use crate::engine::{PianoEngine, EngineEvent, EngineOutEvent};
+use crate::engine::{EngineEvent, EngineOutEvent, PianoEngine};
 
 fn copy_to_c_arr(dest: &mut [c_char], src: &str) {
     let bytes = src.as_bytes();
@@ -50,13 +49,15 @@ pub static PLUGIN_DESCRIPTOR: clap_plugin_descriptor = clap_plugin_descriptor {
     manual_url: b"\0".as_ptr() as *const c_char,
     support_url: b"\0".as_ptr() as *const c_char,
     version: b"0.1.0\0".as_ptr() as *const c_char,
-    description: b"First-principles physical modeling acoustic piano synthesizer\0".as_ptr() as *const c_char,
+    description: b"First-principles physical modeling acoustic piano synthesizer\0".as_ptr()
+        as *const c_char,
     features: [
         b"instrument\0".as_ptr() as *const c_char,
         b"synthesizer\0".as_ptr() as *const c_char,
         b"physical-modeling\0".as_ptr() as *const c_char,
         ptr::null(),
-    ].as_ptr() as *const *const c_char,
+    ]
+    .as_ptr() as *const *const c_char,
 };
 
 pub struct PluginInstance {
@@ -79,7 +80,10 @@ unsafe extern "C" fn plugin_init(plugin: *const clap_plugin) -> bool {
     // Request Host Thread Pool extension if available
     if !instance.host.is_null() && !(*instance.host).get_extension.is_none() {
         let get_ext = (*instance.host).get_extension.unwrap();
-        let ext = get_ext(instance.host, CLAP_EXT_THREAD_POOL.as_ptr() as *const c_char);
+        let ext = get_ext(
+            instance.host,
+            CLAP_EXT_THREAD_POOL.as_ptr() as *const c_char,
+        );
         if !ext.is_null() {
             instance.host_thread_pool = Some(ext as *const clap_host_thread_pool);
         }
@@ -155,26 +159,36 @@ unsafe extern "C" fn plugin_process(
                     let note_ev = &*(hdr as *const clap_event_note);
                     let key = note_ev.key as u8;
                     let velocity = note_ev.velocity;
-                    instance.events_scratch.push(EngineEvent::NoteOn { time, key, velocity });
+                    instance.events_scratch.push(EngineEvent::NoteOn {
+                        time,
+                        key,
+                        velocity,
+                    });
                 }
                 CLAP_EVENT_NOTE_OFF => {
                     let note_ev = &*(hdr as *const clap_event_note);
                     let key = note_ev.key as u8;
-                    instance.events_scratch.push(EngineEvent::NoteOff { time, key });
+                    instance
+                        .events_scratch
+                        .push(EngineEvent::NoteOff { time, key });
                 }
                 CLAP_EVENT_NOTE_EXPRESSION => {
                     let exp_ev = &*(hdr as *const clap_event_note_expression);
                     if exp_ev.expression_id == CLAP_NOTE_EXPRESSION_TUNING {
                         let key = exp_ev.key as u8;
                         let cents = exp_ev.value * 100.0;
-                        instance.events_scratch.push(EngineEvent::NoteTuning { time, key, cents });
+                        instance
+                            .events_scratch
+                            .push(EngineEvent::NoteTuning { time, key, cents });
                     }
                 }
                 CLAP_EVENT_PARAM_VALUE => {
                     let p_ev = &*(hdr as *const clap_event_param_value);
                     match p_ev.param_id {
                         0 => {
-                            instance.engine.set_sustain_pedal(p_ev.value > 0.01, p_ev.value);
+                            instance
+                                .engine
+                                .set_sustain_pedal(p_ev.value > 0.01, p_ev.value);
                         }
                         1 => {
                             instance.engine.set_una_corda(p_ev.value > 0.5);
@@ -200,12 +214,16 @@ unsafe extern "C" fn plugin_process(
                                     velocity: (d2 as f64) / 127.0,
                                 });
                             } else {
-                                instance.events_scratch.push(EngineEvent::NoteOff { time, key: d1 });
+                                instance
+                                    .events_scratch
+                                    .push(EngineEvent::NoteOff { time, key: d1 });
                             }
                         }
                         0x80 => {
                             // Note Off
-                            instance.events_scratch.push(EngineEvent::NoteOff { time, key: d1 });
+                            instance
+                                .events_scratch
+                                .push(EngineEvent::NoteOff { time, key: d1 });
                         }
                         0xB0 => {
                             // Control Change
@@ -315,7 +333,11 @@ unsafe extern "C" fn plugin_process(
 // -----------------------------------------------------------------------------
 
 unsafe extern "C" fn audio_ports_count(_plugin: *const clap_plugin, is_input: bool) -> u32 {
-    if is_input { 0 } else { 1 }
+    if is_input {
+        0
+    } else {
+        1
+    }
 }
 
 unsafe extern "C" fn audio_ports_get(
@@ -346,7 +368,11 @@ static PLUGIN_AUDIO_PORTS: clap_plugin_audio_ports = clap_plugin_audio_ports {
 // -----------------------------------------------------------------------------
 
 unsafe extern "C" fn note_ports_count(_plugin: *const clap_plugin, is_input: bool) -> u32 {
-    if is_input { 1 } else { 0 }
+    if is_input {
+        1
+    } else {
+        0
+    }
 }
 
 unsafe extern "C" fn note_ports_get(
@@ -435,7 +461,11 @@ unsafe extern "C" fn params_get_value(
     let instance = &*((*plugin).plugin_data as *const PluginInstance);
     match param_id {
         0 => {
-            *out_value = if instance.engine.sustain_pedal { instance.engine.pedal_depth } else { 0.0 };
+            *out_value = if instance.engine.sustain_pedal {
+                instance.engine.pedal_depth
+            } else {
+                0.0
+            };
             true
         }
         1 => {
@@ -462,7 +492,13 @@ unsafe extern "C" fn params_value_to_text(
     }
     let text = match param_id {
         0 => format!("{:.0}%", value * 100.0),
-        1 => if value > 0.5 { "On".to_string() } else { "Off".to_string() },
+        1 => {
+            if value > 0.5 {
+                "On".to_string()
+            } else {
+                "Off".to_string()
+            }
+        }
         2 => format!("{:.1} dB", 20.0 * value.max(1e-4).log10()),
         _ => return false,
     };
@@ -484,7 +520,8 @@ unsafe extern "C" fn params_flush(
     _plugin: *const clap_plugin,
     _in_events: *const clap_sys::events::clap_input_events,
     _out_events: *const clap_sys::events::clap_output_events,
-) {}
+) {
+}
 
 static PLUGIN_PARAMS: clap_plugin_params = clap_plugin_params {
     count: Some(params_count),

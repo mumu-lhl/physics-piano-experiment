@@ -1,11 +1,13 @@
-use std::collections::{HashMap, HashSet};
-use crate::params::{generate_grand_piano_parameters, KeyParams};
-use crate::core::voice::PianoVoice;
-use crate::core::bridge::BridgeSoundboard;
 use crate::core::action::KeyActionNoise;
+use crate::core::bridge::BridgeSoundboard;
 use crate::core::pedal::{DamperWhoosh, PlateShock, RestrikeBuzz};
-use crate::dsp::upols::{UPOLSConvolver, MultiPerspectiveUPOLS, generate_multi_perspective_soundboard_irs};
+use crate::core::voice::PianoVoice;
 use crate::dsp::lid::LidBaffle;
+use crate::dsp::upols::{
+    generate_multi_perspective_soundboard_irs, MultiPerspectiveUPOLS, UPOLSConvolver,
+};
+use crate::params::{generate_grand_piano_parameters, KeyParams};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub enum EngineEvent {
@@ -174,10 +176,12 @@ impl PianoEngine {
     pub fn set_radiation_mode(&mut self, mode: &str) {
         self.radiation_mode = mode.to_string();
         if mode == "multi_upols" && self.multi_upols.is_none() {
-            let (close, player, ambient) = generate_multi_perspective_soundboard_irs(self.sample_rate, 0.6, 100);
+            let (close, player, ambient) =
+                generate_multi_perspective_soundboard_irs(self.sample_rate, 0.6, 100);
             self.multi_upols = Some(MultiPerspectiveUPOLS::new(&close, &player, &ambient, 128));
         } else if mode == "upols" && self.upols.is_none() {
-            let (ir_l, ir_r) = crate::dsp::upols::generate_orthotropic_soundboard_ir(self.sample_rate, 0.6, 100);
+            let (ir_l, ir_r) =
+                crate::dsp::upols::generate_orthotropic_soundboard_ir(self.sample_rate, 0.6, 100);
             self.upols = Some(UPOLSConvolver::new(&ir_l, &ir_r, 128));
         }
     }
@@ -211,7 +215,10 @@ impl PianoEngine {
     pub fn get_or_create_voice(&mut self, key: u8) -> &mut PianoVoice {
         let sr = self.sample_rate;
         let una_corda = self.una_corda;
-        let kp = self.key_params.get(&key).expect("Key out of 88-key piano range");
+        let kp = self
+            .key_params
+            .get(&key)
+            .expect("Key out of 88-key piano range");
         let hardness = self.hammer_hardness;
         let detune = self.unison_detuning;
         let inharm = self.inharmonicity_scale;
@@ -240,7 +247,8 @@ impl PianoEngine {
     #[inline]
     pub fn sync_active_keys_vec(&mut self) {
         self.active_keys_vec.clear();
-        self.active_keys_vec.extend(self.active_keys.iter().copied());
+        self.active_keys_vec
+            .extend(self.active_keys.iter().copied());
     }
 
     pub fn steal_voice(&mut self) -> Option<u8> {
@@ -249,7 +257,9 @@ impl PianoEngine {
         }
 
         // Candidate 1: Key is not physically held down, lowest vibrational energy
-        let released_candidate = self.active_keys.iter()
+        let released_candidate = self
+            .active_keys
+            .iter()
             .filter(|k| !self.depressed_keys.contains(k))
             .min_by(|&&a, &&b| {
                 let ea = self.voices.get(&a).map(|v| v.get_energy()).unwrap_or(0.0);
@@ -260,7 +270,8 @@ impl PianoEngine {
 
         let candidate = released_candidate.or_else(|| {
             // Candidate 2: All active keys are physically held down, steal the lowest energy one
-            self.active_keys.iter()
+            self.active_keys
+                .iter()
                 .min_by(|&&a, &&b| {
                     let ea = self.voices.get(&a).map(|v| v.get_energy()).unwrap_or(0.0);
                     let eb = self.voices.get(&b).map(|v| v.get_energy()).unwrap_or(0.0);
@@ -383,7 +394,9 @@ impl PianoEngine {
                     match ev {
                         EngineEvent::NoteOn { key, velocity, .. } => self.note_on(*key, *velocity),
                         EngineEvent::NoteOff { key, .. } => self.note_off(*key),
-                        EngineEvent::NoteTuning { key, cents, .. } => self.set_note_tuning(*key, *cents),
+                        EngineEvent::NoteTuning { key, cents, .. } => {
+                            self.set_note_tuning(*key, *cents)
+                        }
                         EngineEvent::SustainPedal { depth, .. } => {
                             let down = *depth > 0.05;
                             self.set_sustain_pedal(down, *depth);
@@ -426,7 +439,9 @@ impl PianoEngine {
 
             // Stage 3: Bridge reaction force reduction
             let (react_t, react_p, f_sb) = self.bridge.calculate_coupling_forces(
-                total_bridge_t, total_bridge_p, total_bridge_l,
+                total_bridge_t,
+                total_bridge_p,
+                total_bridge_l,
             );
             self.f_react_t = react_t;
             self.f_react_p = react_p;
@@ -459,7 +474,12 @@ impl PianoEngine {
         for &key in &self.active_keys_vec {
             if let Some(v) = self.voices.get(&key) {
                 let cur_energy = v.get_energy();
-                let peak_e = self.note_energy_peak.get(&key).copied().unwrap_or(1e-6).max(cur_energy);
+                let peak_e = self
+                    .note_energy_peak
+                    .get(&key)
+                    .copied()
+                    .unwrap_or(1e-6)
+                    .max(cur_energy);
                 self.note_energy_peak.insert(key, peak_e);
 
                 if !self.depressed_keys.contains(&key) {
@@ -478,13 +498,19 @@ impl PianoEngine {
             if let Some(v) = self.voices.get_mut(&key) {
                 v.reset();
             }
-            out_events.push(EngineOutEvent::NoteEnd { time: num_samples, key });
+            out_events.push(EngineOutEvent::NoteEnd {
+                time: num_samples,
+                key,
+            });
         }
 
         // Voice Stealing: enforce max polyphony
         while self.active_keys.len() > self.max_active_voices {
             if let Some(stolen_key) = self.steal_voice() {
-                out_events.push(EngineOutEvent::NoteEnd { time: num_samples, key: stolen_key });
+                out_events.push(EngineOutEvent::NoteEnd {
+                    time: num_samples,
+                    key: stolen_key,
+                });
             } else {
                 break;
             }
@@ -500,7 +526,13 @@ impl PianoEngine {
         let mut out_right = vec![0.0; num_samples];
         let mut out_events = Vec::new();
 
-        self.process_block(num_samples, &[], &mut out_events, &mut out_left, &mut out_right);
+        self.process_block(
+            num_samples,
+            &[],
+            &mut out_events,
+            &mut out_left,
+            &mut out_right,
+        );
 
         (out_left, out_right)
     }
@@ -524,4 +556,3 @@ impl PianoEngine {
         self.restrike_buzz = RestrikeBuzz::new(self.sample_rate);
     }
 }
-

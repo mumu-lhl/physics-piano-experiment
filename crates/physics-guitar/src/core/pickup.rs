@@ -6,8 +6,8 @@
 //! - Stratitis magnetic pull: negative stiffness and 2nd harmonic distortion beta2 * u^2
 //! - Multi-pickup parallel blending (Bridge, Middle, Neck, Bridge+Neck, Bridge+Middle)
 
-use std::f64::consts::PI;
 use crate::core::guitar_string::GuitarString;
+use std::f64::consts::PI;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PickupType {
@@ -110,7 +110,8 @@ impl PassiveToneCircuit {
     #[inline(always)]
     pub fn process(&mut self, input: f64) -> f64 {
         let out = self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2
-            - self.a1 * self.y1 - self.a2 * self.y2;
+            - self.a1 * self.y1
+            - self.a2 * self.y2;
         self.x2 = self.x1;
         self.x1 = input;
         self.y2 = self.y1;
@@ -143,7 +144,7 @@ impl MagneticPickup {
         Self {
             pickup_type,
             selector,
-            pole_width: 0.0035, // 3.5 mm Gaussian aperture
+            pole_width: 0.0035,       // 3.5 mm Gaussian aperture
             humbucker_spacing: 0.019, // 19 mm humbucker pole gap
             stratitis_strength: 0.35, // subtle authentic magnet pull
             tone_circuit: PassiveToneCircuit::new(sample_rate, pickup_type),

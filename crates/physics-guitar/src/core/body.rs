@@ -33,8 +33,15 @@ impl BiquadFilter {
         let a2 = (1.0 - alpha) / a0;
 
         Self {
-            b0, b1, b2, a1, a2,
-            x1: 0.0, x2: 0.0, y1: 0.0, y2: 0.0,
+            b0,
+            b1,
+            b2,
+            a1,
+            a2,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
         }
     }
 
@@ -51,8 +58,15 @@ impl BiquadFilter {
         let a2 = (1.0 - alpha) / a0;
 
         Self {
-            b0, b1, b2, a1, a2,
-            x1: 0.0, x2: 0.0, y1: 0.0, y2: 0.0,
+            b0,
+            b1,
+            b2,
+            a1,
+            a2,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
         }
     }
 
@@ -69,15 +83,23 @@ impl BiquadFilter {
         let a2 = (1.0 - alpha) / a0;
 
         Self {
-            b0, b1, b2, a1, a2,
-            x1: 0.0, x2: 0.0, y1: 0.0, y2: 0.0,
+            b0,
+            b1,
+            b2,
+            a1,
+            a2,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
         }
     }
 
     #[inline(always)]
     pub fn process(&mut self, input: f64) -> f64 {
         let out = self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2
-            - self.a1 * self.y1 - self.a2 * self.y2;
+            - self.a1 * self.y1
+            - self.a2 * self.y2;
         self.x2 = self.x1;
         self.x1 = input;
         self.y2 = self.y1;
@@ -140,7 +162,13 @@ pub struct BodyModalOscillator {
 }
 
 impl BodyModalOscillator {
-    pub fn new(freq_hz: f64, q_factor: f64, input_coupling: f64, output_weight: f64, dt: f64) -> Self {
+    pub fn new(
+        freq_hz: f64,
+        q_factor: f64,
+        input_coupling: f64,
+        output_weight: f64,
+        dt: f64,
+    ) -> Self {
         let omega = 2.0 * PI * freq_hz;
         let zeta = 1.0 / (2.0 * q_factor);
         let sigma = zeta * omega;
@@ -368,10 +396,15 @@ impl AcousticGuitarBody {
         // Binaural spatial radiation:
         // Left channel: soundhole + upper bout reflections (crisp transient sheen)
         // Right channel: soundhole + lower bout warm wood resonance
-        let left_rad = (low_a0 * 1.5 + (low_t1 + low_t2) * 1.35 + high_raw * 1.05) * self.resonance_gain;
-        let right_rad = (low_a0 * 1.5 + (low_t1 + low_t2) * 1.65 + high_diffused * 1.15) * self.resonance_gain;
+        let left_rad =
+            (low_a0 * 1.5 + (low_t1 + low_t2) * 1.35 + high_raw * 1.05) * self.resonance_gain;
+        let right_rad =
+            (low_a0 * 1.5 + (low_t1 + low_t2) * 1.65 + high_diffused * 1.15) * self.resonance_gain;
 
-        (self.air_damping_l.process(left_rad), self.air_damping_r.process(right_rad))
+        (
+            self.air_damping_l.process(left_rad),
+            self.air_damping_r.process(right_rad),
+        )
     }
 
     /// Backwards compatible mono processing.

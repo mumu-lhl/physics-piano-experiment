@@ -1,6 +1,6 @@
 //! Internationalization (i18n) for Physics Guitar GUI supporting English and Simplified Chinese.
 
-use nih_plug_vizia::vizia::prelude::Context;
+use vizia_plug::vizia::prelude::Context;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
@@ -410,10 +410,6 @@ impl I18n {
 
 /// Discovers available system CJK fonts and installs fallback font definitions into Vizia context.
 pub fn setup_vizia_fonts(cx: &mut Context) {
-    nih_plug_vizia::assets::register_noto_sans_regular(cx);
-    nih_plug_vizia::assets::register_noto_sans_bold(cx);
-    nih_plug_vizia::assets::register_noto_sans_light(cx);
-
     let candidate_paths = [
         "/usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf",
         "/usr/share/fonts/google-noto-sans-cjk-fonts/NotoSansCJK-Regular.ttc",

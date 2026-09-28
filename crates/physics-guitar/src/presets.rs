@@ -17,19 +17,19 @@ pub enum FactoryPreset {
 
 #[derive(Debug, Clone, Copy)]
 pub struct PresetValues {
-    pub mode: i32,          // 0 = Electric, 1 = Acoustic
-    pub pluck_style: i32,   // 0 = Plectrum, 1 = Finger
-    pub pickup_pos: i32,    // 0 = Bridge, 1 = Mid, 2 = Neck, 3 = B+N, 4 = B+M
-    pub pickup_type: i32,   // 0 = Single, 1 = Humbucker
-    pub tone: f32,          // 0.0 ~ 1.0
-    pub amp_drive: f32,     // 0.0 ~ 1.0
+    pub mode: i32,        // 0 = Electric, 1 = Acoustic
+    pub pluck_style: i32, // 0 = Plectrum, 1 = Finger
+    pub pickup_pos: i32,  // 0 = Bridge, 1 = Mid, 2 = Neck, 3 = B+N, 4 = B+M
+    pub pickup_type: i32, // 0 = Single, 1 = Humbucker
+    pub tone: f32,        // 0.0 ~ 1.0
+    pub amp_drive: f32,   // 0.0 ~ 1.0
     pub cab_enabled: bool,
-    pub palm_mute: f32,     // 0.0 ~ 1.0
-    pub strum_speed: f32,   // ms
-    pub fret_buzz: f32,     // 0.0 ~ 1.0
-    pub pluck_pos: f32,     // 0.05 ~ 0.35
-    pub finger_squeak: f32, // 0.0 ~ 1.0
-    pub groove_pattern: i32,// 0 = Off, 1 = Folk, 2 = Ballad, 3 = Funk, 4 = Rock
+    pub palm_mute: f32,      // 0.0 ~ 1.0
+    pub strum_speed: f32,    // ms
+    pub fret_buzz: f32,      // 0.0 ~ 1.0
+    pub pluck_pos: f32,      // 0.05 ~ 0.35
+    pub finger_squeak: f32,  // 0.0 ~ 1.0
+    pub groove_pattern: i32, // 0 = Off, 1 = Folk, 2 = Ballad, 3 = Funk, 4 = Rock
 }
 
 impl FactoryPreset {
@@ -89,7 +89,7 @@ impl FactoryPreset {
     pub fn values(&self) -> PresetValues {
         match self {
             FactoryPreset::MartinD28Fingerstyle => PresetValues {
-                mode: 1, // Acoustic
+                mode: 1,        // Acoustic
                 pluck_style: 1, // Finger
                 pickup_pos: 0,
                 pickup_type: 0,
@@ -104,7 +104,7 @@ impl FactoryPreset {
                 groove_pattern: 0,
             },
             FactoryPreset::DreadnoughtStrummer => PresetValues {
-                mode: 1, // Acoustic
+                mode: 1,        // Acoustic
                 pluck_style: 0, // Plectrum
                 pickup_pos: 0,
                 pickup_type: 0,
@@ -119,9 +119,9 @@ impl FactoryPreset {
                 groove_pattern: 1, // Folk 4/4 Basic
             },
             FactoryPreset::StratCleanChime => PresetValues {
-                mode: 0, // Electric
+                mode: 0,        // Electric
                 pluck_style: 0, // Plectrum
-                pickup_pos: 4, // Bridge + Middle
+                pickup_pos: 4,  // Bridge + Middle
                 pickup_type: 0, // Single Coil
                 tone: 0.95,
                 amp_drive: 0.15,
@@ -134,9 +134,9 @@ impl FactoryPreset {
                 groove_pattern: 0,
             },
             FactoryPreset::TexasBluesBreakup => PresetValues {
-                mode: 0, // Electric
+                mode: 0,        // Electric
                 pluck_style: 1, // Finger
-                pickup_pos: 2, // Neck
+                pickup_pos: 2,  // Neck
                 pickup_type: 0, // Single Coil
                 tone: 0.70,
                 amp_drive: 0.58,
@@ -149,9 +149,9 @@ impl FactoryPreset {
                 groove_pattern: 0,
             },
             FactoryPreset::LesPaulWarmJazz => PresetValues {
-                mode: 0, // Electric
+                mode: 0,        // Electric
                 pluck_style: 1, // Finger
-                pickup_pos: 2, // Neck
+                pickup_pos: 2,  // Neck
                 pickup_type: 1, // Humbucker
                 tone: 0.35,
                 amp_drive: 0.08,
@@ -164,9 +164,9 @@ impl FactoryPreset {
                 groove_pattern: 0,
             },
             FactoryPreset::HeavyMetalChug => PresetValues {
-                mode: 0, // Electric
+                mode: 0,        // Electric
                 pluck_style: 0, // Plectrum
-                pickup_pos: 0, // Bridge
+                pickup_pos: 0,  // Bridge
                 pickup_type: 1, // Humbucker
                 tone: 1.0,
                 amp_drive: 0.88,

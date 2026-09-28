@@ -128,7 +128,8 @@ impl GrooveEngine {
 
         self.sample_counter = 0;
         let jitter = self.next_jitter();
-        self.next_step_samples = ((self.samples_per_subdivision as f64 + jitter).round() as isize).max(100) as usize;
+        self.next_step_samples =
+            ((self.samples_per_subdivision as f64 + jitter).round() as isize).max(100) as usize;
 
         let current_step = self.step_index;
         let action = match self.pattern {
@@ -139,14 +140,46 @@ impl GrooveEngine {
                 // Classic folk syncopated acoustic rhythm
                 self.step_index = (self.step_index + 1) % 16;
                 match current_step {
-                    0 => GrooveAction::Strum { direction: StrumDirection::Down, velocity: 0.95, palm_mute_override: None },
-                    2 => GrooveAction::Strum { direction: StrumDirection::Down, velocity: 0.70, palm_mute_override: None },
-                    4 => GrooveAction::Strum { direction: StrumDirection::Down, velocity: 0.88, palm_mute_override: None },
-                    7 => GrooveAction::Strum { direction: StrumDirection::Up, velocity: 0.75, palm_mute_override: None },
-                    9 => GrooveAction::Strum { direction: StrumDirection::Up, velocity: 0.78, palm_mute_override: None },
-                    10 => GrooveAction::Strum { direction: StrumDirection::Down, velocity: 0.85, palm_mute_override: None },
-                    12 => GrooveAction::Strum { direction: StrumDirection::Down, velocity: 0.82, palm_mute_override: None },
-                    14 => GrooveAction::Strum { direction: StrumDirection::Up, velocity: 0.72, palm_mute_override: None },
+                    0 => GrooveAction::Strum {
+                        direction: StrumDirection::Down,
+                        velocity: 0.95,
+                        palm_mute_override: None,
+                    },
+                    2 => GrooveAction::Strum {
+                        direction: StrumDirection::Down,
+                        velocity: 0.70,
+                        palm_mute_override: None,
+                    },
+                    4 => GrooveAction::Strum {
+                        direction: StrumDirection::Down,
+                        velocity: 0.88,
+                        palm_mute_override: None,
+                    },
+                    7 => GrooveAction::Strum {
+                        direction: StrumDirection::Up,
+                        velocity: 0.75,
+                        palm_mute_override: None,
+                    },
+                    9 => GrooveAction::Strum {
+                        direction: StrumDirection::Up,
+                        velocity: 0.78,
+                        palm_mute_override: None,
+                    },
+                    10 => GrooveAction::Strum {
+                        direction: StrumDirection::Down,
+                        velocity: 0.85,
+                        palm_mute_override: None,
+                    },
+                    12 => GrooveAction::Strum {
+                        direction: StrumDirection::Down,
+                        velocity: 0.82,
+                        palm_mute_override: None,
+                    },
+                    14 => GrooveAction::Strum {
+                        direction: StrumDirection::Up,
+                        velocity: 0.72,
+                        palm_mute_override: None,
+                    },
                     _ => GrooveAction::None,
                 }
             }
@@ -155,12 +188,30 @@ impl GrooveEngine {
                 // 6-step arpeggio pattern: Bass -> 3 -> 2 -> 1 -> 2 -> 3
                 self.step_index = (self.step_index + 1) % 6;
                 match current_step {
-                    0 => GrooveAction::PluckString { string_rel_index: 0, velocity: 0.95 }, // Bass note
-                    1 => GrooveAction::PluckString { string_rel_index: 1, velocity: 0.70 },
-                    2 => GrooveAction::PluckString { string_rel_index: 2, velocity: 0.75 },
-                    3 => GrooveAction::PluckString { string_rel_index: 3, velocity: 0.85 }, // Treble climax
-                    4 => GrooveAction::PluckString { string_rel_index: 2, velocity: 0.68 },
-                    5 => GrooveAction::PluckString { string_rel_index: 1, velocity: 0.68 },
+                    0 => GrooveAction::PluckString {
+                        string_rel_index: 0,
+                        velocity: 0.95,
+                    }, // Bass note
+                    1 => GrooveAction::PluckString {
+                        string_rel_index: 1,
+                        velocity: 0.70,
+                    },
+                    2 => GrooveAction::PluckString {
+                        string_rel_index: 2,
+                        velocity: 0.75,
+                    },
+                    3 => GrooveAction::PluckString {
+                        string_rel_index: 3,
+                        velocity: 0.85,
+                    }, // Treble climax
+                    4 => GrooveAction::PluckString {
+                        string_rel_index: 2,
+                        velocity: 0.68,
+                    },
+                    5 => GrooveAction::PluckString {
+                        string_rel_index: 1,
+                        velocity: 0.68,
+                    },
                     _ => GrooveAction::None,
                 }
             }
@@ -169,14 +220,46 @@ impl GrooveEngine {
                 // 16-step funk rhythm with percussive muted chops
                 self.step_index = (self.step_index + 1) % 16;
                 match current_step {
-                    0 => GrooveAction::Strum { direction: StrumDirection::Down, velocity: 0.95, palm_mute_override: None },
-                    2 => GrooveAction::Strum { direction: StrumDirection::Up, velocity: 0.55, palm_mute_override: Some(0.85) }, // muted chick
-                    4 => GrooveAction::Strum { direction: StrumDirection::Down, velocity: 0.82, palm_mute_override: None },
-                    6 => GrooveAction::Strum { direction: StrumDirection::Up, velocity: 0.70, palm_mute_override: None },
-                    7 => GrooveAction::Strum { direction: StrumDirection::Down, velocity: 0.50, palm_mute_override: Some(0.90) }, // muted chick
-                    10 => GrooveAction::Strum { direction: StrumDirection::Down, velocity: 0.88, palm_mute_override: None },
-                    12 => GrooveAction::Strum { direction: StrumDirection::Up, velocity: 0.55, palm_mute_override: Some(0.85) }, // muted chick
-                    14 => GrooveAction::Strum { direction: StrumDirection::Up, velocity: 0.76, palm_mute_override: None },
+                    0 => GrooveAction::Strum {
+                        direction: StrumDirection::Down,
+                        velocity: 0.95,
+                        palm_mute_override: None,
+                    },
+                    2 => GrooveAction::Strum {
+                        direction: StrumDirection::Up,
+                        velocity: 0.55,
+                        palm_mute_override: Some(0.85),
+                    }, // muted chick
+                    4 => GrooveAction::Strum {
+                        direction: StrumDirection::Down,
+                        velocity: 0.82,
+                        palm_mute_override: None,
+                    },
+                    6 => GrooveAction::Strum {
+                        direction: StrumDirection::Up,
+                        velocity: 0.70,
+                        palm_mute_override: None,
+                    },
+                    7 => GrooveAction::Strum {
+                        direction: StrumDirection::Down,
+                        velocity: 0.50,
+                        palm_mute_override: Some(0.90),
+                    }, // muted chick
+                    10 => GrooveAction::Strum {
+                        direction: StrumDirection::Down,
+                        velocity: 0.88,
+                        palm_mute_override: None,
+                    },
+                    12 => GrooveAction::Strum {
+                        direction: StrumDirection::Up,
+                        velocity: 0.55,
+                        palm_mute_override: Some(0.85),
+                    }, // muted chick
+                    14 => GrooveAction::Strum {
+                        direction: StrumDirection::Up,
+                        velocity: 0.76,
+                        palm_mute_override: None,
+                    },
                     _ => GrooveAction::None,
                 }
             }

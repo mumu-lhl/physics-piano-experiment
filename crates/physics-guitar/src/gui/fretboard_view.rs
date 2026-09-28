@@ -8,11 +8,12 @@
 //! - Real-time active string vibration displacement and glowing contact fret illumination
 //! - Interactive mouse click/drag fretting and plucking
 
+use super::skia_compat as vg;
+use super::skia_compat::CanvasExt;
 use crossbeam_channel::Sender;
-use nih_plug_vizia::vizia::prelude::*;
-use nih_plug_vizia::vizia::vg;
 use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
+use vizia_plug::vizia::prelude::*;
 
 use crate::nih_plugin::GuiGuitarEvent;
 
@@ -24,19 +25,15 @@ pub struct GuitarFretboardWidget {
 }
 
 impl GuitarFretboardWidget {
-    pub fn new<L1, L2>(
+    pub fn new(
         cx: &mut Context,
         gui_tx: Sender<GuiGuitarEvent>,
-        active_frets: L1,
-        string_energies: L2,
-    ) -> Handle<'_, Self>
-    where
-        L1: Lens<Target = Arc<[AtomicU8; 6]>>,
-        L2: Lens<Target = Arc<[AtomicU32; 6]>>,
-    {
+        active_frets: Arc<[AtomicU8; 6]>,
+        string_energies: Arc<[AtomicU32; 6]>,
+    ) -> Handle<'_, Self> {
         Self {
-            active_frets: active_frets.get(cx),
-            string_energies: string_energies.get(cx),
+            active_frets,
+            string_energies,
             gui_tx,
             held_mouse_pos: None,
         }
@@ -94,8 +91,8 @@ impl View for GuitarFretboardWidget {
         event.map(|window_event, meta| match window_event {
             WindowEvent::MouseDown(MouseButton::Left) => {
                 let bounds = cx.bounds();
-                let mx = cx.mouse().cursorx;
-                let my = cx.mouse().cursory;
+                let mx = cx.mouse().cursor_x;
+                let my = cx.mouse().cursor_y;
                 if let Some((str_idx, fret)) = self.find_string_and_fret(&bounds, mx, my) {
                     if let Some((prev_str, prev_fret)) = self.held_mouse_pos {
                         let _ = self.gui_tx.send(GuiGuitarEvent::NoteOff {
@@ -150,7 +147,7 @@ impl View for GuitarFretboardWidget {
         });
     }
 
-    fn draw(&self, cx: &mut DrawContext, canvas: &mut Canvas) {
+    fn draw(&self, cx: &mut DrawContext, canvas: &Canvas) {
         let bounds = cx.bounds();
         if bounds.w < 20.0 || bounds.h < 20.0 {
             return;
@@ -229,7 +226,8 @@ impl View for GuitarFretboardWidget {
             let gauge = string_gauges[s];
 
             let active_fret = self.active_frets[s].load(Ordering::Relaxed);
-            let energy = f32::from_bits(self.string_energies[s].load(Ordering::Relaxed)).clamp(0.0, 1.0);
+            let energy =
+                f32::from_bits(self.string_energies[s].load(Ordering::Relaxed)).clamp(0.0, 1.0);
 
             // Active string glowing vibration amplitude
             let is_sounding = energy > 0.01;
