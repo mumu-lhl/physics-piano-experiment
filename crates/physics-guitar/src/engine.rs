@@ -12,6 +12,23 @@ use crate::core::squeak::FingerSqueakGenerator;
 use crate::core::strummer::{SmartStrummer, StrumPluckEvent};
 use crate::params::{GuitarStringSetType, generate_guitar_string_set};
 
+const ELECTRIC_OUTPUT_TRIM: f64 = 0.5;
+const ACOUSTIC_OUTPUT_TRIM: f64 = 0.05;
+const SOFT_LIMIT_KNEE: f64 = 0.9;
+
+#[inline]
+fn soft_limit(sample: f64) -> f64 {
+    let magnitude = sample.abs();
+    if magnitude <= SOFT_LIMIT_KNEE {
+        sample
+    } else {
+        sample.signum()
+            * (SOFT_LIMIT_KNEE
+                + (1.0 - SOFT_LIMIT_KNEE)
+                    * ((magnitude - SOFT_LIMIT_KNEE) / (1.0 - SOFT_LIMIT_KNEE)).tanh())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuitarInstrumentMode {
     Acoustic,
@@ -357,16 +374,25 @@ impl GuitarEngine {
                 let squeak_l = squeak_sample * 0.6 * 0.5;
                 let squeak_r = squeak_sample * 0.4 * 0.5;
 
-                (body_l + squeak_l, body_r + squeak_r)
+                (
+                    (body_l + squeak_l) * ACOUSTIC_OUTPUT_TRIM,
+                    (body_r + squeak_r) * ACOUSTIC_OUTPUT_TRIM,
+                )
             }
             GuitarInstrumentMode::Electric => {
                 let pre_amp = pickup_mix * 2.5 + squeak_sample * 0.35;
                 let amp_out = self.amp_cab.process(pre_amp);
-                (amp_out, amp_out)
+                (
+                    amp_out * ELECTRIC_OUTPUT_TRIM,
+                    amp_out * ELECTRIC_OUTPUT_TRIM,
+                )
             }
         };
 
-        (out_l * self.master_volume, out_r * self.master_volume)
+        (
+            soft_limit(out_l * self.master_volume),
+            soft_limit(out_r * self.master_volume),
+        )
     }
 
     /// Renders an audio block into left and right channel slices.

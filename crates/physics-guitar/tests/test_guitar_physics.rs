@@ -187,6 +187,35 @@ fn test_guitar_engine_rendering_stability() {
 }
 
 #[test]
+fn test_default_guitar_output_stays_below_digital_full_scale() {
+    for (mode, set_type) in [
+        (
+            GuitarInstrumentMode::Electric,
+            GuitarStringSetType::Electric010,
+        ),
+        (
+            GuitarInstrumentMode::Acoustic,
+            GuitarStringSetType::Acoustic012,
+        ),
+    ] {
+        let mut engine = GuitarEngine::new(44100.0, set_type, mode);
+        engine.strummer.set_strum_speed_ms(0.0);
+        engine.note_on(1, 40, 1.0);
+
+        let mut peak = 0.0_f64;
+        for _ in 0..44100 {
+            let (left, right) = engine.process_sample();
+            peak = peak.max(left.abs()).max(right.abs());
+        }
+
+        assert!(
+            peak <= 1.0,
+            "{mode:?} default output exceeded 0 dBFS: peak={peak}"
+        );
+    }
+}
+
+#[test]
 fn test_smart_strummer_chord_stagger() {
     use physics_guitar::core::strummer::{SmartStrummer, StrumDirection};
 
