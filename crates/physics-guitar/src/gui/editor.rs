@@ -554,61 +554,67 @@ pub fn create_vizia_guitar_editor(
             let can_redo = can_redo_controls.clone();
             VStack::new(cx, move |cx| {
                 HStack::new(cx, |cx| {
-                    Label::new(cx, I18n::preset(lang)).class("param-label");
-                    Button::new(cx, |cx| Label::new(cx, "<"))
-                        .on_press(|cx| cx.emit(GuitarUiEvent::PreviousPreset))
-                        .width(Pixels(28.0));
-                    Dropdown::new(
-                        cx,
-                        move |cx| {
-                            Button::new(cx, move |cx| {
-                                HStack::new(cx, |cx| {
-                                    Label::new(cx, initial_preset_name.clone())
-                                        .width(Stretch(1.0))
-                                        .text_overflow(TextOverflow::Ellipsis);
-                                    Label::new(cx, "▾").hoverable(false);
-                                })
-                                .width(Stretch(1.0))
-                            })
-                            .on_press(|cx| cx.emit(PopupEvent::Switch))
-                            .width(Stretch(1.0));
-                        },
-                        move |cx| {
-                            Binding::new(cx, preset_choices, move |cx| {
-                                for (id, name) in preset_choices.get() {
-                                    let event_id = id.clone();
-                                    Button::new(cx, move |cx| {
-                                        Label::new(cx, name.clone())
-                                            .alignment(Alignment::Left)
-                                            .width(Stretch(1.0))
-                                    })
-                                    .on_press(move |cx| {
-                                        cx.emit(GuitarUiEvent::SelectPreset(event_id.clone()));
-                                        cx.emit(PopupEvent::Close);
-                                    })
-                                    .width(Stretch(1.0));
-                                }
-                            });
-                        },
-                    )
-                    .width(Pixels(180.0));
-                    Button::new(cx, |cx| Label::new(cx, ">"))
-                        .on_press(|cx| cx.emit(GuitarUiEvent::NextPreset))
-                        .width(Pixels(28.0));
-                    Button::new(cx, move |cx| {
-                        Label::new(
+                    Element::new(cx).width(Stretch(1.0));
+                    HStack::new(cx, |cx| {
+                        Label::new(cx, I18n::preset(lang)).class("param-label");
+                        Button::new(cx, |cx| Label::new(cx, "<"))
+                            .on_press(|cx| cx.emit(GuitarUiEvent::PreviousPreset))
+                            .width(Pixels(28.0));
+                        Dropdown::new(
                             cx,
-                            language_view.map(|lang| match lang {
-                                Language::English => "中文".to_string(),
-                                Language::SimplifiedChinese => "English".to_string(),
-                            }),
+                            move |cx| {
+                                Button::new(cx, move |cx| {
+                                    HStack::new(cx, |cx| {
+                                        Label::new(cx, initial_preset_name.clone())
+                                            .width(Stretch(1.0))
+                                            .text_overflow(TextOverflow::Ellipsis);
+                                        Label::new(cx, "▾").hoverable(false);
+                                    })
+                                    .width(Stretch(1.0))
+                                })
+                                .on_press(|cx| cx.emit(PopupEvent::Switch))
+                                .width(Stretch(1.0));
+                            },
+                            move |cx| {
+                                Binding::new(cx, preset_choices, move |cx| {
+                                    for (id, name) in preset_choices.get() {
+                                        let event_id = id.clone();
+                                        Button::new(cx, move |cx| {
+                                            Label::new(cx, name.clone())
+                                                .alignment(Alignment::Left)
+                                                .width(Stretch(1.0))
+                                        })
+                                        .on_press(move |cx| {
+                                            cx.emit(GuitarUiEvent::SelectPreset(event_id.clone()));
+                                            cx.emit(PopupEvent::Close);
+                                        })
+                                        .width(Stretch(1.0));
+                                    }
+                                });
+                            },
                         )
+                        .width(Pixels(180.0));
+                        Button::new(cx, |cx| Label::new(cx, ">"))
+                            .on_press(|cx| cx.emit(GuitarUiEvent::NextPreset))
+                            .width(Pixels(28.0));
+                        Button::new(cx, move |cx| {
+                            Label::new(
+                                cx,
+                                language_view.map(|lang| match lang {
+                                    Language::English => "中文".to_string(),
+                                    Language::SimplifiedChinese => "English".to_string(),
+                                }),
+                            )
+                        })
+                        .on_press(|cx| cx.emit(GuitarUiEvent::ToggleLanguage))
+                        .width(Pixels(60.0));
                     })
-                    .on_press(|cx| cx.emit(GuitarUiEvent::ToggleLanguage))
-                    .width(Pixels(60.0));
+                    .height(Pixels(38.0))
+                    .horizontal_gap(Pixels(8.0));
+                    Element::new(cx).width(Stretch(1.0));
                 })
                 .height(Pixels(38.0))
-                .horizontal_gap(Pixels(8.0));
+                .width(Stretch(1.0));
 
                 HStack::new(cx, |cx| {
                     Textbox::new(cx, name_input.clone())

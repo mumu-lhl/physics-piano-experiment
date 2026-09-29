@@ -34,7 +34,7 @@ fn ui_text(lang: Language, english: &'static str, chinese: &'static str) -> &'st
 fn slider<'a, P: Param + 'static>(cx: &'a mut Context, label: &'static str, param: &'a P) {
     let param_ptr = param.as_ptr();
     HStack::new(cx, move |cx| {
-        Label::new(cx, label).width(Pixels(86.0));
+        Label::new(cx, label).width(Pixels(104.0));
         let mut slider = ParamSlider::new(cx, param)
             .width(Stretch(1.0))
             .height(Pixels(20.0));
@@ -662,73 +662,79 @@ pub fn create_vizia_piano_editor(
             let can_redo = can_redo_controls.clone();
             VStack::new(cx, move |cx| {
                 HStack::new(cx, |cx| {
-                    Button::new(cx, |cx| Label::new(cx, "<"))
-                        .on_press(|cx| cx.emit(PianoUiEvent::PreviousPreset))
-                        .width(Pixels(28.0));
-                    Dropdown::new(
-                        cx,
-                        move |cx| {
-                            Button::new(cx, move |cx| {
-                                HStack::new(cx, |cx| {
-                                    Label::new(cx, initial_preset_name.clone())
-                                        .width(Stretch(1.0))
-                                        .text_overflow(TextOverflow::Ellipsis);
-                                    Label::new(cx, "▾").hoverable(false);
-                                })
-                                .width(Stretch(1.0))
-                            })
-                            .on_press(|cx| cx.emit(PopupEvent::Switch))
-                            .width(Stretch(1.0));
-                        },
-                        move |cx| {
-                            Binding::new(cx, preset_choices, move |cx| {
-                                for (id, name) in preset_choices.get() {
-                                    let event_id = id.clone();
-                                    Button::new(cx, move |cx| {
-                                        Label::new(cx, name.clone())
-                                            .alignment(Alignment::Left)
-                                            .width(Stretch(1.0))
-                                    })
-                                    .on_press(move |cx| {
-                                        cx.emit(PianoUiEvent::SelectPreset(event_id.clone()));
-                                        cx.emit(PopupEvent::Close);
-                                    })
-                                    .width(Stretch(1.0));
-                                }
-                            });
-                        },
-                    )
-                    .width(Pixels(190.0));
-                    Button::new(cx, |cx| Label::new(cx, ">"))
-                        .on_press(|cx| cx.emit(PianoUiEvent::NextPreset))
-                        .width(Pixels(28.0));
-                    Button::new(cx, move |cx| {
-                        Label::new(
-                            cx,
-                            language_view.map(|lang| match lang {
-                                Language::English => "中文".to_string(),
-                                Language::SimplifiedChinese => "English".to_string(),
-                            }),
-                        )
-                    })
-                    .on_press(|cx| cx.emit(PianoUiEvent::ToggleLanguage))
-                    .width(Pixels(60.0));
-
+                    Element::new(cx).width(Stretch(1.0));
                     HStack::new(cx, |cx| {
-                        LissajousScopeWidget::new(
+                        Button::new(cx, |cx| Label::new(cx, "<"))
+                            .on_press(|cx| cx.emit(PianoUiEvent::PreviousPreset))
+                            .width(Pixels(28.0));
+                        Dropdown::new(
                             cx,
-                            recent_orbit_t.clone(),
-                            recent_orbit_p.clone(),
+                            move |cx| {
+                                Button::new(cx, move |cx| {
+                                    HStack::new(cx, |cx| {
+                                        Label::new(cx, initial_preset_name.clone())
+                                            .width(Stretch(1.0))
+                                            .text_overflow(TextOverflow::Ellipsis);
+                                        Label::new(cx, "▾").hoverable(false);
+                                    })
+                                    .width(Stretch(1.0))
+                                })
+                                .on_press(|cx| cx.emit(PopupEvent::Switch))
+                                .width(Stretch(1.0));
+                            },
+                            move |cx| {
+                                Binding::new(cx, preset_choices, move |cx| {
+                                    for (id, name) in preset_choices.get() {
+                                        let event_id = id.clone();
+                                        Button::new(cx, move |cx| {
+                                            Label::new(cx, name.clone())
+                                                .alignment(Alignment::Left)
+                                                .width(Stretch(1.0))
+                                        })
+                                        .on_press(move |cx| {
+                                            cx.emit(PianoUiEvent::SelectPreset(event_id.clone()));
+                                            cx.emit(PopupEvent::Close);
+                                        })
+                                        .width(Stretch(1.0));
+                                    }
+                                });
+                            },
                         )
-                        .size(Pixels(32.0));
-                        StereoVuMeterWidget::new(cx, peak_l.clone(), peak_r.clone())
-                            .width(Pixels(70.0))
-                            .height(Pixels(24.0));
+                        .width(Pixels(190.0));
+                        Button::new(cx, |cx| Label::new(cx, ">"))
+                            .on_press(|cx| cx.emit(PianoUiEvent::NextPreset))
+                            .width(Pixels(28.0));
+                        Button::new(cx, move |cx| {
+                            Label::new(
+                                cx,
+                                language_view.map(|lang| match lang {
+                                    Language::English => "中文".to_string(),
+                                    Language::SimplifiedChinese => "English".to_string(),
+                                }),
+                            )
+                        })
+                        .on_press(|cx| cx.emit(PianoUiEvent::ToggleLanguage))
+                        .width(Pixels(60.0));
+
+                        HStack::new(cx, |cx| {
+                            LissajousScopeWidget::new(
+                                cx,
+                                recent_orbit_t.clone(),
+                                recent_orbit_p.clone(),
+                            )
+                            .size(Pixels(32.0));
+                            StereoVuMeterWidget::new(cx, peak_l.clone(), peak_r.clone())
+                                .width(Pixels(70.0))
+                                .height(Pixels(24.0));
+                        })
+                        .horizontal_gap(Pixels(8.0));
                     })
+                    .height(Pixels(38.0))
                     .horizontal_gap(Pixels(8.0));
+                    Element::new(cx).width(Stretch(1.0));
                 })
                 .height(Pixels(38.0))
-                .horizontal_gap(Pixels(8.0));
+                .width(Stretch(1.0));
 
                 HStack::new(cx, |cx| {
                     Textbox::new(cx, name_input.clone())
