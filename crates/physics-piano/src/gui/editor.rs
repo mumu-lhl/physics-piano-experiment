@@ -775,7 +775,8 @@ pub fn create_vizia_piano_editor(
                 HStack::new(cx, |cx| {
                     PianoLidWidget::new(cx, params.clone(), lang)
                         .width(Stretch(1.0))
-                        .height(Pixels(150.0));
+                        .height(Pixels(150.0))
+                        .overflow(Overflow::Hidden);
                     MicStageWidget::new(cx, params.clone(), lang)
                         .width(Stretch(1.0))
                         .height(Pixels(150.0));
