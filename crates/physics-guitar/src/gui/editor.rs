@@ -15,6 +15,24 @@ use crate::nih_plugin::{GuiGuitarEvent, PhysicsGuitarParams};
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use std::collections::HashMap;
 
+#[derive(Clone)]
+struct DiscreteSelections {
+    mode: Signal<i32>,
+    pluck_style: Signal<i32>,
+    pickup_pos: Signal<i32>,
+    pickup_type: Signal<i32>,
+    groove_pattern: Signal<i32>,
+}
+
+#[derive(Clone, Copy)]
+enum DiscreteParam {
+    Mode,
+    PluckStyle,
+    PickupPosition,
+    PickupType,
+    GroovePattern,
+}
+
 pub const EDITOR_WIDTH: u32 = 1080;
 pub const EDITOR_HEIGHT: u32 = 560;
 
@@ -76,6 +94,80 @@ fn slider<'a, P: Param + 'static>(cx: &'a mut Context, label: &'static str, para
     .horizontal_gap(Pixels(6.0));
 }
 
+fn discrete_selector(
+    cx: &mut Context,
+    label: &'static str,
+    selected: Signal<i32>,
+    options: Vec<(i32, String)>,
+    params: Arc<PhysicsGuitarParams>,
+    param: DiscreteParam,
+) {
+    let trigger_options = options.clone();
+    HStack::new(cx, move |cx| {
+        Label::new(cx, label).width(Pixels(92.0));
+        Dropdown::new(
+            cx,
+            move |cx| {
+                let display_options = trigger_options.clone();
+                Button::new(cx, move |cx| {
+                    HStack::new(cx, move |cx| {
+                        Label::new(
+                            cx,
+                            selected.map(move |value| {
+                                display_options
+                                    .iter()
+                                    .find(|(option, _)| *option == *value)
+                                    .map(|(_, name)| name.clone())
+                                    .unwrap_or_default()
+                            }),
+                        )
+                        .width(Stretch(1.0))
+                        .text_overflow(TextOverflow::Ellipsis);
+                        Label::new(cx, "▾").hoverable(false);
+                    })
+                    .width(Stretch(1.0))
+                })
+                .on_press(|cx| cx.emit(PopupEvent::Switch))
+                .width(Stretch(1.0))
+                .height(Pixels(22.0));
+            },
+            move |cx| {
+                for (value, name) in options.clone() {
+                    let params = params.clone();
+                    Button::new(cx, move |cx| {
+                        Label::new(cx, name.clone())
+                            .alignment(Alignment::Left)
+                            .width(Stretch(1.0))
+                    })
+                    .on_press(move |cx| {
+                        set_discrete_param(cx, &params, param, value);
+                        cx.emit(PopupEvent::Close);
+                    })
+                    .width(Stretch(1.0));
+                }
+            },
+        )
+        .width(Stretch(1.0));
+    })
+    .height(Pixels(23.0))
+    .horizontal_gap(Pixels(6.0));
+}
+
+fn set_discrete_param(
+    cx: &mut EventContext,
+    params: &PhysicsGuitarParams,
+    param: DiscreteParam,
+    value: i32,
+) {
+    match param {
+        DiscreteParam::Mode => set_param(cx, &params.mode, value),
+        DiscreteParam::PluckStyle => set_param(cx, &params.pluck_style, value),
+        DiscreteParam::PickupPosition => set_param(cx, &params.pickup_pos, value),
+        DiscreteParam::PickupType => set_param(cx, &params.pickup_type, value),
+        DiscreteParam::GroovePattern => set_param(cx, &params.groove_pattern, value),
+    }
+}
+
 struct GuitarUiState {
     params: Arc<PhysicsGuitarParams>,
     manager: Arc<parking_lot::RwLock<PresetManager>>,
@@ -90,6 +182,7 @@ struct GuitarUiState {
     can_undo: Signal<bool>,
     can_redo: Signal<bool>,
     suppress_undo: Arc<AtomicU32>,
+    discrete: DiscreteSelections,
 }
 
 #[derive(Debug)]
@@ -233,6 +326,17 @@ impl Model for GuitarUiState {
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
         event.map(|event, _| match event {
             GuitarUiEvent::RefreshDisplay => {
+                self.discrete.mode.set(self.params.mode.value());
+                self.discrete
+                    .pluck_style
+                    .set(self.params.pluck_style.value());
+                self.discrete.pickup_pos.set(self.params.pickup_pos.value());
+                self.discrete
+                    .pickup_type
+                    .set(self.params.pickup_type.value());
+                self.discrete
+                    .groove_pattern
+                    .set(self.params.groove_pattern.value());
                 redraw_custom_view(cx, "guitar-fretboard-widget");
             }
             GuitarUiEvent::PreviousPreset | GuitarUiEvent::NextPreset => {
@@ -497,6 +601,13 @@ pub fn create_vizia_guitar_editor(
         let is_user_preset = Signal::new(false);
         let can_undo = Signal::new(undo_manager.read().can_undo());
         let can_redo = Signal::new(undo_manager.read().can_redo());
+        let discrete = DiscreteSelections {
+            mode: Signal::new(params.mode.value()),
+            pluck_style: Signal::new(params.pluck_style.value()),
+            pickup_pos: Signal::new(params.pickup_pos.value()),
+            pickup_type: Signal::new(params.pickup_type.value()),
+            groove_pattern: Signal::new(params.groove_pattern.value()),
+        };
         let is_user_preset_ui = is_user_preset.clone();
         let can_undo_ui = can_undo.clone();
         let can_redo_ui = can_redo.clone();
@@ -520,6 +631,7 @@ pub fn create_vizia_guitar_editor(
             can_undo,
             can_redo,
             suppress_undo,
+            discrete: discrete.clone(),
         }
         .build(cx);
         let display_timer = cx.add_timer(std::time::Duration::from_millis(33), None, |cx, _| {
@@ -538,6 +650,7 @@ pub fn create_vizia_guitar_editor(
         let is_user_preset_controls = is_user_preset_ui.clone();
         let can_undo_controls = can_undo_ui.clone();
         let can_redo_controls = can_redo_ui.clone();
+        let discrete_controls = discrete.clone();
 
         Binding::new(cx, language_ui, move |cx| {
             let lang = language_ui.get();
@@ -552,7 +665,31 @@ pub fn create_vizia_guitar_editor(
             let is_user_preset = is_user_preset_controls.clone();
             let can_undo = can_undo_controls.clone();
             let can_redo = can_redo_controls.clone();
+            let discrete = discrete_controls.clone();
             VStack::new(cx, move |cx| {
+                let mode_options = vec![
+                    (0, I18n::mode_electric(lang).to_string()),
+                    (1, I18n::mode_acoustic(lang).to_string()),
+                ];
+                let pluck_options = vec![
+                    (0, I18n::pluck_plectrum(lang).to_string()),
+                    (1, I18n::pluck_finger(lang).to_string()),
+                ];
+                let pickup_position_options = vec![
+                    (0, I18n::pickup_bridge(lang).to_string()),
+                    (1, I18n::pickup_mid(lang).to_string()),
+                    (2, I18n::pickup_neck(lang).to_string()),
+                    (3, ui_text(lang, "Bridge + Neck", "琴桥 + 琴颈").to_string()),
+                    (4, ui_text(lang, "Bridge + Mid", "琴桥 + 中间").to_string()),
+                ];
+                let pickup_type_options = vec![
+                    (0, I18n::pickup_single(lang).to_string()),
+                    (1, I18n::pickup_humbucker(lang).to_string()),
+                ];
+                let groove_options = (0..=4)
+                    .map(|index| (index, I18n::groove_name(index, lang).to_string()))
+                    .collect();
+
                 HStack::new(cx, |cx| {
                     Element::new(cx).width(Stretch(1.0));
                     HStack::new(cx, |cx| {
@@ -655,10 +792,38 @@ pub fn create_vizia_guitar_editor(
                 HStack::new(cx, |cx| {
                     VStack::new(cx, |cx| {
                         Label::new(cx, I18n::rack_instrument(lang)).class("rack-title");
-                        slider(cx, I18n::mode_param_label(lang), &params.mode);
-                        slider(cx, I18n::pluck_style_label(lang), &params.pluck_style);
-                        slider(cx, I18n::pickup_pos_label(lang), &params.pickup_pos);
-                        slider(cx, I18n::pickup_type_label(lang), &params.pickup_type);
+                        discrete_selector(
+                            cx,
+                            I18n::mode_param_label(lang),
+                            discrete.mode.clone(),
+                            mode_options.clone(),
+                            params.clone(),
+                            DiscreteParam::Mode,
+                        );
+                        discrete_selector(
+                            cx,
+                            I18n::pluck_style_label(lang),
+                            discrete.pluck_style.clone(),
+                            pluck_options.clone(),
+                            params.clone(),
+                            DiscreteParam::PluckStyle,
+                        );
+                        discrete_selector(
+                            cx,
+                            I18n::pickup_pos_label(lang),
+                            discrete.pickup_pos.clone(),
+                            pickup_position_options.clone(),
+                            params.clone(),
+                            DiscreteParam::PickupPosition,
+                        );
+                        discrete_selector(
+                            cx,
+                            I18n::pickup_type_label(lang),
+                            discrete.pickup_type.clone(),
+                            pickup_type_options.clone(),
+                            params.clone(),
+                            DiscreteParam::PickupType,
+                        );
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
@@ -686,7 +851,14 @@ pub fn create_vizia_guitar_editor(
 
                     VStack::new(cx, |cx| {
                         Label::new(cx, I18n::rack_master(lang)).class("rack-title");
-                        slider(cx, I18n::groove_pattern_label(lang), &params.groove_pattern);
+                        discrete_selector(
+                            cx,
+                            I18n::groove_pattern_label(lang),
+                            discrete.groove_pattern.clone(),
+                            groove_options,
+                            params.clone(),
+                            DiscreteParam::GroovePattern,
+                        );
                         slider(cx, I18n::bpm_label(lang), &params.groove_bpm);
                         slider(cx, I18n::master_gain_label(lang), &params.master_gain);
                     })
