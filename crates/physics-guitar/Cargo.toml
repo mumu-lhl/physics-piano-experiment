@@ -1,6 +1,6 @@
 [package]
 name = "physics-guitar"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 rust-version = "1.85"
 authors = ["Mumulhl"]
