@@ -72,37 +72,60 @@ jobs:
       - name: Run unit & integration tests
         run: cargo test --workspace
 
-      - name: Bundle release CLAP & VST3 plugins
+      - name: Bundle piano CLAP & VST3 plugins
         run: cargo xtask bundle physics-piano --release
 
-      - name: Build standalone playable executable
+      - name: Bundle guitar CLAP & VST3 plugins
+        run: cargo xtask bundle physics-guitar --release
+
+      - name: Build piano standalone executable
         run: cargo build --release -p physics-piano --bin physics-piano-standalone
+
+      - name: Build guitar standalone executable
+        run: cargo build --release -p physics-guitar --bin physics-guitar-standalone
+
+      - name: Stage piano and guitar formats separately
+        shell: bash
+        run: |
+          mkdir -p release-bundle/physics-piano release-bundle/physics-guitar
+          cp -R target/bundled/physics-piano.clap release-bundle/physics-piano/
+          cp -R target/bundled/physics-piano.vst3 release-bundle/physics-piano/
+          cp -R target/bundled/physics-guitar.clap release-bundle/physics-guitar/
+          cp -R target/bundled/physics-guitar.vst3 release-bundle/physics-guitar/
+
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cp target/release/physics-piano-standalone.exe release-bundle/physics-piano/
+            cp target/release/physics-guitar-standalone.exe release-bundle/physics-guitar/
+          else
+            cp target/release/physics-piano-standalone release-bundle/physics-piano/
+            cp target/release/physics-guitar-standalone release-bundle/physics-guitar/
+          fi
+
+      - name: Archive Windows bundle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path release-bundle/physics-piano -DestinationPath release-physics-piano-${{ runner.os }}-${{ runner.arch }}.zip
+          Compress-Archive -Path release-bundle/physics-guitar -DestinationPath release-physics-guitar-${{ runner.os }}-${{ runner.arch }}.zip
+
+      - name: Archive Linux and macOS bundle
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          chmod +x release-bundle/physics-piano/physics-piano-standalone
+          chmod +x release-bundle/physics-guitar/physics-guitar-standalone
+          tar -czf "release-physics-piano-${RUNNER_OS}-${RUNNER_ARCH}.tar.gz" -C release-bundle physics-piano
+          tar -czf "release-physics-guitar-${RUNNER_OS}-${RUNNER_ARCH}.tar.gz" -C release-bundle physics-guitar
 
       - name: Show sccache statistics
         run: sccache --show-stats
 
-      - name: Upload CLAP Plugin Artifact
+      - name: Upload separate instrument archives for this platform
         uses: actions/upload-artifact@v4
         with:
-          name: physics-piano-${{ matrix.os }}-clap
-          path: target/bundled/physics-piano.clap
+          name: release-${{ runner.os }}-${{ runner.arch }}
+          path: release-physics-*
           if-no-files-found: error
-
-      - name: Upload VST3 Plugin Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: physics-piano-${{ matrix.os }}-vst3
-          path: target/bundled/physics-piano.vst3
-          if-no-files-found: error
-
-      - name: Upload Standalone Executable Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: physics-piano-${{ matrix.os }}-standalone
-          path: |
-            target/release/physics-piano-standalone
-            target/release/physics-piano-standalone.exe
-          if-no-files-found: ignore
 
   python-verification:
     name: Python Physics Benchmark
@@ -131,21 +154,8 @@ jobs:
       - name: Download all built artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
-
-      - name: Package Release Archives
-        run: |
-          mkdir -p release-pkg
-          cd artifacts
-          for dir in physics-piano-*; do
-            if [ -d "$dir" ]; then
-              if [[ "$dir" == *"windows"* ]]; then
-                (cd "$dir" && zip -r "../../release-pkg/${dir}.zip" .)
-              else
-                tar -czvf "../release-pkg/${dir}.tar.gz" -C "$dir" .
-              fi
-            fi
-          done
+          path: release-pkg
+          merge-multiple: true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
