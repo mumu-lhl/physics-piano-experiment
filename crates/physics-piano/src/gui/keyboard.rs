@@ -98,9 +98,7 @@ impl PianoKeyboardWidget {
     fn play_note(&mut self, key: u8, velocity: f32) {
         if (21..=108).contains(&key) {
             let idx = (key - 21) as usize;
-            if let Some(mut vels) = self.key_velocities.try_write() {
-                vels[idx] = velocity;
-            }
+            self.key_velocities.write()[idx] = velocity;
         }
         let _ = self.gui_tx.send(EngineEvent::NoteOn {
             time: 0,
@@ -110,7 +108,21 @@ impl PianoKeyboardWidget {
     }
 
     fn release_note(&mut self, key: u8) {
+        if (21..=108).contains(&key) {
+            let idx = (key - 21) as usize;
+            // Mark GUI releases explicitly while the audio thread debounces NoteOff for
+            // keyboard auto-repeat. This prevents the stale active bit from drawing a stuck key.
+            self.key_velocities.write()[idx] = -1.0;
+        }
         let _ = self.gui_tx.send(EngineEvent::NoteOff { time: 0, key });
+    }
+}
+
+impl Drop for PianoKeyboardWidget {
+    fn drop(&mut self) {
+        if let Some(key) = self.held_mouse_key.take() {
+            self.release_note(key);
+        }
     }
 }
 
@@ -184,7 +196,7 @@ impl View for PianoKeyboardWidget {
         let vels = self.key_velocities.read();
 
         let is_active = |midi: u8| -> (bool, f32) {
-            let active = if (21..85).contains(&midi) {
+            let audio_active = if (21..85).contains(&midi) {
                 (low_mask & (1u64 << (midi - 21))) != 0
             } else if (85..=108).contains(&midi) {
                 (high_mask & (1u64 << (midi - 85))) != 0
@@ -196,7 +208,13 @@ impl View for PianoKeyboardWidget {
             } else {
                 0.8
             };
-            (active, vel)
+            // GUI-originated notes need to react before the next audio block updates the
+            // lock-free active-key masks. The local mouse state also makes the pressed key
+            // visible for the full duration of a mouse hold.
+            (
+                vel >= 0.0 && (audio_active || self.held_mouse_key == Some(midi) || vel > 0.0),
+                vel.max(0.0),
+            )
         };
 
         // Red felt strip above the keybed

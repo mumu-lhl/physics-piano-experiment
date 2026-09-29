@@ -24,6 +24,16 @@ pub struct GuitarFretboardWidget {
     held_mouse_pos: Option<(u8, u8)>, // (string_index 1..=6, fret 0..=24)
 }
 
+impl Drop for GuitarFretboardWidget {
+    fn drop(&mut self) {
+        if let Some((string_index, fret)) = self.held_mouse_pos.take() {
+            let _ = self
+                .gui_tx
+                .send(GuiGuitarEvent::NoteOff { string_index, fret });
+        }
+    }
+}
+
 impl GuitarFretboardWidget {
     pub fn new(
         cx: &mut Context,
@@ -225,7 +235,12 @@ impl View for GuitarFretboardWidget {
             let base_y = bounds.y + string_y_step * (s as f32 + 1.0);
             let gauge = string_gauges[s];
 
-            let active_fret = self.active_frets[s].load(Ordering::Relaxed);
+            let mut active_fret = self.active_frets[s].load(Ordering::Relaxed);
+            if let Some((held_string, held_fret)) = self.held_mouse_pos {
+                if held_string == (s + 1) as u8 {
+                    active_fret = held_fret;
+                }
+            }
             let energy =
                 f32::from_bits(self.string_energies[s].load(Ordering::Relaxed)).clamp(0.0, 1.0);
 

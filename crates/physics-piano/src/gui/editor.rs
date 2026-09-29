@@ -24,12 +24,66 @@ use std::sync::atomic::{AtomicU32, Ordering};
 pub const EDITOR_WIDTH: u32 = 1080;
 pub const EDITOR_HEIGHT: u32 = 620;
 
+fn ui_text(lang: Language, english: &'static str, chinese: &'static str) -> &'static str {
+    match lang {
+        Language::English => english,
+        Language::SimplifiedChinese => chinese,
+    }
+}
+
 fn slider<'a, P: Param + 'static>(cx: &'a mut Context, label: &'static str, param: &'a P) {
-    HStack::new(cx, |cx| {
+    let param_ptr = param.as_ptr();
+    HStack::new(cx, move |cx| {
         Label::new(cx, label).width(Pixels(86.0));
-        ParamSlider::new(cx, param)
+        let mut slider = ParamSlider::new(cx, param)
             .width(Stretch(1.0))
             .height(Pixels(20.0));
+        let drag_start = Arc::new(parking_lot::Mutex::new(None::<f32>));
+        let slider_entity = slider.entity();
+        slider.context().with_current(slider_entity, |cx| {
+            cx.add_listener(
+                move |_: &mut ParamSlider, cx: &mut EventContext, event: &mut Event| {
+                    event.map(|window, meta| {
+                        match window {
+                            WindowEvent::MouseDown(MouseButton::Left) => {
+                                let bounds = cx.bounds();
+                                let mouse = cx.mouse();
+                                let inside = mouse.cursor_x >= bounds.x
+                                    && mouse.cursor_x <= bounds.x + bounds.w
+                                    && mouse.cursor_y >= bounds.y
+                                    && mouse.cursor_y <= bounds.y + bounds.h;
+                                if inside {
+                                    *drag_start.lock() =
+                                        Some(unsafe { param_ptr.unmodulated_normalized_value() });
+                                }
+                            }
+                            WindowEvent::MouseUp(MouseButton::Left) => {
+                                *drag_start.lock() = None;
+                            }
+                            WindowEvent::MouseDown(MouseButton::Right) => {
+                                let value = *drag_start.lock();
+                                if let Some(value) = value {
+                                    cx.emit(RawParamEvent::SetParameterNormalized(
+                                        param_ptr, value,
+                                    ));
+                                    *drag_start.lock() = None;
+                                    // ParamSlider treats an unhandled right click as reset-to-default.
+                                    // Consume it and synthesize the left release so the active drag
+                                    // ends after restoring its starting value.
+                                    cx.emit_custom(
+                                        Event::new(WindowEvent::MouseUp(MouseButton::Left))
+                                            .target(cx.current())
+                                            .propagate(Propagation::Direct),
+                                    );
+                                    meta.consume();
+                                }
+                            }
+                            _ => {}
+                        }
+                    });
+                },
+            );
+        });
     })
     .height(Pixels(23.0))
     .horizontal_gap(Pixels(6.0));
@@ -41,6 +95,7 @@ struct PianoUiState {
     undo: Arc<parking_lot::RwLock<UndoManager>>,
     selected_name: Signal<String>,
     selected_id: Signal<String>,
+    preset_choices: Signal<Vec<(String, String)>>,
     language: Signal<Language>,
     language_atom: Arc<AtomicU8>,
     name_input: Signal<String>,
@@ -49,6 +104,7 @@ struct PianoUiState {
     can_redo: Signal<bool>,
     suppress_undo: Arc<AtomicU32>,
     gui_tx: Sender<EngineEvent>,
+    key_velocities: Arc<parking_lot::RwLock<[f32; 88]>>,
     octave_offset: i8,
     held_qwerty_keys: HashMap<Code, u8>,
     held_nav_keys: std::collections::HashSet<Code>,
@@ -67,6 +123,28 @@ enum PianoUiEvent {
     Rename,
     Overwrite,
     Delete,
+    RefreshDisplay,
+}
+
+fn preset_choices(manager: &PresetManager, lang: Language) -> Vec<(String, String)> {
+    manager
+        .presets()
+        .iter()
+        .map(|preset| {
+            (
+                preset.id.clone(),
+                preset
+                    .display_name(lang == Language::SimplifiedChinese)
+                    .to_string(),
+            )
+        })
+        .collect()
+}
+
+fn redraw_custom_view(cx: &mut EventContext, element: &str) {
+    if let Some(entity) = cx.get_entity_by_element_id(element) {
+        cx.with_current(entity, |cx| cx.needs_redraw());
+    }
 }
 
 fn piano_value(params: &PhysicsPianoParams, id: &str) -> Option<f32> {
@@ -130,6 +208,9 @@ fn piano_snapshot(params: &PhysicsPianoParams) -> HashMap<String, f32> {
 
 impl PianoUiState {
     fn play_note(&self, key: u8, velocity: f64) {
+        if (21..=108).contains(&key) {
+            self.key_velocities.write()[(key - 21) as usize] = velocity as f32;
+        }
         let _ = self.gui_tx.send(EngineEvent::NoteOn {
             time: 0,
             key,
@@ -138,6 +219,10 @@ impl PianoUiState {
     }
 
     fn release_note(&self, key: u8) {
+        if (21..=108).contains(&key) {
+            // Suppress the stale audio-active bit until the debounced NoteOff reaches the engine.
+            self.key_velocities.write()[(key - 21) as usize] = -1.0;
+        }
         let _ = self.gui_tx.send(EngineEvent::NoteOff { time: 0, key });
     }
 
@@ -172,6 +257,11 @@ fn set_param<P: Param>(cx: &mut EventContext, param: &P, value: P::Plain) {
 impl Model for PianoUiState {
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
         event.map(|event, _| match event {
+            PianoUiEvent::RefreshDisplay => {
+                redraw_custom_view(cx, "piano-keyboard-widget");
+                redraw_custom_view(cx, "lissajous-scope-widget");
+                redraw_custom_view(cx, "stereo-vu-meter-widget");
+            }
             PianoUiEvent::PreviousPreset | PianoUiEvent::NextPreset => {
                 let next = matches!(event, PianoUiEvent::NextPreset);
                 let id = {
@@ -226,6 +316,8 @@ impl Model for PianoUiState {
                     );
                     self.is_user_preset
                         .set(self.manager.read().is_user_preset(id));
+                    self.preset_choices
+                        .set(preset_choices(&self.manager.read(), self.language.get()));
                     self.set_undo_state();
                 }
             }
@@ -252,6 +344,8 @@ impl Model for PianoUiState {
                             .to_string(),
                     );
                 }
+                self.preset_choices
+                    .set(preset_choices(&self.manager.read(), lang));
             }
             PianoUiEvent::Undo => self.apply_history(cx, false),
             PianoUiEvent::Redo => self.apply_history(cx, true),
@@ -267,7 +361,7 @@ impl Model for PianoUiState {
                     "user_{}",
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis())
+                        .map(|d| d.as_nanos())
                         .unwrap_or_default()
                 );
                 let preset = Preset::new(
@@ -281,6 +375,8 @@ impl Model for PianoUiState {
                     self.selected_name.set(name.clone());
                     self.name_input.set(name);
                     self.is_user_preset.set(true);
+                    self.preset_choices
+                        .set(preset_choices(&self.manager.read(), self.language.get()));
                 }
             }
             PianoUiEvent::Rename => {
@@ -294,6 +390,8 @@ impl Model for PianoUiState {
                             .unwrap_or(false)
                     {
                         self.selected_name.set(name);
+                        self.preset_choices
+                            .set(preset_choices(&self.manager.read(), self.language.get()));
                     }
                 }
             }
@@ -313,6 +411,8 @@ impl Model for PianoUiState {
                     .delete_user_preset(&id)
                     .unwrap_or(false)
                 {
+                    self.preset_choices
+                        .set(preset_choices(&self.manager.read(), self.language.get()));
                     cx.emit(PianoUiEvent::SelectPreset("steinway_concert_d".to_string()));
                 }
             }
@@ -483,6 +583,7 @@ pub fn create_vizia_piano_editor(
         // Signals need to belong to this Vizia tree's reactive scope.
         let preset_name = Signal::new(selected_name.clone());
         let preset_id = Signal::new(initial_id.clone());
+        let preset_choices = Signal::new(preset_choices(&manager.read(), language_initial));
         let language = Signal::new(language_initial);
         let language_view = language.clone();
         let language_ui = language.clone();
@@ -490,6 +591,9 @@ pub fn create_vizia_piano_editor(
         let is_user_preset = Signal::new(false);
         let can_undo = Signal::new(undo_manager.read().can_undo());
         let can_redo = Signal::new(undo_manager.read().can_redo());
+        let is_user_preset_ui = is_user_preset.clone();
+        let can_undo_ui = can_undo.clone();
+        let can_redo_ui = can_redo.clone();
         let suppress_undo = Arc::new(AtomicU32::new(0));
         setup_vizia_fonts(cx);
         if let Err(err) = cx.add_stylesheet(include_style!("src/gui/theme.css")) {
@@ -501,6 +605,7 @@ pub fn create_vizia_piano_editor(
             undo: undo_manager.clone(),
             selected_name: preset_name.clone(),
             selected_id: preset_id,
+            preset_choices: preset_choices.clone(),
             language,
             language_atom: language_atom.clone(),
             name_input: name_input.clone(),
@@ -509,11 +614,16 @@ pub fn create_vizia_piano_editor(
             can_redo: can_redo.clone(),
             suppress_undo,
             gui_tx: gui_tx.clone(),
+            key_velocities: key_velocities.clone(),
             octave_offset: 0,
             held_qwerty_keys: HashMap::new(),
             held_nav_keys: std::collections::HashSet::new(),
         }
         .build(cx);
+        let display_timer = cx.add_timer(std::time::Duration::from_millis(33), None, |cx, _| {
+            cx.emit(PianoUiEvent::RefreshDisplay)
+        });
+        cx.start_timer(display_timer);
 
         let params_ui = params.clone();
         let peak_l_ui = peak_l.clone();
@@ -526,7 +636,11 @@ pub fn create_vizia_piano_editor(
         let gui_tx_ui = gui_tx.clone();
         let name_input_ui = name_input.clone();
         let preset_name_ui = preset_name.clone();
+        let preset_choices_ui = preset_choices.clone();
         let language_view_ui = language_view.clone();
+        let is_user_preset_controls = is_user_preset_ui.clone();
+        let can_undo_controls = can_undo_ui.clone();
+        let can_redo_controls = can_redo_ui.clone();
 
         Binding::new(cx, language_ui, move |cx| {
             let lang = language_ui.get();
@@ -540,20 +654,51 @@ pub fn create_vizia_piano_editor(
             let recent_orbit_p = recent_orbit_p_ui.clone();
             let gui_tx = gui_tx_ui.clone();
             let initial_preset_name = preset_name_ui.clone();
+            let preset_choices = preset_choices_ui.clone();
             let name_input = name_input_ui.clone();
             let language_view = language_view_ui.clone();
+            let is_user_preset = is_user_preset_controls.clone();
+            let can_undo = can_undo_controls.clone();
+            let can_redo = can_redo_controls.clone();
             VStack::new(cx, move |cx| {
                 HStack::new(cx, |cx| {
-                    VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::title(lang)).class("title");
-                        Label::new(cx, I18n::subtitle(lang)).class("subtitle");
-                    })
-                    .width(Pixels(200.0));
-
                     Button::new(cx, |cx| Label::new(cx, "<"))
                         .on_press(|cx| cx.emit(PianoUiEvent::PreviousPreset))
                         .width(Pixels(28.0));
-                    Label::new(cx, initial_preset_name).width(Pixels(190.0));
+                    Dropdown::new(
+                        cx,
+                        move |cx| {
+                            Button::new(cx, move |cx| {
+                                HStack::new(cx, |cx| {
+                                    Label::new(cx, initial_preset_name.clone())
+                                        .width(Stretch(1.0))
+                                        .text_overflow(TextOverflow::Ellipsis);
+                                    Label::new(cx, "▾").hoverable(false);
+                                })
+                                .width(Stretch(1.0))
+                            })
+                            .on_press(|cx| cx.emit(PopupEvent::Switch))
+                            .width(Stretch(1.0));
+                        },
+                        move |cx| {
+                            Binding::new(cx, preset_choices, move |cx| {
+                                for (id, name) in preset_choices.get() {
+                                    let event_id = id.clone();
+                                    Button::new(cx, move |cx| {
+                                        Label::new(cx, name.clone())
+                                            .alignment(Alignment::Left)
+                                            .width(Stretch(1.0))
+                                    })
+                                    .on_press(move |cx| {
+                                        cx.emit(PianoUiEvent::SelectPreset(event_id.clone()));
+                                        cx.emit(PopupEvent::Close);
+                                    })
+                                    .width(Stretch(1.0));
+                                }
+                            });
+                        },
+                    )
+                    .width(Pixels(190.0));
                     Button::new(cx, |cx| Label::new(cx, ">"))
                         .on_press(|cx| cx.emit(PianoUiEvent::NextPreset))
                         .width(Pixels(28.0));
@@ -587,26 +732,35 @@ pub fn create_vizia_piano_editor(
 
                 HStack::new(cx, |cx| {
                     Textbox::new(cx, name_input.clone())
+                        .name(ui_text(lang, "Preset name", "预设名称"))
+                        .placeholder(ui_text(lang, "Preset name", "预设名称"))
                         .on_edit(|cx, text| cx.emit(PianoUiEvent::SetName(text)))
                         .width(Pixels(120.0))
                         .height(Pixels(26.0));
-                    Button::new(cx, |cx| Label::new(cx, "Save As"))
+                    Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Save As", "另存为")))
                         .on_press(|cx| cx.emit(PianoUiEvent::SaveAs))
                         .width(Pixels(60.0));
-                    Button::new(cx, |cx| Label::new(cx, "Rename"))
+                    Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Rename", "重命名")))
                         .on_press(|cx| cx.emit(PianoUiEvent::Rename))
+                        .disabled(is_user_preset.clone().map(|is_user| !is_user))
                         .width(Pixels(54.0));
-                    Button::new(cx, |cx| Label::new(cx, "Overwrite"))
-                        .on_press(|cx| cx.emit(PianoUiEvent::Overwrite))
-                        .width(Pixels(64.0));
-                    Button::new(cx, |cx| Label::new(cx, "Delete"))
+                    Button::new(cx, |cx| {
+                        Label::new(cx, ui_text(lang, "Overwrite", "覆盖保存"))
+                    })
+                    .on_press(|cx| cx.emit(PianoUiEvent::Overwrite))
+                    .disabled(is_user_preset.clone().map(|is_user| !is_user))
+                    .width(Pixels(64.0));
+                    Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Delete", "删除")))
                         .on_press(|cx| cx.emit(PianoUiEvent::Delete))
+                        .disabled(is_user_preset.clone().map(|is_user| !is_user))
                         .width(Pixels(44.0));
-                    Button::new(cx, |cx| Label::new(cx, "Undo"))
+                    Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Undo", "撤销")))
                         .on_press(|cx| cx.emit(PianoUiEvent::Undo))
+                        .disabled(can_undo.clone().map(|enabled| !enabled))
                         .width(Pixels(48.0));
-                    Button::new(cx, |cx| Label::new(cx, "Redo"))
+                    Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Redo", "重做")))
                         .on_press(|cx| cx.emit(PianoUiEvent::Redo))
+                        .disabled(can_redo.clone().map(|enabled| !enabled))
                         .width(Pixels(48.0));
                 })
                 .height(Pixels(30.0))
@@ -655,7 +809,7 @@ pub fn create_vizia_piano_editor(
                         Label::new(cx, I18n::rack_output(lang)).class("rack-title");
                         slider(cx, I18n::master_gain(lang), &params.master_gain);
                         slider(cx, I18n::velocity_curve(lang), &params.velocity_curve);
-                        ParamButton::new(cx, &params.una_corda).with_label("Una Corda");
+                        ParamButton::new(cx, &params.una_corda).with_label(I18n::una_corda(lang));
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
