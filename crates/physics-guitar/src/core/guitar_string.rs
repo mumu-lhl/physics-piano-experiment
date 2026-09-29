@@ -116,12 +116,16 @@ impl GuitarString {
         // Apply pitch bend to tension: f ~ sqrt(T), so T = T0 * 2^(2 * semitones / 12)
         let bend_factor = 2.0f64.powf(2.0 * self.pitch_bend_semitones / 12.0);
         let tension = self.params.tension * bend_factor;
-        let mu = self.params.linear_density;
         let e = self.params.youngs_modulus;
         let i_area = self.params.moment_of_inertia;
         let b = (PI.powi(3) * e * i_area) / (4.0 * tension * length.powi(2));
 
-        let omega_0 = (PI / length) * (tension / mu).sqrt();
+        // The published gauge/tension values are approximate and do not always
+        // reproduce the documented standard tuning when used as T and mu
+        // directly. Calibrate the fundamental to the string's specified fret
+        // frequency, while retaining the physical stiffness ratio and bend.
+        let target_f0 = self.current_f0 * bend_factor.sqrt();
+        let omega_0 = 2.0 * PI * target_f0 / (1.0 + b).sqrt();
         let area = PI * (self.params.diameter / 2.0).powi(2);
         self.geom_tension_coeff = (e * area) / (4.0 * length.powi(2));
 

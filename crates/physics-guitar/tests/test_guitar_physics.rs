@@ -29,6 +29,40 @@ fn test_guitar_string_set_parameters() {
 }
 
 #[test]
+fn test_modal_fundamentals_follow_standard_tuning_across_modes_and_frets() {
+    for set_type in [
+        GuitarStringSetType::Electric010,
+        GuitarStringSetType::Acoustic012,
+    ] {
+        for params in generate_guitar_string_set(set_type, 30) {
+            let mut string = GuitarString::new(params.clone(), 44100.0);
+            for fret in [0, 1, 5, 12, 24] {
+                string.set_fret(fret);
+                let expected_hz = params.frequency_at_fret(fret);
+                let actual_hz = string.omega_t[0] / (2.0 * std::f64::consts::PI);
+                let cents = 1200.0 * (actual_hz / expected_hz).log2();
+                assert!(
+                    cents.abs() < 0.5,
+                    "{set_type:?} string {} fret {fret} is {cents:.2} cents from tuning",
+                    params.string_index
+                );
+            }
+
+            string.set_fret(5);
+            string.set_pitch_bend(2.0);
+            let expected_hz = params.frequency_at_fret(5) * 2.0_f64.powf(2.0 / 12.0);
+            let actual_hz = string.omega_t[0] / (2.0 * std::f64::consts::PI);
+            let cents = 1200.0 * (actual_hz / expected_hz).log2();
+            assert!(
+                cents.abs() < 0.5,
+                "{set_type:?} string {} pitch bend is {cents:.2} cents from target",
+                params.string_index
+            );
+        }
+    }
+}
+
+#[test]
 fn test_pluck_dynamics_and_window_filtering() {
     let exciter_plectrum = PluckExciter::new(PluckStyle::Plectrum);
     let exciter_finger = PluckExciter::new(PluckStyle::FingerFlesh);
