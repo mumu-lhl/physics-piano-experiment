@@ -1,16 +1,16 @@
-//! Native CLAP Plugin & Standalone Synthesizer built with nih-plug and vizia.
+//! Native CLAP plugin and standalone synthesizer built with nice-plug and Vizia.
 
 use atomic_float::AtomicF32;
 use nice_plug::prelude::*;
 use std::collections::HashMap;
 use std::num::NonZeroU32;
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use vizia_plug::ViziaState;
 
 use crate::engine::{EngineEvent, EngineOutEvent, PianoEngine};
-use crate::gui::{create_vizia_piano_editor, default_vizia_state, Language};
-use physics_presets::{piano_factory_presets, PresetManager, UndoManager};
+use crate::gui::{Language, create_vizia_piano_editor, default_vizia_state};
+use physics_presets::{PresetManager, UndoManager, piano_factory_presets};
 
 #[derive(Params)]
 pub struct PhysicsPianoParams {
@@ -372,7 +372,8 @@ impl Plugin for PhysicsPiano {
                 } => {
                     let key_idx = (note as i32 - 21) as usize;
                     if key_idx < 88 {
-                        if let Some(mut vels) = self.key_velocities.try_write() {
+                        let velocities = self.key_velocities.try_write();
+                        if let Some(mut vels) = velocities {
                             vels[key_idx] = velocity;
                         }
                     }
@@ -434,7 +435,8 @@ impl Plugin for PhysicsPiano {
 
                     let key_idx = (key as i32 - 21) as usize;
                     if key_idx < 88 {
-                        if let Some(mut vels) = self.key_velocities.try_write() {
+                        let velocities = self.key_velocities.try_write();
+                        if let Some(mut vels) = velocities {
                             vels[key_idx] = velocity as f32;
                         }
                     }

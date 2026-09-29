@@ -1,7 +1,8 @@
 [package]
 name = "physics-presets"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.85"
 authors = ["Mumulhl"]
 description = "Universal JSON-based preset management, file storage, and Undo/Redo history system for physical modeling instruments"
 

@@ -12,8 +12,8 @@
 use super::skia_compat as vg;
 use super::skia_compat::CanvasExt;
 use crossbeam_channel::Sender;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use vizia_plug::vizia::prelude::*;
 
 use crate::engine::EngineEvent;

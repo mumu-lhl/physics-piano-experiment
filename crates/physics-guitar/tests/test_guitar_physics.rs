@@ -5,7 +5,7 @@ use physics_guitar::core::guitar_string::GuitarString;
 use physics_guitar::core::pickup::{MagneticPickup, PickupPosition, PickupType};
 use physics_guitar::core::pluck::{PluckExciter, PluckStyle};
 use physics_guitar::engine::{GuitarEngine, GuitarInstrumentMode};
-use physics_guitar::params::{generate_guitar_string_set, GuitarStringSetType};
+use physics_guitar::params::{GuitarStringSetType, generate_guitar_string_set};
 
 #[test]
 fn test_guitar_string_set_parameters() {

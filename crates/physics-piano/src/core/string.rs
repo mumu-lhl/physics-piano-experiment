@@ -116,11 +116,7 @@ impl StiffStringModal {
         for &n in &n_modes {
             let sinc_val = {
                 let x = PI * (n * w_h) / (2.0 * length);
-                if x.abs() < 1e-9 {
-                    1.0
-                } else {
-                    x.sin() / x
-                }
+                if x.abs() < 1e-9 { 1.0 } else { x.sin() / x }
             };
             let phi = (n * PI * strike_x / length).sin() * sinc_val;
             phi_h.push(phi);

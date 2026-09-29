@@ -11,11 +11,11 @@
 use super::skia_compat as vg;
 use super::skia_compat::CanvasExt;
 use crossbeam_channel::Sender;
-use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use vizia_plug::vizia::prelude::*;
 
-use crate::nih_plugin::GuiGuitarEvent;
+use crate::nice_plugin::GuiGuitarEvent;
 
 pub struct GuitarFretboardWidget {
     active_frets: Arc<[AtomicU8; 6]>,

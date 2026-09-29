@@ -2,16 +2,16 @@
 
 use crossbeam_channel::Sender;
 use nice_plug::prelude::{Editor, Param};
-use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use vizia_plug::vizia::prelude::*;
 use vizia_plug::widgets::util::ModifiersExt;
 use vizia_plug::widgets::*;
-use vizia_plug::{create_vizia_editor, ViziaState, ViziaTheming};
+use vizia_plug::{ViziaState, ViziaTheming, create_vizia_editor};
 
 use crate::gui::fretboard_view::GuitarFretboardWidget;
-use crate::gui::i18n::{setup_vizia_fonts, I18n, Language};
-use crate::nih_plugin::{GuiGuitarEvent, PhysicsGuitarParams};
+use crate::gui::i18n::{I18n, Language, setup_vizia_fonts};
+use crate::nice_plugin::{GuiGuitarEvent, PhysicsGuitarParams};
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use std::collections::HashMap;
 

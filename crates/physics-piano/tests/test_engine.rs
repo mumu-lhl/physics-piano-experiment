@@ -206,11 +206,11 @@ fn test_engine_full_synthesis_and_pedal() {
 
 #[test]
 fn test_clap_plugin_c_abi_and_extensions() {
-    use clap_sys::ext::audio_ports::{clap_plugin_audio_ports, CLAP_EXT_AUDIO_PORTS};
-    use clap_sys::ext::note_ports::{clap_plugin_note_ports, CLAP_EXT_NOTE_PORTS};
-    use clap_sys::ext::params::{clap_plugin_params, CLAP_EXT_PARAMS};
+    use clap_sys::ext::audio_ports::{CLAP_EXT_AUDIO_PORTS, clap_plugin_audio_ports};
+    use clap_sys::ext::note_ports::{CLAP_EXT_NOTE_PORTS, clap_plugin_note_ports};
+    use clap_sys::ext::params::{CLAP_EXT_PARAMS, clap_plugin_params};
     use clap_sys::ext::thread_pool::CLAP_EXT_THREAD_POOL;
-    use clap_sys::factory::plugin_factory::{clap_plugin_factory, CLAP_PLUGIN_FACTORY_ID};
+    use clap_sys::factory::plugin_factory::{CLAP_PLUGIN_FACTORY_ID, clap_plugin_factory};
     use physics_piano::raw_clap_entry;
     use std::ffi::CStr;
     use std::ptr;

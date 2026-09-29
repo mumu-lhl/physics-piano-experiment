@@ -99,11 +99,7 @@ impl FretboardRouter {
                     // If playing high up the neck (hand_pos >= 7), suppress accidental open strings;
                     // If in low positions (hand_pos <= 3), open strings have neutral/rewarded cost.
                     let p_open = if fret == 0 {
-                        if self.hand_position >= 7 {
-                            45.0
-                        } else {
-                            -5.0
-                        }
+                        if self.hand_position >= 7 { 45.0 } else { -5.0 }
                     } else {
                         0.0
                     };

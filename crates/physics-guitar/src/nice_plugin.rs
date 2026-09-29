@@ -1,16 +1,16 @@
-//! Native CLAP Plugin & Standalone Synthesizer built with nih-plug and vizia for Physics Guitar.
+//! Native CLAP plugin and standalone synthesizer built with nice-plug and Vizia for Physics Guitar.
 
 use nice_plug::prelude::*;
-use physics_presets::{guitar_factory_presets, PresetManager, UndoManager};
-use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
+use physics_presets::{PresetManager, UndoManager, guitar_factory_presets};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use vizia_plug::ViziaState;
 
 use crate::core::groove::GroovePattern;
 use crate::core::pickup::{PickupSelector, PickupType};
 use crate::core::pluck::PluckStyle;
 use crate::engine::{GuitarEngine, GuitarInstrumentMode};
-use crate::gui::{create_vizia_guitar_editor, default_vizia_state, Language};
+use crate::gui::{Language, create_vizia_guitar_editor, default_vizia_state};
 use crate::params::GuitarStringSetType;
 
 #[derive(Params)]
@@ -264,7 +264,7 @@ impl Plugin for PhysicsGuitar {
     const VENDOR: &'static str = "Mumulhl";
     const URL: &'static str = "https://github.com/mumu-lhl/physics-piano-experiment";
     const EMAIL: &'static str = "mumulhl@example.com";
-    const VERSION: &'static str = "0.1.0";
+    const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
         main_input_channels: None,
@@ -412,7 +412,7 @@ impl Plugin for PhysicsGuitar {
                         self.engine.note_off(channel, note);
                     }
                     NoteEvent::MidiPitchBend { channel, value, .. } => {
-                        // nih-plug normalizes value to [0.0, 1.0], where 0.5 is center (0 bend)
+                        // nice-plug normalizes value to [0.0, 1.0], where 0.5 is center (0 bend)
                         // Map to +/- 12 semitones
                         let bend_semitones = (value as f64 - 0.5) * 2.0 * 12.0;
                         self.engine.pitch_bend(channel, bend_semitones);

@@ -1,7 +1,7 @@
 //! Standalone Desktop Application with Hardware-Accelerated GUI and Audio/MIDI for Physics Piano.
 
 use nice_plug::wrapper::standalone::nice_export_standalone_with_args;
-use physics_piano::nih_plugin::PhysicsPiano;
+use physics_piano::nice_plugin::PhysicsPiano;
 
 fn main() {
     let mut args: Vec<String> = std::env::args().collect();

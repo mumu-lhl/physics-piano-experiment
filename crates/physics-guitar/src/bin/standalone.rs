@@ -1,7 +1,7 @@
 //! Standalone Desktop Application with Hardware-Accelerated GUI and Audio/MIDI for Physics Guitar.
 
 use nice_plug::wrapper::standalone::nice_export_standalone_with_args;
-use physics_guitar::nih_plugin::PhysicsGuitar;
+use physics_guitar::nice_plugin::PhysicsGuitar;
 
 fn main() {
     let mut args: Vec<String> = std::env::args().collect();

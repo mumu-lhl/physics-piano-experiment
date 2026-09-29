@@ -10,7 +10,7 @@ use crate::core::pickup::{MagneticPickup, PickupSelector, PickupType};
 use crate::core::pluck::{PluckExciter, PluckStyle};
 use crate::core::squeak::FingerSqueakGenerator;
 use crate::core::strummer::{SmartStrummer, StrumPluckEvent};
-use crate::params::{generate_guitar_string_set, GuitarStringSetType};
+use crate::params::{GuitarStringSetType, generate_guitar_string_set};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuitarInstrumentMode {

@@ -12,7 +12,7 @@ use vizia_plug::vizia::prelude::*;
 use vizia_plug::widgets::param_base::ParamWidgetBase;
 
 use crate::gui::i18n::Language;
-use crate::nih_plugin::PhysicsPianoParams;
+use crate::nice_plugin::PhysicsPianoParams;
 
 pub struct PianoLidWidget {
     params: Arc<PhysicsPianoParams>,

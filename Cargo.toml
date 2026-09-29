@@ -5,7 +5,7 @@ members = [
     "crates/physics-presets",
     "xtask"
 ]
-resolver = "2"
+resolver = "3"
 
 [profile.release]
 opt-level = 3

@@ -1,6 +1,6 @@
 use physics_presets::{
-    guitar_factory_presets, piano_factory_presets, ParamTransition, Preset, PresetManager,
-    UndoManager,
+    ParamTransition, Preset, PresetManager, UndoManager, guitar_factory_presets,
+    piano_factory_presets,
 };
 use std::collections::HashMap;
 
@@ -165,18 +165,20 @@ fn test_preset_manager_rename_and_overwrite() {
     // Overwrite parameters
     let mut new_params = HashMap::new();
     new_params.insert("inharm".to_string(), 2.5);
-    assert!(mgr
-        .overwrite_user_preset("user_1", new_params)
-        .expect("Failed to overwrite"));
+    assert!(
+        mgr.overwrite_user_preset("user_1", new_params)
+            .expect("Failed to overwrite")
+    );
     assert_eq!(
         mgr.get_preset("user_1").unwrap().params.get("inharm"),
         Some(&2.5)
     );
 
     // Rename
-    assert!(mgr
-        .rename_user_preset("user_1", "Renamed Piano")
-        .expect("Failed to rename"));
+    assert!(
+        mgr.rename_user_preset("user_1", "Renamed Piano")
+            .expect("Failed to rename")
+    );
     assert_eq!(mgr.get_preset("user_1").unwrap().name, "Renamed Piano");
 
     // Clean up

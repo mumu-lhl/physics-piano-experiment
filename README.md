@@ -73,7 +73,7 @@ physics-piano-experiment/
 ## Quickstart: Building & Running
 
 ### Prerequisites
-- **Rust Toolchain**: `stable` (MSRV 1.75+)
+- **Rust Toolchain**: `stable` (MSRV 1.85+, Rust 2024 Edition)
 - **System Libraries (Linux)**:
   ```bash
   # Debian / Ubuntu

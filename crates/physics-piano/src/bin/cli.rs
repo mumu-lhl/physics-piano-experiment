@@ -8,8 +8,12 @@ use std::time::Instant;
 fn print_usage() {
     println!("Physics Piano (Rust High-Performance Physical Modeling Engine)");
     println!("Usage:");
-    println!("  physics-piano-rs render <note> <duration_sec> <output.wav> [velocity] [--sustain] [--upols]");
-    println!("  physics-piano-rs chord <notes_comma_separated> <duration_sec> <output.wav> [velocity] [--sustain] [--upols]");
+    println!(
+        "  physics-piano-rs render <note> <duration_sec> <output.wav> [velocity] [--sustain] [--upols]"
+    );
+    println!(
+        "  physics-piano-rs chord <notes_comma_separated> <duration_sec> <output.wav> [velocity] [--sustain] [--upols]"
+    );
     println!("  physics-piano-rs benchmark [num_modes]");
     println!("Examples:");
     println!("  physics-piano-rs render A4 3.0 output_a4.wav 0.85");

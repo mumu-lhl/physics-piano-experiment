@@ -1,7 +1,8 @@
 [package]
 name = "physics-piano"
-version = "0.2.0"
-edition = "2021"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.85"
 authors = ["Mumulhl"]
 description = "First-principles physical modeling acoustic piano synthesizer and native CLAP plugin in Rust"
 
@@ -31,4 +32,3 @@ atomic_float = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 physics-presets = { path = "../physics-presets" }
-

@@ -4,9 +4,9 @@ use crate::core::pedal::{DamperWhoosh, PlateShock, RestrikeBuzz};
 use crate::core::voice::PianoVoice;
 use crate::dsp::lid::LidBaffle;
 use crate::dsp::upols::{
-    generate_multi_perspective_soundboard_irs, MultiPerspectiveUPOLS, UPOLSConvolver,
+    MultiPerspectiveUPOLS, UPOLSConvolver, generate_multi_perspective_soundboard_irs,
 };
-use crate::params::{generate_grand_piano_parameters, KeyParams};
+use crate::params::{KeyParams, generate_grand_piano_parameters};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]

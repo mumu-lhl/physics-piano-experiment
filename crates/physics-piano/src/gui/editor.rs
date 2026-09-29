@@ -3,20 +3,20 @@
 use atomic_float::AtomicF32;
 use crossbeam_channel::Sender;
 use nice_plug::prelude::{Editor, Param};
-use std::sync::atomic::{AtomicU64, AtomicU8};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, AtomicU64};
 use vizia_plug::vizia::prelude::*;
 use vizia_plug::widgets::util::ModifiersExt;
 use vizia_plug::widgets::*;
-use vizia_plug::{create_vizia_editor, ViziaState, ViziaTheming};
+use vizia_plug::{ViziaState, ViziaTheming, create_vizia_editor};
 
 use crate::engine::EngineEvent;
-use crate::gui::i18n::{setup_vizia_fonts, I18n, Language};
+use crate::gui::i18n::{I18n, Language, setup_vizia_fonts};
 use crate::gui::keyboard::PianoKeyboardWidget;
 use crate::gui::lid::PianoLidWidget;
 use crate::gui::mics::MicStageWidget;
 use crate::gui::scope::{LissajousScopeWidget, StereoVuMeterWidget};
-use crate::nih_plugin::PhysicsPianoParams;
+use crate::nice_plugin::PhysicsPianoParams;
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};

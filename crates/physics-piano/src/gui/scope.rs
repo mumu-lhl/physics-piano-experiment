@@ -3,8 +3,8 @@
 use super::skia_compat as vg;
 use super::skia_compat::CanvasExt;
 use atomic_float::AtomicF32;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use vizia_plug::vizia::prelude::*;
 
 pub struct LissajousScopeWidget {
