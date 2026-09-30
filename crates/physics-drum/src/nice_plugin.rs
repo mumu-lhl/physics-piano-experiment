@@ -2,9 +2,10 @@
 
 use crate::{DrumEngine, gui::create_vizia_drum_editor, sanitize_floating_point_environment};
 use nice_plug::prelude::*;
+use physics_presets::{PresetManager, UndoManager, drum_factory_presets};
 use std::num::NonZeroU32;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use vizia_plug::ViziaState;
 
 #[derive(Params)]
@@ -27,7 +28,7 @@ pub struct PhysicsDrumParams {
 impl Default for PhysicsDrumParams {
     fn default() -> Self {
         Self {
-            editor_state: ViziaState::new(|| (900, 575)),
+            editor_state: ViziaState::new(|| (900, 640)),
             snare_tightness: FloatParam::new(
                 "Snare Tightness",
                 0.62,
@@ -87,11 +88,21 @@ pub struct PhysicsDrum {
     pub voice_energies_shared: Arc<[AtomicU32; 10]>,
     pub gui_event_tx: crossbeam_channel::Sender<GuiDrumEvent>,
     gui_event_rx: crossbeam_channel::Receiver<GuiDrumEvent>,
+    pub language: Arc<AtomicU8>,
+    pub preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
+    pub undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
 }
 
 impl Default for PhysicsDrum {
     fn default() -> Self {
         let (gui_event_tx, gui_event_rx) = crossbeam_channel::bounded(256);
+        let language = if physics_ui::Language::from_system_locale()
+            == physics_ui::Language::SimplifiedChinese
+        {
+            1
+        } else {
+            0
+        };
         Self {
             params: Arc::new(PhysicsDrumParams::default()),
             engine: DrumEngine::new(44_100.0),
@@ -109,6 +120,12 @@ impl Default for PhysicsDrum {
             ]),
             gui_event_tx,
             gui_event_rx,
+            language: Arc::new(AtomicU8::new(language)),
+            preset_manager: Arc::new(parking_lot::RwLock::new(PresetManager::new(
+                "drum",
+                drum_factory_presets(),
+            ))),
+            undo_manager: Arc::new(parking_lot::RwLock::new(UndoManager::default())),
         }
     }
 }
@@ -234,6 +251,9 @@ impl Plugin for PhysicsDrum {
             self.params.clone(),
             self.voice_energies_shared.clone(),
             self.gui_event_tx.clone(),
+            self.language.clone(),
+            self.preset_manager.clone(),
+            self.undo_manager.clone(),
         )
     }
 }

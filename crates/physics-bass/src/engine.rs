@@ -157,14 +157,33 @@ impl BassEngine {
 
     pub fn note_on(&mut self, note: u8, velocity: f64) {
         if let Some((index, _fret)) = self.route_note(note) {
-            // A repeated note on damps and restarts the same physical string,
-            // matching a bassist's retrigger rather than creating a phantom voice.
-            if self.strings[index].current_note.is_some() {
-                self.strings[index].reset();
-            }
-            self.strings[index].string.fret_buzz = self.fret_buzz;
-            self.strings[index].trigger(note, velocity, self.pluck_style, self.pluck_position);
+            self.note_on_string(
+                index,
+                note.saturating_sub(self.strings[index].open_midi),
+                velocity,
+            );
         }
+    }
+
+    /// Triggers the physical string selected by an interactive fretboard.
+    /// MIDI routing cannot be used here: the same pitch can exist on multiple
+    /// strings, and a GUI click must preserve the user's chosen string.
+    pub fn note_on_string(&mut self, index: usize, fret: u8, velocity: f64) {
+        let first = if self.five_string {
+            0
+        } else {
+            FOUR_STRING_FIRST
+        };
+        if index < first || index >= STRING_COUNT {
+            return;
+        }
+        let fret = fret.min(24);
+        let note = self.strings[index].open_midi.saturating_add(fret);
+        if self.strings[index].current_note.is_some() {
+            self.strings[index].reset();
+        }
+        self.strings[index].string.fret_buzz = self.fret_buzz;
+        self.strings[index].trigger(note, velocity, self.pluck_style, self.pluck_position);
     }
 
     pub fn note_off(&mut self, note: u8) {
@@ -172,6 +191,12 @@ impl BassEngine {
             if voice.current_note == Some(note) {
                 voice.release();
             }
+        }
+    }
+
+    pub fn note_off_string(&mut self, index: usize) {
+        if let Some(voice) = self.strings.get_mut(index) {
+            voice.release();
         }
     }
 
@@ -365,6 +390,16 @@ mod tests {
         assert!(four.route_note(23).is_none());
         let five = BassEngine::new(48_000.0, BassMode::Electric, true);
         assert_eq!(five.route_note(23), Some((0, 0)));
+    }
+
+    #[test]
+    fn gui_string_selection_does_not_reroute_to_another_string() {
+        let mut engine = BassEngine::new(48_000.0, BassMode::Electric, true);
+        engine.note_on_string(1, 5, 0.8); // A string, E2
+        assert_eq!(engine.strings[1].current_note, Some(33));
+        assert!(engine.strings[0].current_note.is_none());
+        engine.note_off_string(1);
+        assert!(engine.strings[1].string.is_releasing);
     }
 
     #[test]

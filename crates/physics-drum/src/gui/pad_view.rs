@@ -7,7 +7,7 @@ use crate::nice_plugin::GuiDrumEvent;
 use physics_ui::skia_compat as vg;
 use physics_ui::skia_compat::CanvasExt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use vizia_plug::vizia::prelude::*;
 
 const VOICE_COUNT: usize = 10;
@@ -109,9 +109,29 @@ fn voice_index(note: u8) -> usize {
     PADS.iter().position(|pad| pad.note == note).unwrap_or(0)
 }
 
+fn localized_label(note: u8, chinese: bool) -> &'static str {
+    if !chinese {
+        return PADS[voice_index(note)].label;
+    }
+    match note {
+        49 => "碎镲",
+        51 => "叮镲",
+        46 => "开镲",
+        42 => "闭镲",
+        43 => "通鼓 1",
+        45 => "通鼓 2",
+        41 => "落地鼓",
+        38 => "军鼓",
+        36 => "底鼓",
+        44 => "踩镲踏板",
+        _ => "鼓",
+    }
+}
+
 pub struct DrumPadWidget {
     voice_energies: Arc<[AtomicU32; VOICE_COUNT]>,
     gui_tx: crossbeam_channel::Sender<GuiDrumEvent>,
+    language: Arc<AtomicU8>,
     held_note: Option<u8>,
 }
 
@@ -120,10 +140,12 @@ impl DrumPadWidget {
         cx: &mut Context,
         voice_energies: Arc<[AtomicU32; VOICE_COUNT]>,
         gui_tx: crossbeam_channel::Sender<GuiDrumEvent>,
+        language: Arc<AtomicU8>,
     ) -> Handle<'_, Self> {
         Self {
             voice_energies,
             gui_tx,
+            language,
             held_note: None,
         }
         .build(cx, |_| {})
@@ -190,6 +212,12 @@ impl View for DrumPadWidget {
                     meta.consume();
                 }
             }
+            WindowEvent::FocusOut => {
+                if self.held_note.take().is_some() {
+                    cx.release();
+                    cx.needs_redraw();
+                }
+            }
             _ => {}
         });
     }
@@ -203,13 +231,18 @@ impl View for DrumPadWidget {
         background.rounded_rect(bounds.x, bounds.y, bounds.w, bounds.h, 8.0);
         canvas.fill_path(&background, &vg::Paint::color(vg::Color::rgb(13, 16, 22)));
 
+        let chinese = self.language.load(Ordering::Relaxed) == 1;
         let mut title = vg::Paint::color(vg::Color::rgb(136, 149, 172));
         title.set_font_size(10.0);
         title.set_text_align(vg::Align::Left);
         canvas.fill_text(
             bounds.x + 14.0,
             bounds.y + 18.0,
-            "CLICK A PAD TO PLAY · MIDI DRUM MAP",
+            if chinese {
+                "点击鼓垫演奏 · 通用 MIDI 鼓组"
+            } else {
+                "CLICK A PAD TO PLAY · MIDI DRUM MAP"
+            },
             &title,
         );
 
@@ -256,7 +289,12 @@ impl View for DrumPadWidget {
             let mut label = vg::Paint::color(vg::Color::rgb(245, 247, 250));
             label.set_font_size(if pad.label.len() > 8 { 8.0 } else { 9.0 });
             label.set_text_align(vg::Align::Center);
-            canvas.fill_text(center_x, center_y + 3.0, pad.label, &label);
+            canvas.fill_text(
+                center_x,
+                center_y + 3.0,
+                localized_label(pad.note, chinese),
+                &label,
+            );
         }
 
         let mut footer = vg::Paint::color(vg::Color::rgb(112, 124, 144));
@@ -265,7 +303,11 @@ impl View for DrumPadWidget {
         canvas.fill_text(
             bounds.x + bounds.w - 14.0,
             bounds.y + bounds.h - 10.0,
-            "35/36 kick · 38 snare · 41–51 kit",
+            if chinese {
+                "35/36 底鼓 · 38 军鼓 · 41–51 套鼓"
+            } else {
+                "35/36 kick · 38 snare · 41–51 kit"
+            },
             &footer,
         );
     }

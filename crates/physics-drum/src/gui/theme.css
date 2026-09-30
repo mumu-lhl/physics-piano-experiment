@@ -99,3 +99,62 @@ param-slider .value {
     font-weight: bold;
     child-space: 1px;
 }
+
+textbox {
+    height: 26px;
+    background-color: #10151d;
+    border-color: #303b4b;
+    border-width: 1px;
+    border-radius: 4px;
+    color: #f2f5fb;
+    child-space: 5px;
+}
+
+textbox:focus {
+    border-color: #d6a15b;
+}
+
+popup {
+    background-color: #181d26;
+    border-color: #465267;
+    border-width: 1px;
+    border-radius: 5px;
+    child-space: 4px;
+    row-between: 2px;
+}
+
+.preset-dropdown {
+    background-color: #181d26;
+    border-color: #465267;
+    border-width: 1px;
+    border-radius: 4px;
+    child-space: 4px;
+    child-left: 8px;
+    child-right: 8px;
+}
+
+.preset-dropdown:hover {
+    border-color: #e5b56e;
+}
+
+.preset-item {
+    child-left: 10px;
+    child-top: 1s;
+    child-bottom: 1s;
+    color: #dfe6f2;
+    background-color: #181d26;
+    height: 26px;
+    border-radius: 3px;
+}
+
+.preset-item:hover {
+    background-color: #303b4e;
+    color: #e5b56e;
+}
+
+.btn-action,
+.btn-action-gold,
+.btn-cycle,
+.btn-item-action {
+    child-space: 1s;
+}

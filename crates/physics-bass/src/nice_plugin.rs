@@ -5,6 +5,7 @@ use crate::{
     sanitize_floating_point_environment,
 };
 use nice_plug::prelude::*;
+use physics_presets::{PresetManager, UndoManager, bass_factory_presets};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
@@ -104,8 +105,14 @@ impl Default for PhysicsBassParams {
 
 #[derive(Debug, Clone, Copy)]
 pub enum GuiBassEvent {
-    NoteOn { note: u8, velocity: f64 },
-    NoteOff { note: u8 },
+    NoteOn {
+        string_index: u8,
+        fret: u8,
+        velocity: f64,
+    },
+    NoteOff {
+        string_index: u8,
+    },
 }
 
 pub struct PhysicsBass {
@@ -116,11 +123,21 @@ pub struct PhysicsBass {
     pub string_energies_shared: Arc<[AtomicU32; 5]>,
     pub gui_event_tx: crossbeam_channel::Sender<GuiBassEvent>,
     gui_event_rx: crossbeam_channel::Receiver<GuiBassEvent>,
+    pub language: Arc<AtomicU8>,
+    pub preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
+    pub undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
 }
 
 impl Default for PhysicsBass {
     fn default() -> Self {
         let (gui_event_tx, gui_event_rx) = crossbeam_channel::bounded(256);
+        let language = if physics_ui::Language::from_system_locale()
+            == physics_ui::Language::SimplifiedChinese
+        {
+            1
+        } else {
+            0
+        };
         Self {
             params: Arc::new(PhysicsBassParams::default()),
             engine: BassEngine::new(44_100.0, BassMode::Electric, false),
@@ -141,6 +158,12 @@ impl Default for PhysicsBass {
             ]),
             gui_event_tx,
             gui_event_rx,
+            language: Arc::new(AtomicU8::new(language)),
+            preset_manager: Arc::new(parking_lot::RwLock::new(PresetManager::new(
+                "bass",
+                bass_factory_presets(),
+            ))),
+            undo_manager: Arc::new(parking_lot::RwLock::new(UndoManager::default())),
         }
     }
 }
@@ -237,8 +260,16 @@ impl Plugin for PhysicsBass {
         // keeps the audio callback wait-free even if the user drags quickly.
         while let Ok(event) = self.gui_event_rx.try_recv() {
             match event {
-                GuiBassEvent::NoteOn { note, velocity } => self.engine.note_on(note, velocity),
-                GuiBassEvent::NoteOff { note } => self.engine.note_off(note),
+                GuiBassEvent::NoteOn {
+                    string_index,
+                    fret,
+                    velocity,
+                } => self
+                    .engine
+                    .note_on_string(string_index as usize, fret, velocity),
+                GuiBassEvent::NoteOff { string_index } => {
+                    self.engine.note_off_string(string_index as usize)
+                }
             }
         }
 
@@ -291,6 +322,9 @@ impl Plugin for PhysicsBass {
             self.active_frets_shared.clone(),
             self.string_energies_shared.clone(),
             self.gui_event_tx.clone(),
+            self.language.clone(),
+            self.preset_manager.clone(),
+            self.undo_manager.clone(),
         )
     }
 }

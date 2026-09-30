@@ -14,7 +14,6 @@ use vizia_plug::vizia::prelude::*;
 
 const STRING_COUNT: usize = 5;
 const FRETS: u8 = 24;
-const OPEN_MIDI: [u8; STRING_COUNT] = [23, 28, 33, 38, 43];
 const STRING_NAMES: [&str; STRING_COUNT] = ["B0", "E1", "A1", "D2", "G2"];
 
 pub struct BassFretboardWidget {
@@ -22,14 +21,15 @@ pub struct BassFretboardWidget {
     active_frets: Arc<[AtomicU8; STRING_COUNT]>,
     string_energies: Arc<[AtomicU32; STRING_COUNT]>,
     gui_tx: crossbeam_channel::Sender<GuiBassEvent>,
+    language: Arc<AtomicU8>,
     held: Option<(usize, u8)>,
 }
 
 impl Drop for BassFretboardWidget {
     fn drop(&mut self) {
-        if let Some((string, fret)) = self.held.take() {
+        if let Some((string, _fret)) = self.held.take() {
             let _ = self.gui_tx.try_send(GuiBassEvent::NoteOff {
-                note: OPEN_MIDI[string] + fret,
+                string_index: string as u8,
             });
         }
     }
@@ -42,12 +42,14 @@ impl BassFretboardWidget {
         active_frets: Arc<[AtomicU8; STRING_COUNT]>,
         string_energies: Arc<[AtomicU32; STRING_COUNT]>,
         gui_tx: crossbeam_channel::Sender<GuiBassEvent>,
+        language: Arc<AtomicU8>,
     ) -> Handle<'_, Self> {
         Self {
             params,
             active_frets,
             string_energies,
             gui_tx,
+            language,
             held: None,
         }
         .build(cx, |_| {})
@@ -98,20 +100,17 @@ impl BassFretboardWidget {
         self.fret_at_x(bounds, mouse_x).map(|fret| (string, fret))
     }
 
-    fn note_for(target: (usize, u8)) -> u8 {
-        OPEN_MIDI[target.0].saturating_add(target.1)
-    }
-
     fn emit_note_on(&self, target: (usize, u8)) {
         let _ = self.gui_tx.try_send(GuiBassEvent::NoteOn {
-            note: Self::note_for(target),
+            string_index: target.0 as u8,
+            fret: target.1,
             velocity: 0.86,
         });
     }
 
     fn emit_note_off(&self, target: (usize, u8)) {
         let _ = self.gui_tx.try_send(GuiBassEvent::NoteOff {
-            note: Self::note_for(target),
+            string_index: target.0 as u8,
         });
     }
 
@@ -166,6 +165,11 @@ impl View for BassFretboardWidget {
                     meta.consume();
                 }
             }
+            WindowEvent::FocusOut => {
+                if self.held.is_some() {
+                    self.release_held(cx);
+                }
+            }
             _ => {}
         });
     }
@@ -178,6 +182,7 @@ impl View for BassFretboardWidget {
         let (board_x, nut_width, fret_span, board_width) = Self::board_geometry(&bounds);
         let row_height = bounds.h / STRING_COUNT as f32;
         let five_string = self.params.five_string.value();
+        let chinese = self.language.load(Ordering::Relaxed) == 1;
 
         let mut background = vg::Path::new();
         background.rounded_rect(bounds.x, bounds.y, bounds.w, bounds.h, 8.0);
@@ -222,16 +227,19 @@ impl View for BassFretboardWidget {
             }
         }
 
-        let mut label_paint = vg::Paint::color(vg::Color::rgb(190, 198, 212));
-        label_paint.set_font_size(11.0);
-        label_paint.set_text_align(vg::Align::Right);
         let mut hint_paint = vg::Paint::color(vg::Color::rgb(110, 120, 137));
         hint_paint.set_font_size(9.0);
         hint_paint.set_text_align(vg::Align::Right);
         canvas.fill_text(
             bounds.x + 34.0,
             bounds.y + 14.0,
-            if five_string { "5-STRING" } else { "4-STRING" },
+            if chinese {
+                if five_string { "五弦" } else { "四弦" }
+            } else if five_string {
+                "5-STRING"
+            } else {
+                "4-STRING"
+            },
             &hint_paint,
         );
 
@@ -305,7 +313,11 @@ impl View for BassFretboardWidget {
         canvas.fill_text(
             bounds.x + 8.0,
             bounds.y + bounds.h - 8.0,
-            "click or drag strings to play · open notes + 24 frets",
+            if chinese {
+                "点击或拖动琴弦演奏 · 空弦 + 24 品"
+            } else {
+                "click or drag strings to play · open notes + 24 frets"
+            },
             &footer,
         );
     }
