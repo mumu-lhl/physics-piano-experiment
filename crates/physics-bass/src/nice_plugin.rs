@@ -59,6 +59,7 @@ impl Default for PhysicsBassParams {
                     max: 0.42,
                 },
             )
+            .with_smoother(SmoothingStyle::Linear(20.0))
             .with_unit(" L")
             .with_value_to_string(formatters::v2s_f32_rounded(2)),
             pluck_position: FloatParam::new(
@@ -69,9 +70,11 @@ impl Default for PhysicsBassParams {
                     max: 0.45,
                 },
             )
+            .with_smoother(SmoothingStyle::Linear(20.0))
             .with_unit(" L")
             .with_value_to_string(formatters::v2s_f32_rounded(2)),
             tone: FloatParam::new("Tone", 0.72, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
                 .with_unit(" %")
                 .with_value_to_string(formatters::v2s_f32_percentage(0))
                 .with_string_to_value(formatters::s2v_f32_percentage()),
@@ -80,10 +83,12 @@ impl Default for PhysicsBassParams {
                 0.30,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )
+            .with_smoother(SmoothingStyle::Linear(20.0))
             .with_unit(" %")
             .with_value_to_string(formatters::v2s_f32_percentage(0))
             .with_string_to_value(formatters::s2v_f32_percentage()),
             body_mix: FloatParam::new("Body Mix", 0.75, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
                 .with_unit(" %")
                 .with_value_to_string(formatters::v2s_f32_percentage(0))
                 .with_string_to_value(formatters::s2v_f32_percentage()),
@@ -96,6 +101,7 @@ impl Default for PhysicsBassParams {
                     factor: FloatRange::gain_skew_factor(-30.0, 6.0),
                 },
             )
+            .with_smoother(SmoothingStyle::Logarithmic(50.0))
             .with_unit(" dB")
             .with_value_to_string(formatters::v2s_f32_gain_to_db(1))
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
@@ -182,17 +188,46 @@ impl PhysicsBass {
                 2 => PluckStyle::Slap,
                 _ => PluckStyle::Finger,
             });
+    }
+
+    #[inline]
+    fn apply_smoothed_parameters(&mut self) {
         self.engine
-            .set_pickup_position(self.params.pickup_position.value() as f64);
+            .set_pickup_position(self.params.pickup_position.smoothed.next() as f64);
         self.engine
-            .set_pluck_position(self.params.pluck_position.value() as f64);
-        self.engine.set_tone(self.params.tone.value() as f64);
+            .set_pluck_position(self.params.pluck_position.smoothed.next() as f64);
         self.engine
-            .set_fret_buzz(self.params.fret_buzz.value() as f64);
+            .set_tone(self.params.tone.smoothed.next() as f64);
         self.engine
-            .set_body_mix(self.params.body_mix.value() as f64);
+            .set_fret_buzz(self.params.fret_buzz.smoothed.next() as f64);
         self.engine
-            .set_master_gain(self.params.master_gain.value() as f64);
+            .set_body_mix(self.params.body_mix.smoothed.next() as f64);
+        self.engine
+            .set_master_gain(self.params.master_gain.smoothed.next() as f64);
+    }
+
+    fn reset_smoothers(&self) {
+        self.params
+            .pickup_position
+            .smoothed
+            .reset(self.params.pickup_position.value());
+        self.params
+            .pluck_position
+            .smoothed
+            .reset(self.params.pluck_position.value());
+        self.params.tone.smoothed.reset(self.params.tone.value());
+        self.params
+            .fret_buzz
+            .smoothed
+            .reset(self.params.fret_buzz.value());
+        self.params
+            .body_mix
+            .smoothed
+            .reset(self.params.body_mix.value());
+        self.params
+            .master_gain
+            .smoothed
+            .reset(self.params.master_gain.value());
     }
 }
 
@@ -234,11 +269,17 @@ impl Plugin for PhysicsBass {
             },
             self.params.five_string.value(),
         );
+        self.reset_smoothers();
+        self.sync_parameters();
+        self.apply_smoothed_parameters();
         true
     }
 
     fn reset(&mut self) {
         self.engine.reset();
+        self.reset_smoothers();
+        self.sync_parameters();
+        self.apply_smoothed_parameters();
         while self.gui_event_rx.try_recv().is_ok() {}
         for fret in self.active_frets_shared.iter() {
             fret.store(255, Ordering::Relaxed);
@@ -292,6 +333,7 @@ impl Plugin for PhysicsBass {
                 }
                 next_event = context.next_event();
             }
+            self.apply_smoothed_parameters();
             let (left, right) = self.engine.process_sample();
             let mut channels = channel_samples.into_iter();
             if let Some(channel) = channels.next() {
@@ -358,9 +400,12 @@ mod no_alloc_regression_tests {
     #[test]
     fn prepared_engine_sample_does_not_allocate() {
         let mut plugin = PhysicsBass::default();
+        plugin.engine.note_on_string(1, 5, 1.0);
         let before = violation_count();
         assert_no_alloc(|| {
-            let _ = plugin.engine.process_sample();
+            for _ in 0..4_096 {
+                let _ = plugin.engine.process_sample();
+            }
         });
         assert_eq!(violation_count(), before);
     }

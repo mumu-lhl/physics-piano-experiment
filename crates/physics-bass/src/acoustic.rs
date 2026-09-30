@@ -38,7 +38,7 @@ impl BodyMode {
         let next_v = p21 * self.q + p22 * self.v + g2 * force;
         self.q = next_q.clamp(-100.0, 100.0);
         self.v = next_v.clamp(-100.0, 100.0);
-        self.q * self.gain
+        self.v * self.gain
     }
 }
 
@@ -70,21 +70,35 @@ impl AcousticBassBody {
     /// the acoustic radiation impedance of the idealized body.
     #[inline]
     pub fn process(&mut self, bridge_force: f64) -> f64 {
-        let normalized = (bridge_force * 0.00008).clamp(-50.0, 50.0);
+        let normalized = (bridge_force * 0.08).clamp(-50.0, 50.0);
         let mut output = 0.0;
         for mode in &mut self.modes {
             output += mode.step(normalized);
         }
-        self.last_output = (output * 0.22).clamp(-1.0, 1.0);
+        // Modal velocity is converted to a calibrated near-field audio level;
+        // the downstream master gain and soft limiter provide user headroom.
+        self.last_output = (output * 160.0).clamp(-1.0, 1.0);
         self.last_output
     }
 
+    /// Modal bridge-point velocity used as the reciprocal mechanical response.
     pub fn bridge_velocity(&self) -> f64 {
         self.modes
             .iter()
             .map(|mode| mode.v * mode.gain)
             .sum::<f64>()
-            * 0.0001
+            * 0.10
+    }
+
+    /// Modal bridge-point displacement, bounded to a physically plausible
+    /// sub-millimetre motion before it is fed back into the string boundary.
+    pub fn bridge_displacement(&self) -> f64 {
+        self.modes
+            .iter()
+            .map(|mode| mode.q * mode.gain)
+            .sum::<f64>()
+            .mul_add(0.10, 0.0)
+            .clamp(-0.001, 0.001)
     }
 
     pub fn reset(&mut self, sample_rate: f64) {
@@ -109,6 +123,11 @@ pub struct BassPickup {
     /// Pickup output gain.
     pub gain: f64,
     pub magnetic_gap: f64,
+    /// Physical pickup/cable equivalent parameters for the passive RLC pole.
+    pub inductance_h: f64,
+    pub capacitance_f: f64,
+    pub series_resistance: f64,
+    pub load_resistance: f64,
     filter: Biquad,
     sample_rate: f64,
 }
@@ -121,6 +140,10 @@ impl BassPickup {
             tone: 0.72,
             gain: 0.85,
             magnetic_gap: 0.012,
+            inductance_h: 2.4,
+            capacitance_f: 420.0e-12,
+            series_resistance: 8_200.0,
+            load_resistance: 470_000.0,
             filter: Biquad::zero(),
             sample_rate: sample_rate.max(1.0),
         };
@@ -130,7 +153,7 @@ impl BassPickup {
 
     pub fn set_tone(&mut self, tone: f64) {
         let tone = tone.clamp(0.0, 1.0);
-        if (self.tone - tone).abs() > 1e-5 {
+        if (self.tone - tone).abs() > 0.01 {
             self.tone = tone;
             self.update_filter();
         }
@@ -152,10 +175,32 @@ impl BassPickup {
         self.filter.process(signal).clamp(-1.0, 1.0)
     }
 
+    /// Rebuilds the bilinear-transform equivalent of the pickup's passive RLC
+    /// network. Tone changes the shunt capacitance; the filter remains a true
+    /// second-order resonant circuit rather than a generic low-pass shortcut.
     fn update_filter(&mut self) {
-        let cutoff = 680.0_f64 * (4_200.0_f64 / 680.0_f64).powf(self.tone);
-        let q = 0.85 + 0.8 * self.tone;
-        self.filter = Biquad::lowpass(self.sample_rate, cutoff, q);
+        let tone_capacitance = 1.9e-9 * (1.0 - self.tone).powf(0.85);
+        let capacitance = (self.capacitance_f + tone_capacitance).max(20.0e-12);
+        let inductance = self.inductance_h.max(1e-6);
+        let load = self.load_resistance.max(1.0);
+        let numerator_gain = 1.0 / (inductance * capacitance);
+        let a0 = numerator_gain * (1.0 + self.series_resistance / load);
+        let a1 = self.series_resistance / inductance + 1.0 / (load * capacitance);
+        let k = 2.0 * self.sample_rate;
+        let d0 = k * k + a1 * k + a0;
+        let d1 = -2.0 * k * k + 2.0 * a0;
+        let d2 = k * k - a1 * k + a0;
+        self.filter = Biquad::from_coefficients(
+            numerator_gain / d0,
+            2.0 * numerator_gain / d0,
+            numerator_gain / d0,
+            d1 / d0,
+            d2 / d0,
+        );
+    }
+
+    pub fn reset(&mut self) {
+        self.filter.reset();
     }
 }
 
@@ -164,6 +209,7 @@ mod tests {
     use super::{AcousticBassBody, BassPickup};
     use crate::params::BassStringParams;
     use crate::string::{FdtdString, PluckStyle};
+    use std::f64::consts::PI;
 
     #[test]
     fn body_exposes_documented_signature_modes() {
@@ -171,6 +217,53 @@ mod tests {
         let modes = body.mode_frequencies();
         assert!((modes[0] - 59.0).abs() < 1.0);
         assert!(modes[3] > 400.0);
+    }
+
+    #[test]
+    fn passive_pickup_tone_moves_the_resonance_as_capacitance_changes() {
+        fn measured_peak_frequency(tone: f64) -> f64 {
+            let mut pickup = BassPickup::new(48_000.0);
+            pickup.set_tone(tone);
+            let mut best_frequency = 0.0;
+            let mut best_level = 0.0;
+            for frequency in (500..=7_000).step_by(250) {
+                pickup.filter.reset();
+                let mut energy = 0.0;
+                for sample in 0..8_192 {
+                    let input = (2.0 * PI * frequency as f64 * sample as f64 / 48_000.0).sin();
+                    let output = pickup.filter.process(input);
+                    if sample >= 4_096 {
+                        energy += output * output;
+                    }
+                }
+                let level = energy.sqrt();
+                if level > best_level {
+                    best_level = level;
+                    best_frequency = frequency as f64;
+                }
+            }
+            best_frequency
+        }
+
+        let dark_peak = measured_peak_frequency(0.0);
+        let open_peak = measured_peak_frequency(1.0);
+        assert!(
+            open_peak > dark_peak + 1_000.0,
+            "{dark_peak} -> {open_peak}"
+        );
+    }
+
+    #[test]
+    fn acoustic_body_radiates_and_returns_a_finite_bridge_response() {
+        let mut body = AcousticBassBody::new(48_000.0);
+        let mut peak = 0.0_f64;
+        for sample in 0..48_000 {
+            let force = if sample == 0 { 10.0 } else { 0.0 };
+            peak = peak.max(body.process(force).abs());
+        }
+        assert!(peak.is_finite() && peak > 1e-9);
+        assert!(body.bridge_displacement().is_finite());
+        assert!(body.bridge_velocity().is_finite());
     }
 
     #[test]

@@ -162,7 +162,7 @@ impl DrumEngine {
     pub fn release(&mut self, note: u8) {
         // Drum voices are one-shot physical decays. A note-off is meaningful for
         // cymbal choke groups and intentionally does not hard-zero a membrane.
-        if matches!(note, 42 | 44) {
+        if matches!(note, 42 | 44 | 46) {
             self.hats.choke(0.0);
         }
     }

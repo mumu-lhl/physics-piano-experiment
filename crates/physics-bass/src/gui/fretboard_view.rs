@@ -165,11 +165,7 @@ impl View for BassFretboardWidget {
                     meta.consume();
                 }
             }
-            WindowEvent::FocusOut => {
-                if self.held.is_some() {
-                    self.release_held(cx);
-                }
-            }
+            WindowEvent::FocusOut if self.held.is_some() => self.release_held(cx),
             _ => {}
         });
     }

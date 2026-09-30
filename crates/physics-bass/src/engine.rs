@@ -267,7 +267,11 @@ impl BassEngine {
         } else {
             FOUR_STRING_FIRST
         };
+        let bridge_displacement = self.body.bridge_displacement();
         for index in first..STRING_COUNT {
+            self.strings[index]
+                .string
+                .set_bridge_displacement(bridge_displacement);
             let frame = self.strings[index].step();
             bridge_force += frame.bridge_force;
             total_energy += frame.energy;
@@ -318,6 +322,7 @@ impl BassEngine {
             voice.string.set_pitch_bend(0.0);
         }
         self.body.reset(self.sample_rate);
+        self.pickup.reset();
         self.pitch_bend_semitones = 0.0;
     }
 

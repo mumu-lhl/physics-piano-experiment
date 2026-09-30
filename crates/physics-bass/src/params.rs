@@ -34,6 +34,12 @@ impl BassStringParams {
         PI * self.radius * self.radius
     }
 
+    /// Second moment of area for the effective circular string core.
+    #[inline]
+    pub fn second_moment(self) -> f64 {
+        PI * self.radius.powi(4) * 0.25
+    }
+
     /// Effective length after fretting at a semitone number.
     #[inline]
     pub fn length_at_fret(self, fret: u8) -> f64 {
@@ -55,7 +61,7 @@ impl BassStringParams {
                 open_f0: 41.203_444,
                 scale_length: 0.864,
                 tension: 95.0,
-                linear_density: 0.0142,
+                linear_density: 0.019213_04,
                 youngs_modulus: 1.9e11,
                 radius: 0.00105,
                 sigma0: 0.80,
@@ -67,7 +73,7 @@ impl BassStringParams {
                 open_f0: 55.0,
                 scale_length: 0.864,
                 tension: 105.0,
-                linear_density: 0.0120,
+                linear_density: 0.011781_04,
                 youngs_modulus: 1.9e11,
                 radius: 0.00092,
                 sigma0: 0.86,
@@ -79,7 +85,7 @@ impl BassStringParams {
                 open_f0: 73.416_19,
                 scale_length: 0.864,
                 tension: 112.0,
-                linear_density: 0.0100,
+                linear_density: 0.007004_38,
                 youngs_modulus: 1.9e11,
                 radius: 0.00078,
                 sigma0: 0.92,
@@ -91,7 +97,7 @@ impl BassStringParams {
                 open_f0: 97.998_86,
                 scale_length: 0.864,
                 tension: 120.0,
-                linear_density: 0.0080,
+                linear_density: 0.004194_75,
                 youngs_modulus: 1.9e11,
                 radius: 0.00062,
                 sigma0: 1.0,
@@ -109,7 +115,7 @@ impl BassStringParams {
                 open_f0: 30.867_706,
                 scale_length: 0.889,
                 tension: 115.0,
-                linear_density: 0.0180,
+                linear_density: 0.039689_55,
                 youngs_modulus: 1.9e11,
                 radius: 0.00125,
                 sigma0: 0.75,
@@ -121,7 +127,7 @@ impl BassStringParams {
                 open_f0: 41.203_444,
                 scale_length: 0.889,
                 tension: 108.0,
-                linear_density: 0.0142,
+                linear_density: 0.020545_08,
                 youngs_modulus: 1.9e11,
                 radius: 0.00105,
                 sigma0: 0.80,
@@ -133,7 +139,7 @@ impl BassStringParams {
                 open_f0: 55.0,
                 scale_length: 0.889,
                 tension: 112.0,
-                linear_density: 0.0120,
+                linear_density: 0.011851_55,
                 youngs_modulus: 1.9e11,
                 radius: 0.00092,
                 sigma0: 0.86,
@@ -145,7 +151,7 @@ impl BassStringParams {
                 open_f0: 73.416_19,
                 scale_length: 0.889,
                 tension: 118.0,
-                linear_density: 0.0100,
+                linear_density: 0.006965_72,
                 youngs_modulus: 1.9e11,
                 radius: 0.00078,
                 sigma0: 0.92,
@@ -157,7 +163,7 @@ impl BassStringParams {
                 open_f0: 97.998_86,
                 scale_length: 0.889,
                 tension: 124.0,
-                linear_density: 0.0080,
+                linear_density: 0.004093_36,
                 youngs_modulus: 1.9e11,
                 radius: 0.00062,
                 sigma0: 1.0,
@@ -165,5 +171,27 @@ impl BassStringParams {
                 bending_stiffness: 1.0,
             },
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BassStringParams;
+    use std::f64::consts::PI;
+
+    #[test]
+    fn physical_string_parameters_match_open_tuning_including_stiffness() {
+        let strings: Vec<_> = BassStringParams::electric_four()
+            .into_iter()
+            .chain(BassStringParams::electric_five())
+            .collect();
+        for string in strings {
+            let wave_number = PI / string.scale_length;
+            let omega_squared = (string.tension * wave_number.powi(2)
+                + string.youngs_modulus * string.second_moment() * wave_number.powi(4))
+                / string.linear_density;
+            let predicted_hz = omega_squared.sqrt() / (2.0 * PI);
+            assert!((predicted_hz - string.open_f0).abs() / string.open_f0 < 2e-5);
+        }
     }
 }

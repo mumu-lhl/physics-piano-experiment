@@ -34,6 +34,7 @@ impl Default for PhysicsDrumParams {
                 0.62,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )
+            .with_smoother(SmoothingStyle::Linear(20.0))
             .with_unit(" %")
             .with_value_to_string(formatters::v2s_f32_percentage(0))
             .with_string_to_value(formatters::s2v_f32_percentage()),
@@ -42,6 +43,7 @@ impl Default for PhysicsDrumParams {
                 0.58,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )
+            .with_smoother(SmoothingStyle::Linear(20.0))
             .with_unit(" %")
             .with_value_to_string(formatters::v2s_f32_percentage(0))
             .with_string_to_value(formatters::s2v_f32_percentage()),
@@ -50,6 +52,7 @@ impl Default for PhysicsDrumParams {
                 0.85,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )
+            .with_smoother(SmoothingStyle::Linear(20.0))
             .with_unit(" %")
             .with_value_to_string(formatters::v2s_f32_percentage(0))
             .with_string_to_value(formatters::s2v_f32_percentage()),
@@ -58,6 +61,7 @@ impl Default for PhysicsDrumParams {
                 0.70,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )
+            .with_smoother(SmoothingStyle::Linear(20.0))
             .with_unit(" %")
             .with_value_to_string(formatters::v2s_f32_percentage(0))
             .with_string_to_value(formatters::s2v_f32_percentage()),
@@ -70,6 +74,7 @@ impl Default for PhysicsDrumParams {
                     factor: FloatRange::gain_skew_factor(-30.0, 6.0),
                 },
             )
+            .with_smoother(SmoothingStyle::Logarithmic(50.0))
             .with_unit(" dB")
             .with_value_to_string(formatters::v2s_f32_gain_to_db(1))
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
@@ -91,6 +96,45 @@ pub struct PhysicsDrum {
     pub language: Arc<AtomicU8>,
     pub preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     pub undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
+    hihat_cc_override: Option<f64>,
+    last_hihat_parameter: f32,
+}
+
+impl PhysicsDrum {
+    fn reset_smoothers(&self) {
+        self.params
+            .snare_tightness
+            .smoothed
+            .reset(self.params.snare_tightness.value());
+        self.params
+            .snare_decay
+            .smoothed
+            .reset(self.params.snare_decay.value());
+        self.params
+            .hihat_open
+            .smoothed
+            .reset(self.params.hihat_open.value());
+        self.params
+            .cymbal_decay
+            .smoothed
+            .reset(self.params.cymbal_decay.value());
+        self.params
+            .master_gain
+            .smoothed
+            .reset(self.params.master_gain.value());
+    }
+
+    #[inline]
+    fn apply_smoothed_parameters(&mut self) {
+        self.engine
+            .set_snare_tightness(self.params.snare_tightness.smoothed.next() as f64);
+        self.engine
+            .set_snare_decay(self.params.snare_decay.smoothed.next() as f64);
+        self.engine
+            .set_cymbal_decay(self.params.cymbal_decay.smoothed.next() as f64);
+        self.engine
+            .set_master_gain(self.params.master_gain.smoothed.next() as f64);
+    }
 }
 
 impl Default for PhysicsDrum {
@@ -126,6 +170,8 @@ impl Default for PhysicsDrum {
                 drum_factory_presets(),
             ))),
             undo_manager: Arc::new(parking_lot::RwLock::new(UndoManager::default())),
+            hihat_cc_override: None,
+            last_hihat_parameter: 0.85,
         }
     }
 }
@@ -159,11 +205,19 @@ impl Plugin for PhysicsDrum {
     ) -> bool {
         sanitize_floating_point_environment();
         self.engine = DrumEngine::new(buffer_config.sample_rate as f64);
+        self.reset_smoothers();
+        self.hihat_cc_override = None;
+        self.last_hihat_parameter = self.params.hihat_open.value();
+        self.apply_smoothed_parameters();
         true
     }
 
     fn reset(&mut self) {
         self.engine.reset();
+        self.reset_smoothers();
+        self.hihat_cc_override = None;
+        self.last_hihat_parameter = self.params.hihat_open.value();
+        self.apply_smoothed_parameters();
         while self.gui_event_rx.try_recv().is_ok() {}
         for energy in self.voice_energies_shared.iter() {
             energy.store(0, Ordering::Relaxed);
@@ -186,16 +240,11 @@ impl Plugin for PhysicsDrum {
             }
         }
 
-        self.engine
-            .set_snare_tightness(self.params.snare_tightness.value() as f64);
-        self.engine
-            .set_snare_decay(self.params.snare_decay.value() as f64);
-        self.engine
-            .set_hi_hat_open(self.params.hihat_open.value() as f64);
-        self.engine
-            .set_cymbal_decay(self.params.cymbal_decay.value() as f64);
-        self.engine
-            .set_master_gain(self.params.master_gain.value() as f64);
+        let hihat_parameter = self.params.hihat_open.value();
+        if (hihat_parameter - self.last_hihat_parameter).abs() > 1e-6 {
+            self.hihat_cc_override = None;
+            self.last_hihat_parameter = hihat_parameter;
+        }
 
         let mut next_event = context.next_event();
         for (sample_index, channel_samples) in buffer.iter_samples().enumerate() {
@@ -208,15 +257,20 @@ impl Plugin for PhysicsDrum {
                         self.engine.trigger(note, velocity as f64);
                     }
                     NoteEvent::NoteOff { note, .. } => self.engine.release(note),
-                    NoteEvent::MidiCC { cc, value, .. } if cc == 4 => {
+                    NoteEvent::MidiCC { cc: 4, value, .. } => {
                         // General-MIDI foot controller drives the continuous
                         // hi-hat opening without waiting for the next hit.
+                        self.hihat_cc_override = Some(value as f64);
                         self.engine.set_hi_hat_open(value as f64);
                     }
                     _ => {}
                 }
                 next_event = context.next_event();
             }
+            self.apply_smoothed_parameters();
+            let hihat_parameter = self.params.hihat_open.smoothed.next() as f64;
+            self.engine
+                .set_hi_hat_open(self.hihat_cc_override.unwrap_or(hihat_parameter));
             let (left, right) = self.engine.process_sample();
             let mut channels = channel_samples.into_iter();
             if let Some(channel) = channels.next() {
@@ -287,9 +341,16 @@ mod no_alloc_regression_tests {
     #[test]
     fn prepared_engine_sample_does_not_allocate() {
         let mut plugin = PhysicsDrum::default();
+        plugin.engine.trigger(36, 1.0);
+        plugin.engine.trigger(38, 1.0);
+        plugin.engine.trigger(46, 0.9);
+        plugin.engine.trigger(49, 0.8);
+        plugin.engine.trigger(51, 0.7);
         let before = violation_count();
         assert_no_alloc(|| {
-            let _ = plugin.engine.process_sample();
+            for _ in 0..4_096 {
+                let _ = plugin.engine.process_sample();
+            }
         });
         assert_eq!(violation_count(), before);
     }

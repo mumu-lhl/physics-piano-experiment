@@ -212,11 +212,9 @@ impl View for DrumPadWidget {
                     meta.consume();
                 }
             }
-            WindowEvent::FocusOut => {
-                if self.held_note.take().is_some() {
-                    cx.release();
-                    cx.needs_redraw();
-                }
+            WindowEvent::FocusOut if self.held_note.take().is_some() => {
+                cx.release();
+                cx.needs_redraw();
             }
             _ => {}
         });
