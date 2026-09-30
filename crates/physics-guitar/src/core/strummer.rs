@@ -137,13 +137,7 @@ impl SmartStrummer {
     /// Advances 1 audio sample and collects all plucks that are ready into `ready`.
     #[inline(always)]
     pub fn step_into(&mut self, ready: &mut Vec<StrumPluckEvent>) {
-        if self.accum_timer > 0 {
-            self.accum_timer -= 1;
-            if self.accum_timer == 0 && !self.accum_buffer.is_empty() {
-                let notes = std::mem::take(&mut self.accum_buffer);
-                self.trigger_chord(&notes);
-            }
-        }
+        self.advance_accumulation_window();
 
         let mut i = 0;
         while i < self.pending_plucks.len() {
@@ -160,13 +154,7 @@ impl SmartStrummer {
     /// Advances 1 audio sample and drains all plucks that are ready to trigger.
     #[inline(always)]
     pub fn step(&mut self, mut on_pluck: impl FnMut(usize, u8, f64)) {
-        if self.accum_timer > 0 {
-            self.accum_timer -= 1;
-            if self.accum_timer == 0 && !self.accum_buffer.is_empty() {
-                let notes = std::mem::take(&mut self.accum_buffer);
-                self.trigger_chord(&notes);
-            }
-        }
+        self.advance_accumulation_window();
 
         let mut i = 0;
         while i < self.pending_plucks.len() {
@@ -177,6 +165,20 @@ impl SmartStrummer {
                 self.pending_plucks[i].delay_samples -= 1;
                 i += 1;
             }
+        }
+    }
+
+    fn advance_accumulation_window(&mut self) {
+        if self.accum_timer == 0 {
+            return;
+        }
+        self.accum_timer -= 1;
+        if self.accum_timer == 0 && !self.accum_buffer.is_empty() {
+            let mut notes = [(0usize, 0u8, 0.0f64); 6];
+            let count = self.accum_buffer.len().min(notes.len());
+            notes[..count].copy_from_slice(&self.accum_buffer[..count]);
+            self.accum_buffer.clear();
+            self.trigger_chord(&notes[..count]);
         }
     }
 }

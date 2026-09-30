@@ -210,21 +210,22 @@ impl GuitarString {
 
     /// Plucks the string with given exciter, pluck position, and velocity.
     pub fn pluck(&mut self, exciter: &PluckExciter, pluck_pos_ratio: f64, velocity: f64) {
-        let (q_t, q_p, v_t) = exciter.compute_initial_modal_displacements(
-            self.effective_length,
-            self.current_f0,
+        let length = self.effective_length;
+        let f0 = self.current_f0;
+        let num_modes = self.num_modes;
+        exciter.for_each_initial_modal_displacement(
+            length,
+            f0,
             pluck_pos_ratio,
             velocity,
-            self.num_modes,
+            num_modes,
+            |mode, q_t, q_p, v_t| {
+                self.state_t[mode].q += q_t;
+                self.state_t[mode].v = v_t;
+                self.state_p[mode].q += q_p;
+                self.state_p[mode].v = 0.0;
+            },
         );
-
-        for m in 0..self.num_modes {
-            self.state_t[m].q += q_t[m];
-            self.state_t[m].v = v_t[m];
-
-            self.state_p[m].q += q_p[m];
-            self.state_p[m].v = 0.0;
-        }
         self.is_held = true;
         self.is_releasing = false;
     }

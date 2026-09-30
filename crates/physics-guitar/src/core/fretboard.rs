@@ -60,7 +60,7 @@ impl FretboardRouter {
         strings_held: &[bool; 6],
         active_frets: &[Option<u8>; 6],
     ) -> Option<FretboardLocation> {
-        let mut candidates = Vec::new();
+        let mut best_candidate: Option<(f64, u8, u8)> = None;
 
         for s_idx in 0..6 {
             let open = self.open_notes[s_idx];
@@ -109,32 +109,27 @@ impl FretboardRouter {
                         + d_cross
                         + self.weight_open * p_open;
 
-                    candidates.push((total_cost, string_num, fret));
+                    if best_candidate.is_none_or(|(best_cost, _, _)| total_cost < best_cost) {
+                        best_candidate = Some((total_cost, string_num, fret));
+                    }
                 }
             }
         }
 
-        if candidates.is_empty() {
-            None
-        } else {
-            // Sort by lowest cost
-            candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-            let chosen_str = candidates[0].1;
-            let chosen_fret = candidates[0].2;
+        let (_, chosen_str, chosen_fret) = best_candidate?;
 
-            // Dynamically update hand position if non-open fret was chosen
-            if chosen_fret > 0 {
-                // Smooth hand inertia update (moves towards new active fret cluster)
-                let new_pos =
-                    (self.hand_position as f64 * 0.7 + chosen_fret as f64 * 0.3).round() as u8;
-                self.hand_position = new_pos.clamp(0, 24);
-            }
-
-            Some(FretboardLocation {
-                string_index: chosen_str,
-                fret: chosen_fret,
-            })
+        // Dynamically update hand position if non-open fret was chosen.
+        if chosen_fret > 0 {
+            // Smooth hand inertia update (moves towards new active fret cluster).
+            let new_pos =
+                (self.hand_position as f64 * 0.7 + chosen_fret as f64 * 0.3).round() as u8;
+            self.hand_position = new_pos.clamp(0, 24);
         }
+
+        Some(FretboardLocation {
+            string_index: chosen_str,
+            fret: chosen_fret,
+        })
     }
 
     /// Fast standard routing for single-note lines with fallback.

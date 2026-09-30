@@ -58,13 +58,18 @@ impl PassiveToneCircuit {
     }
 
     pub fn set_tone(&mut self, tone: f64) {
-        self.tone_knob = tone.clamp(0.0, 1.0);
-        self.update_coefficients();
+        let tone = tone.clamp(0.0, 1.0);
+        if (self.tone_knob - tone).abs() > 1e-5 {
+            self.tone_knob = tone;
+            self.update_coefficients();
+        }
     }
 
     pub fn set_pickup_type(&mut self, pt: PickupType) {
-        self.pickup_type = pt;
-        self.update_coefficients();
+        if self.pickup_type != pt {
+            self.pickup_type = pt;
+            self.update_coefficients();
+        }
     }
 
     /// Recomputes RLC second-order lowpass biquad coefficients based on Tone knob position.

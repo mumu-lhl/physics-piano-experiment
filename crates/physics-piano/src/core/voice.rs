@@ -20,6 +20,8 @@ pub struct PianoVoice {
     pub is_sounding: bool,
     pub unison_scale: f64,
     pub pitch_bend_cents: f64,
+    pub inharmonicity_scale: f64,
+    pub hammer_hardness: f64,
 }
 
 impl PianoVoice {
@@ -59,6 +61,8 @@ impl PianoVoice {
             is_sounding: false,
             unison_scale: 1.0,
             pitch_bend_cents: 0.0,
+            inharmonicity_scale: 1.0,
+            hammer_hardness: 1.0,
         };
         voice.recompute_string_tunings();
         voice
@@ -110,12 +114,14 @@ impl PianoVoice {
     }
 
     pub fn set_hammer_hardness(&mut self, scale: f64) {
+        self.hammer_hardness = scale;
         let s = scale.clamp(0.4, 3.0);
         self.hammer.k_h = self.key_params.hammer.stiffness * s.powf(2.0);
         self.hammer.p = (self.key_params.hammer.exponent * s.sqrt()).clamp(1.5, 3.5);
     }
 
     pub fn set_inharmonicity_scale(&mut self, inharm_scale: f64) {
+        self.inharmonicity_scale = inharm_scale;
         for s in &mut self.strings {
             s.set_inharmonicity_scale(inharm_scale);
         }

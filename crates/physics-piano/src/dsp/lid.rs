@@ -77,7 +77,7 @@ impl LidBaffle {
     pub fn new(sample_rate: f64) -> Self {
         let mut baffle = Self {
             sample_rate,
-            current_angle: 45.0, // Default Full Stick
+            current_angle: f64::NAN, // Force the initial filter setup below.
             shelf_l: HighShelf::new(sample_rate, 3500.0, 0.0),
             shelf_r: HighShelf::new(sample_rate, 3500.0, 0.0),
             delay_buf_l: [0.0; 256],
@@ -96,7 +96,11 @@ impl LidBaffle {
     /// - 45.0 deg: Full-stick (flat 0dB)
     /// - 60.0 deg: Removed (+1.5dB high presence)
     pub fn set_angle_deg(&mut self, angle_deg: f64) {
-        self.current_angle = angle_deg.clamp(0.0, 60.0);
+        let angle = angle_deg.clamp(0.0, 60.0);
+        if (self.current_angle - angle).abs() <= 1e-4 {
+            return;
+        }
+        self.current_angle = angle;
 
         let (gain_db, cutoff_freq, refl_gain) = if self.current_angle >= 55.0 {
             // Lid removed: open presence, no lid reflection

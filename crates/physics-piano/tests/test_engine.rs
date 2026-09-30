@@ -1,5 +1,7 @@
 //! Comprehensive Rust Verification Tests for Piano Physical Modeling Engine.
 
+#[cfg(debug_assertions)]
+use nice_assert_no_alloc::{assert_no_alloc, violation_count};
 use physics_piano::core::bridge::BridgeSoundboard;
 use physics_piano::core::hammer::HuntCrossleyHammer;
 use physics_piano::core::string::StiffStringModal;
@@ -648,4 +650,50 @@ fn test_piano_presets() {
         assert!(vals.lid_angle >= 0.0 && vals.lid_angle <= 60.0);
         assert!(vals.velocity_curve >= -1.0 && vals.velocity_curve <= 1.0);
     }
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn note_on_does_not_allocate_after_engine_initialization() {
+    let mut engine = PianoEngine::new(48_000.0, 35, true);
+    engine.prepare_voices();
+    let violations_before = violation_count();
+
+    assert_no_alloc(|| engine.note_on(60, 0.85));
+
+    assert_eq!(
+        violation_count(),
+        violations_before,
+        "piano note-on must not allocate on the audio thread"
+    );
+}
+
+#[test]
+fn prepared_voices_apply_parameter_changes_before_their_first_note() {
+    let mut engine = PianoEngine::new(48_000.0, 35, true);
+    engine.prepare_voices();
+    engine.set_inharmonicity_scale(1.4);
+    engine.set_hammer_hardness(1.3);
+    engine.set_unison_detuning(1.2);
+    engine.set_pitch_bend(2.0);
+
+    engine.note_on(60, 0.85);
+
+    let voice = engine.get_voice(60).unwrap();
+    assert!((voice.inharmonicity_scale - 1.4).abs() < 1e-6);
+    assert!((voice.hammer_hardness - 1.3).abs() < 1e-6);
+    assert!((voice.unison_scale - 1.2).abs() < 1e-6);
+    assert!((voice.pitch_bend_cents - 2.0).abs() < 1e-6);
+}
+
+#[test]
+fn prepared_voice_preserves_per_note_tuning_on_restrike() {
+    let mut engine = PianoEngine::new(48_000.0, 35, true);
+    engine.prepare_voices();
+    engine.set_note_tuning(60, 7.5);
+
+    engine.note_on(60, 0.85);
+    engine.note_on(60, 0.85);
+
+    assert!((engine.get_voice(60).unwrap().pitch_bend_cents - 7.5).abs() < 1e-6);
 }

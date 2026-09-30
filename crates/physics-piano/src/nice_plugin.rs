@@ -254,11 +254,12 @@ pub struct PhysicsPiano {
 
     // De-bounce/de-repeat for GUI virtual keyboard to prevent OS auto-repeat machine-gun re-strikes
     pending_gui_note_offs: HashMap<u8, usize>,
+    expired_gui_note_offs: Vec<u8>,
 }
 
 impl Default for PhysicsPiano {
     fn default() -> Self {
-        let (tx, rx) = crossbeam_channel::unbounded();
+        let (tx, rx) = crossbeam_channel::bounded(256);
         let default_lang = Language::from_system_locale();
         let lang_code = if default_lang == Language::SimplifiedChinese {
             1
@@ -286,11 +287,12 @@ impl Default for PhysicsPiano {
             undo_manager: Arc::new(parking_lot::RwLock::new(UndoManager::default())),
             prev_sustain: 0.0,
             prev_una_corda: false,
-            events_scratch: Vec::with_capacity(64),
+            events_scratch: Vec::with_capacity(256),
             out_events_scratch: Vec::with_capacity(64),
             scratch_l: vec![0.0; 512],
             scratch_r: vec![0.0; 512],
-            pending_gui_note_offs: HashMap::new(),
+            pending_gui_note_offs: HashMap::with_capacity(88),
+            expired_gui_note_offs: Vec::with_capacity(88),
         }
     }
 }
@@ -329,13 +331,39 @@ impl Plugin for PhysicsPiano {
         self.scratch_l = vec![0.0; max_samples];
         self.scratch_r = vec![0.0; max_samples];
 
-        // Seed initial parameters
+        // Seed parameters before preparing voices so their first activation needs no coefficient
+        // recalculation on the audio thread.
         self.prev_sustain = self.params.sustain_pedal.value();
         self.prev_una_corda = self.params.una_corda.value();
         self.engine
+            .set_inharmonicity_scale(self.params.inharmonicity_scale.value() as f64);
+        self.engine
+            .set_hammer_hardness(self.params.hammer_hardness.value() as f64);
+        self.engine
+            .set_unison_detuning(self.params.unison_detuning.value() as f64);
+        self.engine
+            .set_phantom_gain(self.params.phantom_gain.value() as f64);
+        self.engine
+            .set_velocity_curve(self.params.velocity_curve.value() as f64);
+        self.engine
+            .set_key_noise_gain(self.params.key_noise.value() as f64);
+        self.engine
+            .set_damper_noise_gain(self.params.damper_noise.value() as f64);
+        self.engine
+            .set_pedal_noise_gain(self.params.pedal_noise.value() as f64);
+        self.engine.set_mic_gains(
+            util::db_to_gain(self.params.mic_close.value()) as f64,
+            util::db_to_gain(self.params.mic_player.value()) as f64,
+            util::db_to_gain(self.params.mic_ambient.value()) as f64,
+        );
+        self.engine
+            .set_lid_angle(self.params.lid_angle.value() as f64);
+        self.engine
             .set_sustain_pedal(self.prev_sustain > 0.01, self.prev_sustain as f64);
         self.engine.set_una_corda(self.prev_una_corda);
+        self.engine.prepare_voices();
         self.pending_gui_note_offs.clear();
+        self.expired_gui_note_offs.clear();
         true
     }
 
@@ -344,6 +372,7 @@ impl Plugin for PhysicsPiano {
         self.active_keys_low.store(0, Ordering::Relaxed);
         self.active_keys_high.store(0, Ordering::Relaxed);
         self.pending_gui_note_offs.clear();
+        self.expired_gui_note_offs.clear();
     }
 
     fn process(
@@ -455,18 +484,18 @@ impl Plugin for PhysicsPiano {
 
         // Process pending NoteOff events whose debounce window has elapsed (finger actually released)
         if !self.pending_gui_note_offs.is_empty() {
-            let mut expired_keys = Vec::new();
-            for (&k, remaining) in self.pending_gui_note_offs.iter_mut() {
+            self.expired_gui_note_offs.clear();
+            for (&key, remaining) in self.pending_gui_note_offs.iter_mut() {
                 if *remaining <= num_samples {
-                    expired_keys.push(k);
+                    self.expired_gui_note_offs.push(key);
                 } else {
                     *remaining -= num_samples;
                 }
             }
-            for k in expired_keys {
-                self.pending_gui_note_offs.remove(&k);
+            for &key in &self.expired_gui_note_offs {
+                self.pending_gui_note_offs.remove(&key);
                 self.events_scratch
-                    .push(EngineEvent::NoteOff { time: 0, key: k });
+                    .push(EngineEvent::NoteOff { time: 0, key });
             }
         }
 
@@ -642,4 +671,33 @@ impl Vst3Plugin for PhysicsPiano {
         Vst3SubCategory::Synth,
         Vst3SubCategory::Stereo,
     ];
+}
+
+#[cfg(all(test, debug_assertions))]
+mod no_alloc_regression_tests {
+    use super::*;
+    use nice_assert_no_alloc::{assert_no_alloc, violation_count};
+
+    #[test]
+    fn draining_gui_events_does_not_deallocate_on_the_audio_thread() {
+        let plugin = PhysicsPiano::default();
+        plugin
+            .gui_event_tx
+            .send(EngineEvent::NoteOn {
+                time: 0,
+                key: 60,
+                velocity: 0.8,
+            })
+            .unwrap();
+        let violations_before = violation_count();
+
+        assert_no_alloc(|| {
+            assert!(matches!(
+                plugin.gui_event_rx.try_recv(),
+                Ok(EngineEvent::NoteOn { key: 60, .. })
+            ));
+        });
+
+        assert_eq!(violation_count(), violations_before);
+    }
 }

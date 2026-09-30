@@ -52,6 +52,7 @@ pub struct PianoEngine {
     pub unison_detuning: f64,
     pub phantom_gain: f64,
     pub pitch_bend_cents: f64,
+    pub note_tuning_cents: [Option<f64>; 88],
     pub expression_gain: f64,
     pub velocity_curve: f64,
 
@@ -112,6 +113,7 @@ impl PianoEngine {
             unison_detuning: 1.0,
             phantom_gain: 1.0,
             pitch_bend_cents: 0.0,
+            note_tuning_cents: [None; 88],
             expression_gain: 1.0,
             velocity_curve: 0.0,
             action_noise,
@@ -129,8 +131,11 @@ impl PianoEngine {
 
     pub fn set_pitch_bend(&mut self, cents: f64) {
         self.pitch_bend_cents = cents;
-        for v in self.voices.values_mut() {
-            v.set_pitch_bend(cents);
+        self.note_tuning_cents.fill(None);
+        for &key in &self.active_keys {
+            if let Some(voice) = self.voices.get_mut(&key) {
+                voice.set_pitch_bend(cents);
+            }
         }
     }
 
@@ -145,8 +150,10 @@ impl PianoEngine {
     pub fn set_inharmonicity_scale(&mut self, scale: f64) {
         if (self.inharmonicity_scale - scale).abs() > 1e-4 {
             self.inharmonicity_scale = scale;
-            for v in self.voices.values_mut() {
-                v.set_inharmonicity_scale(scale);
+            for &key in &self.active_keys {
+                if let Some(voice) = self.voices.get_mut(&key) {
+                    voice.set_inharmonicity_scale(scale);
+                }
             }
         }
     }
@@ -154,8 +161,10 @@ impl PianoEngine {
     pub fn set_hammer_hardness(&mut self, hardness: f64) {
         if (self.hammer_hardness - hardness).abs() > 1e-4 {
             self.hammer_hardness = hardness;
-            for v in self.voices.values_mut() {
-                v.set_hammer_hardness(hardness);
+            for &key in &self.active_keys {
+                if let Some(voice) = self.voices.get_mut(&key) {
+                    voice.set_hammer_hardness(hardness);
+                }
             }
         }
     }
@@ -163,8 +172,10 @@ impl PianoEngine {
     pub fn set_unison_detuning(&mut self, detune: f64) {
         if (self.unison_detuning - detune).abs() > 1e-4 {
             self.unison_detuning = detune;
-            for v in self.voices.values_mut() {
-                v.set_unison_detuning(detune);
+            for &key in &self.active_keys {
+                if let Some(voice) = self.voices.get_mut(&key) {
+                    voice.set_unison_detuning(detune);
+                }
             }
         }
     }
@@ -212,6 +223,15 @@ impl PianoEngine {
         self.lid_baffle.set_angle_deg(angle_deg);
     }
 
+    /// Preconstructs the complete keyboard outside the audio callback.
+    /// Standalone/plugin hosts should call this during initialization so the first NoteOn only
+    /// activates an already allocated voice.
+    pub fn prepare_voices(&mut self) {
+        for key in 21..=108u8 {
+            self.get_or_create_voice(key);
+        }
+    }
+
     pub fn get_or_create_voice(&mut self, key: u8) -> &mut PianoVoice {
         let sr = self.sample_rate;
         let una_corda = self.una_corda;
@@ -222,7 +242,8 @@ impl PianoEngine {
         let hardness = self.hammer_hardness;
         let detune = self.unison_detuning;
         let inharm = self.inharmonicity_scale;
-        let pitch_bend = self.pitch_bend_cents;
+        let pitch_bend =
+            self.note_tuning_cents[(key - 21) as usize].unwrap_or(self.pitch_bend_cents);
 
         self.voices.entry(key).or_insert_with(|| {
             let mut v = PianoVoice::new(kp.clone(), sr);
@@ -304,10 +325,28 @@ impl PianoEngine {
         };
 
         self.action_noise.trigger_note_on(key, effective_vel);
+        let unison_detuning = self.unison_detuning;
+        let pitch_bend_cents =
+            self.note_tuning_cents[(key - 21) as usize].unwrap_or(self.pitch_bend_cents);
+        let inharmonicity_scale = self.inharmonicity_scale;
+        let hammer_hardness = self.hammer_hardness;
+        let una_corda = self.una_corda;
         let cur_energy = {
-            let v = self.get_or_create_voice(key);
-            v.note_on(effective_vel);
-            v.get_energy()
+            let voice = self.get_or_create_voice(key);
+            if (voice.unison_scale - unison_detuning).abs() > 1e-4
+                || (voice.pitch_bend_cents - pitch_bend_cents).abs() > 1e-4
+            {
+                voice.update_string_tunings(unison_detuning, pitch_bend_cents);
+            }
+            if (voice.inharmonicity_scale - inharmonicity_scale).abs() > 1e-4 {
+                voice.set_inharmonicity_scale(inharmonicity_scale);
+            }
+            if (voice.hammer_hardness - hammer_hardness).abs() > 1e-4 {
+                voice.set_hammer_hardness(hammer_hardness);
+            }
+            voice.set_una_corda(una_corda);
+            voice.note_on(effective_vel);
+            voice.get_energy()
         };
         self.active_keys.insert(key);
         self.depressed_keys.insert(key);
@@ -328,6 +367,9 @@ impl PianoEngine {
     }
 
     pub fn set_note_tuning(&mut self, key: u8, cents: f64) {
+        if let Some(index) = key.checked_sub(21).map(usize::from).filter(|&i| i < 88) {
+            self.note_tuning_cents[index] = Some(cents);
+        }
         if let Some(v) = self.voices.get_mut(&key) {
             v.set_tuning_offset(cents);
         }
@@ -345,15 +387,19 @@ impl PianoEngine {
 
         self.sustain_pedal = pedal_down;
         self.pedal_depth = depth.clamp(0.0, 1.0);
-        for v in self.voices.values_mut() {
-            v.set_sustain_pedal(self.sustain_pedal, self.pedal_depth);
+        for &key in &self.active_keys {
+            if let Some(voice) = self.voices.get_mut(&key) {
+                voice.set_sustain_pedal(self.sustain_pedal, self.pedal_depth);
+            }
         }
     }
 
     pub fn set_una_corda(&mut self, enabled: bool) {
         self.una_corda = enabled;
-        for v in self.voices.values_mut() {
-            v.set_una_corda(enabled);
+        for &key in &self.active_keys {
+            if let Some(voice) = self.voices.get_mut(&key) {
+                voice.set_una_corda(enabled);
+            }
         }
     }
 
@@ -539,12 +585,15 @@ impl PianoEngine {
 
     /// Full DSP and voice state reset on transport stop / seek / restart.
     pub fn reset(&mut self) {
-        self.voices.clear();
+        for voice in self.voices.values_mut() {
+            voice.reset();
+        }
         self.active_keys.clear();
         self.depressed_keys.clear();
         self.active_keys_vec.clear();
         self.note_energy_peak.clear();
         self.pitch_bend_cents = 0.0;
+        self.note_tuning_cents.fill(None);
         self.expression_gain = 1.0;
         self.f_react_t = 0.0;
         self.f_react_p = 0.0;

@@ -34,3 +34,6 @@ atomic_float = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 physics-presets = { path = "../physics-presets" }
+
+[dev-dependencies]
+nice-assert-no-alloc = { version = "1.0", features = ["warn_debug"] }

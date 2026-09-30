@@ -238,9 +238,13 @@ impl GuitarEngine {
 
     /// Sets palm mute depth across all strings [0.0 = ring open, 1.0 = heavy mute].
     pub fn set_palm_mute(&mut self, depth: f64) {
-        self.palm_mute_depth = depth.clamp(0.0, 1.0);
+        let depth = depth.clamp(0.0, 1.0);
+        if (self.palm_mute_depth - depth).abs() <= 1e-4 {
+            return;
+        }
+        self.palm_mute_depth = depth;
         for s in &mut self.strings {
-            s.palm_mute_depth = self.palm_mute_depth;
+            s.palm_mute_depth = depth;
             s.recalculate_modal_operators();
         }
     }
@@ -260,7 +264,9 @@ impl GuitarEngine {
 
     /// Sets pluck style (Finger vs Plectrum).
     pub fn set_pluck_style(&mut self, style: PluckStyle) {
-        self.exciter = PluckExciter::new(style);
+        if self.exciter.style != style {
+            self.exciter = PluckExciter::new(style);
+        }
     }
 
     /// Advances 1 audio sample in hard real-time (zero allocations).

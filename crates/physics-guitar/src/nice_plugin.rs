@@ -239,7 +239,7 @@ impl Default for PhysicsGuitar {
             AtomicU32::new(0),
         ]);
 
-        let (gui_event_tx, gui_event_rx) = crossbeam_channel::unbounded();
+        let (gui_event_tx, gui_event_rx) = crossbeam_channel::bounded(256);
 
         Self {
             params: Arc::new(PhysicsGuitarParams::default()),
@@ -486,3 +486,34 @@ impl Vst3Plugin for PhysicsGuitar {
 
 nice_export_clap!(PhysicsGuitar);
 nice_export_vst3!(PhysicsGuitar);
+
+#[cfg(all(test, debug_assertions))]
+mod no_alloc_regression_tests {
+    use super::*;
+    use nice_assert_no_alloc::{assert_no_alloc, violation_count};
+
+    #[test]
+    fn draining_gui_events_does_not_deallocate_on_the_audio_thread() {
+        let plugin = PhysicsGuitar::default();
+        plugin
+            .gui_event_tx
+            .send(GuiGuitarEvent::NoteOn {
+                string_index: 0,
+                fret: 0,
+            })
+            .unwrap();
+        let violations_before = violation_count();
+
+        assert_no_alloc(|| {
+            assert!(matches!(
+                plugin.gui_event_rx.try_recv(),
+                Ok(GuiGuitarEvent::NoteOn {
+                    string_index: 0,
+                    fret: 0
+                })
+            ));
+        });
+
+        assert_eq!(violation_count(), violations_before);
+    }
+}

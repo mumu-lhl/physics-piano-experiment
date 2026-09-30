@@ -110,6 +110,7 @@ unsafe extern "C" fn plugin_activate(
     unsafe {
         let instance = &mut *((*plugin).plugin_data as *mut PluginInstance);
         instance.engine = PianoEngine::new(sample_rate, 35, true);
+        instance.engine.prepare_voices();
         let buf_size = max_frames_count as usize;
         instance.scratch_left = vec![0.0; buf_size];
         instance.scratch_right = vec![0.0; buf_size];
@@ -128,8 +129,7 @@ unsafe extern "C" fn plugin_stop_processing(_plugin: *const clap_plugin) {}
 unsafe extern "C" fn plugin_reset(plugin: *const clap_plugin) {
     unsafe {
         let instance = &mut *((*plugin).plugin_data as *mut PluginInstance);
-        instance.engine.active_keys.clear();
-        instance.engine.voices.clear();
+        instance.engine.reset();
     }
 }
 
@@ -621,8 +621,8 @@ unsafe extern "C" fn factory_create_plugin(
             master_volume: 1.0,
             scratch_left: vec![0.0; 256],
             scratch_right: vec![0.0; 256],
-            events_scratch: Vec::with_capacity(32),
-            out_events_scratch: Vec::with_capacity(32),
+            events_scratch: Vec::with_capacity(256),
+            out_events_scratch: Vec::with_capacity(64),
         });
 
         let plugin = Box::new(clap_plugin {

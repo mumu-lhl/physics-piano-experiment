@@ -1,5 +1,7 @@
 //! Integration tests for physics-guitar first-principles modeling.
 
+#[cfg(debug_assertions)]
+use nice_assert_no_alloc::{assert_no_alloc, violation_count};
 use physics_guitar::core::fretboard::FretboardRouter;
 use physics_guitar::core::guitar_string::GuitarString;
 use physics_guitar::core::pickup::{MagneticPickup, PickupPosition, PickupType};
@@ -450,4 +452,28 @@ fn test_single_channel_pitch_bend_and_pre_bend() {
     // 3. Modulate bend while sounding to +4.0 semitones
     engine.pitch_bend(1, 4.0);
     assert!((engine.strings[5].pitch_bend_semitones - 4.0).abs() < 1e-4);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn note_on_does_not_allocate_after_engine_initialization() {
+    let mut engine = GuitarEngine::new(
+        48_000.0,
+        GuitarStringSetType::Electric010,
+        GuitarInstrumentMode::Electric,
+    );
+    let violations_before = violation_count();
+
+    assert_no_alloc(|| {
+        engine.note_on(1, 64, 0.85);
+        for _ in 0..400 {
+            engine.process_sample();
+        }
+    });
+
+    assert_eq!(
+        violation_count(),
+        violations_before,
+        "guitar note-on must not allocate on the audio thread"
+    );
 }
