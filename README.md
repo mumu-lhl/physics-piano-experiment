@@ -76,6 +76,16 @@ physics-piano-experiment/
   - 6 Built-in Factory Presets: *Martin D-28 Fingerstyle*, *Dreadnought Strummer*, *Strat Clean Chime*, *Texas Blues Breakup*, *Les Paul Warm Jazz*, and *Flamenco Con Brio*.
   - Hardware-accelerated egui interface featuring real-time fretboard tracking, active fret indicators, string energy meters, and parameter racks.
 
+### 3. Physical Bass Engine (`crates/physics-bass`)
+* **CFL-bounded stiff-string FDTD** with geometric tension, bounded fret contact, and finger/pick/slap excitation.
+* **Electric and acoustic paths**: finite magnetic pickup aperture, tone filtering, and A0/B1/Bridge-Hill body modes.
+* **Playable Vizia editor**: interactive 5-string/24-fret fretboard, atomic vibration display, MIDI audition events, and physical parameter racks.
+
+### 4. Physical Drum Engine (`crates/physics-drum`)
+* **Reduced-order circular membrane model** using Bessel frequency ratios, double-head cavity coupling, and Hunt-Crossley impact.
+* **Snare and cymbal mechanics**: unilateral wire chatter, deterministic noise, loopback-FM cymbal cascade, and hi-hat choke groups.
+* **Playable Vizia editor**: interactive kick/snare/tom/hat/crash/ride pads, decaying voice glow, and MIDI/CC4 control.
+
 ---
 
 ## Quickstart: Building & Running

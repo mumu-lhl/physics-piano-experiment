@@ -4,11 +4,12 @@ use crate::{DrumEngine, gui::create_vizia_drum_editor, sanitize_floating_point_e
 use nice_plug::prelude::*;
 use std::num::NonZeroU32;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use vizia_plug::ViziaState;
 
 #[derive(Params)]
 pub struct PhysicsDrumParams {
-    #[persist = "editor-state-drum-v1"]
+    #[persist = "editor-state-drum-v2"]
     pub editor_state: Arc<ViziaState>,
 
     #[id = "snare_tightness"]
@@ -26,7 +27,7 @@ pub struct PhysicsDrumParams {
 impl Default for PhysicsDrumParams {
     fn default() -> Self {
         Self {
-            editor_state: ViziaState::new(|| (660, 260)),
+            editor_state: ViziaState::new(|| (900, 575)),
             snare_tightness: FloatParam::new(
                 "Snare Tightness",
                 0.62,
@@ -75,16 +76,39 @@ impl Default for PhysicsDrumParams {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum GuiDrumEvent {
+    Hit { note: u8, velocity: f64 },
+}
+
 pub struct PhysicsDrum {
     pub params: Arc<PhysicsDrumParams>,
     pub engine: DrumEngine,
+    pub voice_energies_shared: Arc<[AtomicU32; 10]>,
+    pub gui_event_tx: crossbeam_channel::Sender<GuiDrumEvent>,
+    gui_event_rx: crossbeam_channel::Receiver<GuiDrumEvent>,
 }
 
 impl Default for PhysicsDrum {
     fn default() -> Self {
+        let (gui_event_tx, gui_event_rx) = crossbeam_channel::bounded(256);
         Self {
             params: Arc::new(PhysicsDrumParams::default()),
             engine: DrumEngine::new(44_100.0),
+            voice_energies_shared: Arc::new([
+                AtomicU32::new(0),
+                AtomicU32::new(0),
+                AtomicU32::new(0),
+                AtomicU32::new(0),
+                AtomicU32::new(0),
+                AtomicU32::new(0),
+                AtomicU32::new(0),
+                AtomicU32::new(0),
+                AtomicU32::new(0),
+                AtomicU32::new(0),
+            ]),
+            gui_event_tx,
+            gui_event_rx,
         }
     }
 }
@@ -123,6 +147,10 @@ impl Plugin for PhysicsDrum {
 
     fn reset(&mut self) {
         self.engine.reset();
+        while self.gui_event_rx.try_recv().is_ok() {}
+        for energy in self.voice_energies_shared.iter() {
+            energy.store(0, Ordering::Relaxed);
+        }
     }
 
     fn process(
@@ -132,6 +160,15 @@ impl Plugin for PhysicsDrum {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         sanitize_floating_point_environment();
+
+        // Pad clicks are delivered through a bounded queue and never block the
+        // audio callback, even while the GUI is being resized or redrawn.
+        while let Ok(event) = self.gui_event_rx.try_recv() {
+            match event {
+                GuiDrumEvent::Hit { note, velocity } => self.engine.trigger(note, velocity),
+            }
+        }
+
         self.engine
             .set_snare_tightness(self.params.snare_tightness.value() as f64);
         self.engine
@@ -172,11 +209,32 @@ impl Plugin for PhysicsDrum {
                 *channel = right as f32;
             }
         }
+
+        let energies = [
+            self.engine.crash.energy(),
+            self.engine.ride.energy(),
+            self.engine.hats.energy(),
+            self.engine.hats.energy(),
+            self.engine.toms[1].top.energy() + self.engine.toms[1].bottom.energy(),
+            self.engine.toms[1].top.energy() + self.engine.toms[1].bottom.energy(),
+            self.engine.toms[0].top.energy() + self.engine.toms[0].bottom.energy(),
+            self.engine.snare.top.energy() + self.engine.snare.bottom.energy(),
+            self.engine.kick.top.energy() + self.engine.kick.bottom.energy(),
+            self.engine.hats.energy(),
+        ];
+        for (shared, energy) in self.voice_energies_shared.iter().zip(energies) {
+            let visual_energy = (energy / (energy + 1.0)).sqrt().clamp(0.0, 1.0) as f32;
+            shared.store(visual_energy.to_bits(), Ordering::Relaxed);
+        }
         ProcessStatus::Normal
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        create_vizia_drum_editor(self.params.clone())
+        create_vizia_drum_editor(
+            self.params.clone(),
+            self.voice_energies_shared.clone(),
+            self.gui_event_tx.clone(),
+        )
     }
 }
 

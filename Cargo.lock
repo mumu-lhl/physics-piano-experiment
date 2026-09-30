@@ -2800,6 +2800,7 @@ dependencies = [
 name = "physics-bass"
 version = "0.3.0"
 dependencies = [
+ "crossbeam-channel",
  "hound",
  "nice-assert-no-alloc",
  "nice-plug",
@@ -2813,6 +2814,7 @@ dependencies = [
 name = "physics-drum"
 version = "0.3.0"
 dependencies = [
+ "crossbeam-channel",
  "hound",
  "nice-assert-no-alloc",
  "nice-plug",

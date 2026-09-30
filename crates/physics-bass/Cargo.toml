@@ -22,6 +22,7 @@ path = "src/bin/standalone.rs"
 physics-dsp = { path = "../physics-dsp" }
 physics-ui = { path = "../physics-ui" }
 physics-presets = { path = "../physics-presets" }
+crossbeam-channel = "0.5"
 vizia_plug = { git = "https://github.com/vizia/vizia-plug.git", rev = "34812c0ba14c5df39621bab956c74e660220636b" }
 hound = "3.5.1"
 nice-plug = { version = "0.1.8", default-features = false, features = ["assert_process_allocs", "standalone", "vst3"] }

@@ -1,0 +1,101 @@
+:root {
+    background-color: #101319;
+    color: #e5e8ef;
+    font-size: 11.5;
+}
+
+label {
+    color: #c2c8d4;
+}
+
+.root {
+    child-space: 14px;
+    row-between: 8px;
+}
+
+.header {
+    height: 42px;
+    child-space: 2px;
+    col-between: 12px;
+}
+
+.title {
+    color: #e5b56e;
+    font-size: 20;
+    font-weight: bold;
+}
+
+.subtitle {
+    color: #8791a4;
+    font-size: 10;
+}
+
+.status {
+    color: #9ba8bc;
+    font-size: 10;
+    child-top: 1s;
+    child-bottom: 1s;
+}
+
+.instrument-view {
+    background-color: #0c0f14;
+    border-color: #303949;
+    border-width: 1px;
+    border-radius: 8px;
+}
+
+.rack-row {
+    col-between: 8px;
+}
+
+.rack-box {
+    background-color: #181d26;
+    border-color: #2e3747;
+    border-width: 1px;
+    border-radius: 7px;
+    child-space: 9px;
+    row-between: 6px;
+}
+
+.rack-title {
+    color: #e5b56e;
+    font-size: 12;
+    font-weight: bold;
+    bottom: 3px;
+}
+
+.small-note,
+.hint-text {
+    color: #77849a;
+    font-size: 9.5;
+}
+
+param-slider {
+    height: 22px;
+    background-color: #10151d;
+    border-color: #303b4b;
+    border-width: 1px;
+    border-radius: 4px;
+    child-top: 1s;
+    child-bottom: 1s;
+}
+
+param-slider:hover {
+    border-color: #687993;
+}
+
+param-slider .fill {
+    background-color: #4e708f;
+    border-radius: 3px;
+}
+
+param-slider:hover .fill {
+    background-color: #6f9ac0;
+}
+
+param-slider .value {
+    color: #f2f5fb;
+    font-size: 10;
+    font-weight: bold;
+    child-space: 1px;
+}

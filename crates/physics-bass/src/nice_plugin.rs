@@ -7,11 +7,12 @@ use crate::{
 use nice_plug::prelude::*;
 use std::num::NonZeroU32;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use vizia_plug::ViziaState;
 
 #[derive(Params)]
 pub struct PhysicsBassParams {
-    #[persist = "editor-state-bass-v1"]
+    #[persist = "editor-state-bass-v2"]
     pub editor_state: Arc<ViziaState>,
 
     /// 0 = electric, 1 = acoustic wooden bass.
@@ -45,7 +46,7 @@ pub struct PhysicsBassParams {
 impl Default for PhysicsBassParams {
     fn default() -> Self {
         Self {
-            editor_state: ViziaState::new(|| (760, 390)),
+            editor_state: ViziaState::new(|| (1120, 650)),
             mode: IntParam::new("Mode", 0, IntRange::Linear { min: 0, max: 1 }),
             pluck_style: IntParam::new("Pluck Style", 0, IntRange::Linear { min: 0, max: 2 }),
             five_string: BoolParam::new("Five String", false),
@@ -101,18 +102,45 @@ impl Default for PhysicsBassParams {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum GuiBassEvent {
+    NoteOn { note: u8, velocity: f64 },
+    NoteOff { note: u8 },
+}
+
 pub struct PhysicsBass {
     pub params: Arc<PhysicsBassParams>,
     pub engine: BassEngine,
     sample_rate: f64,
+    pub active_frets_shared: Arc<[AtomicU8; 5]>,
+    pub string_energies_shared: Arc<[AtomicU32; 5]>,
+    pub gui_event_tx: crossbeam_channel::Sender<GuiBassEvent>,
+    gui_event_rx: crossbeam_channel::Receiver<GuiBassEvent>,
 }
 
 impl Default for PhysicsBass {
     fn default() -> Self {
+        let (gui_event_tx, gui_event_rx) = crossbeam_channel::bounded(256);
         Self {
             params: Arc::new(PhysicsBassParams::default()),
             engine: BassEngine::new(44_100.0, BassMode::Electric, false),
             sample_rate: 44_100.0,
+            active_frets_shared: Arc::new([
+                AtomicU8::new(255),
+                AtomicU8::new(255),
+                AtomicU8::new(255),
+                AtomicU8::new(255),
+                AtomicU8::new(255),
+            ]),
+            string_energies_shared: Arc::new([
+                AtomicU32::new(0),
+                AtomicU32::new(0),
+                AtomicU32::new(0),
+                AtomicU32::new(0),
+                AtomicU32::new(0),
+            ]),
+            gui_event_tx,
+            gui_event_rx,
         }
     }
 }
@@ -188,6 +216,13 @@ impl Plugin for PhysicsBass {
 
     fn reset(&mut self) {
         self.engine.reset();
+        while self.gui_event_rx.try_recv().is_ok() {}
+        for fret in self.active_frets_shared.iter() {
+            fret.store(255, Ordering::Relaxed);
+        }
+        for energy in self.string_energies_shared.iter() {
+            energy.store(0, Ordering::Relaxed);
+        }
     }
 
     fn process(
@@ -197,6 +232,16 @@ impl Plugin for PhysicsBass {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         sanitize_floating_point_environment();
+
+        // GUI fretboard gestures use a bounded lock-free queue. `try_recv()`
+        // keeps the audio callback wait-free even if the user drags quickly.
+        while let Ok(event) = self.gui_event_rx.try_recv() {
+            match event {
+                GuiBassEvent::NoteOn { note, velocity } => self.engine.note_on(note, velocity),
+                GuiBassEvent::NoteOff { note } => self.engine.note_off(note),
+            }
+        }
+
         self.sync_parameters();
         let mut next_event = context.next_event();
         for (sample_index, channel_samples) in buffer.iter_samples().enumerate() {
@@ -225,11 +270,28 @@ impl Plugin for PhysicsBass {
                 *channel = right as f32;
             }
         }
+
+        for (index, voice) in self.engine.strings.iter().enumerate() {
+            let fret = if voice.string.is_held {
+                voice.current_fret
+            } else {
+                255
+            };
+            self.active_frets_shared[index].store(fret, Ordering::Relaxed);
+            let energy = voice.string.energy();
+            let visual_energy = (energy / (energy + 1.0)).sqrt().clamp(0.0, 1.0) as f32;
+            self.string_energies_shared[index].store(visual_energy.to_bits(), Ordering::Relaxed);
+        }
         ProcessStatus::Normal
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        create_vizia_bass_editor(self.params.clone())
+        create_vizia_bass_editor(
+            self.params.clone(),
+            self.active_frets_shared.clone(),
+            self.string_energies_shared.clone(),
+            self.gui_event_tx.clone(),
+        )
     }
 }
 
