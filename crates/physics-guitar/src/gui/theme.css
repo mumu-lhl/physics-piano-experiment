@@ -70,6 +70,15 @@ button:active {
     color: #121318;
 }
 
+param-button:checked {
+    background-color: #ffaa55;
+    border-color: #e5933d;
+}
+
+param-button:checked label {
+    color: #121318;
+}
+
 .btn-cycle {
     font-size: 12.0;
     color: #ffaa55;
