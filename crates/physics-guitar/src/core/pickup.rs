@@ -7,6 +7,7 @@
 //! - Multi-pickup parallel blending (Bridge, Middle, Neck, Bridge+Neck, Bridge+Middle)
 
 use crate::core::guitar_string::GuitarString;
+use physics_dsp::Biquad;
 use std::f64::consts::PI;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -39,15 +40,7 @@ pub use PickupSelector as PickupPosition;
 #[derive(Debug, Clone)]
 pub struct PassiveToneCircuit {
     pub tone_knob: f64, // 0.0 = dark/muffled, 1.0 = wide open/bright
-    b0: f64,
-    b1: f64,
-    b2: f64,
-    a1: f64,
-    a2: f64,
-    x1: f64,
-    x2: f64,
-    y1: f64,
-    y2: f64,
+    filter: Biquad,
     sample_rate: f64,
     pickup_type: PickupType,
 }
@@ -56,15 +49,7 @@ impl PassiveToneCircuit {
     pub fn new(sample_rate: f64, pickup_type: PickupType) -> Self {
         let mut s = Self {
             tone_knob: 1.0,
-            b0: 1.0,
-            b1: 0.0,
-            b2: 0.0,
-            a1: 0.0,
-            a2: 0.0,
-            x1: 0.0,
-            x2: 0.0,
-            y1: 0.0,
-            y2: 0.0,
+            filter: Biquad::lowpass(sample_rate, 1000.0, 1.0),
             sample_rate,
             pickup_type,
         };
@@ -95,28 +80,12 @@ impl PassiveToneCircuit {
         let fc = min_fc * (base_fc / min_fc).powf(self.tone_knob);
         let q = 0.8 + (base_q - 0.8) * self.tone_knob;
 
-        let w0 = 2.0 * PI * (fc / self.sample_rate).clamp(0.001, 0.49);
-        let alpha = w0.sin() / (2.0 * q);
-        let cos_w0 = w0.cos();
-
-        let a0 = 1.0 + alpha;
-        self.b0 = ((1.0 - cos_w0) * 0.5) / a0;
-        self.b1 = (1.0 - cos_w0) / a0;
-        self.b2 = self.b0;
-        self.a1 = (-2.0 * cos_w0) / a0;
-        self.a2 = (1.0 - alpha) / a0;
+        self.filter.set_lowpass(self.sample_rate, fc, q);
     }
 
     #[inline(always)]
     pub fn process(&mut self, input: f64) -> f64 {
-        let out = self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2
-            - self.a1 * self.y1
-            - self.a2 * self.y2;
-        self.x2 = self.x1;
-        self.x1 = input;
-        self.y2 = self.y1;
-        self.y1 = out;
-        out
+        self.filter.process(input)
     }
 }
 

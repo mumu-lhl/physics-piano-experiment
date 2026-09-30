@@ -2796,6 +2796,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "physics-dsp"
+version = "0.3.0"
+
+[[package]]
 name = "physics-guitar"
 version = "0.3.0"
 dependencies = [
@@ -2806,6 +2810,7 @@ dependencies = [
  "nice-plug",
  "num-complex",
  "parking_lot",
+ "physics-dsp",
  "physics-presets",
  "realfft",
  "serde",
@@ -2824,6 +2829,7 @@ dependencies = [
  "nice-plug",
  "num-complex",
  "parking_lot",
+ "physics-dsp",
  "physics-presets",
  "rayon",
  "realfft",

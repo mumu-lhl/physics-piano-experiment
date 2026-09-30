@@ -1,0 +1,10 @@
+[package]
+name = "physics-dsp"
+version.workspace = true
+edition = "2024"
+rust-version = "1.85"
+authors = ["Mumulhl"]
+description = "Real-time DSP primitives shared by physical-modeling instruments"
+
+[lib]
+name = "physics_dsp"

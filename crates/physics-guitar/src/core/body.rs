@@ -3,117 +3,11 @@
 //! 2. 4th-order Linkwitz-Riley phase-aligned complementary crossover filter.
 //! 3. Orthotropic Sitka Spruce soundboard & Indian Rosewood high-frequency modal diffusion.
 
+use physics_dsp::Biquad;
 use std::f64::consts::PI;
 
-/// Second-order Biquad filter for crossover filtering.
-#[derive(Debug, Clone)]
-pub struct BiquadFilter {
-    b0: f64,
-    b1: f64,
-    b2: f64,
-    a1: f64,
-    a2: f64,
-    x1: f64,
-    x2: f64,
-    y1: f64,
-    y2: f64,
-}
-
-impl BiquadFilter {
-    pub fn new_lowpass(fc: f64, q: f64, sample_rate: f64) -> Self {
-        let w0 = 2.0 * PI * (fc / sample_rate).clamp(0.001, 0.49);
-        let alpha = w0.sin() / (2.0 * q);
-        let cos_w0 = w0.cos();
-
-        let a0 = 1.0 + alpha;
-        let b0 = ((1.0 - cos_w0) * 0.5) / a0;
-        let b1 = (1.0 - cos_w0) / a0;
-        let b2 = b0;
-        let a1 = (-2.0 * cos_w0) / a0;
-        let a2 = (1.0 - alpha) / a0;
-
-        Self {
-            b0,
-            b1,
-            b2,
-            a1,
-            a2,
-            x1: 0.0,
-            x2: 0.0,
-            y1: 0.0,
-            y2: 0.0,
-        }
-    }
-
-    pub fn new_highpass(fc: f64, q: f64, sample_rate: f64) -> Self {
-        let w0 = 2.0 * PI * (fc / sample_rate).clamp(0.001, 0.49);
-        let alpha = w0.sin() / (2.0 * q);
-        let cos_w0 = w0.cos();
-
-        let a0 = 1.0 + alpha;
-        let b0 = ((1.0 + cos_w0) * 0.5) / a0;
-        let b1 = (-(1.0 + cos_w0)) / a0;
-        let b2 = b0;
-        let a1 = (-2.0 * cos_w0) / a0;
-        let a2 = (1.0 - alpha) / a0;
-
-        Self {
-            b0,
-            b1,
-            b2,
-            a1,
-            a2,
-            x1: 0.0,
-            x2: 0.0,
-            y1: 0.0,
-            y2: 0.0,
-        }
-    }
-
-    pub fn new_bandpass(fc: f64, q: f64, sample_rate: f64) -> Self {
-        let w0 = 2.0 * PI * (fc / sample_rate).clamp(0.001, 0.49);
-        let alpha = w0.sin() / (2.0 * q.max(0.01));
-        let cos_w0 = w0.cos();
-
-        let a0 = 1.0 + alpha;
-        let b0 = alpha / a0;
-        let b1 = 0.0;
-        let b2 = -alpha / a0;
-        let a1 = (-2.0 * cos_w0) / a0;
-        let a2 = (1.0 - alpha) / a0;
-
-        Self {
-            b0,
-            b1,
-            b2,
-            a1,
-            a2,
-            x1: 0.0,
-            x2: 0.0,
-            y1: 0.0,
-            y2: 0.0,
-        }
-    }
-
-    #[inline(always)]
-    pub fn process(&mut self, input: f64) -> f64 {
-        let out = self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2
-            - self.a1 * self.y1
-            - self.a2 * self.y2;
-        self.x2 = self.x1;
-        self.x1 = input;
-        self.y2 = self.y1;
-        self.y1 = out;
-        out
-    }
-
-    pub fn reset(&mut self) {
-        self.x1 = 0.0;
-        self.x2 = 0.0;
-        self.y1 = 0.0;
-        self.y2 = 0.0;
-    }
-}
+/// Compatibility alias for the shared real-time biquad implementation.
+pub type BiquadFilter = Biquad;
 
 /// 4th-Order Linkwitz-Riley crossover filter (cascaded dual 2nd-order Butterworth).
 /// Guarantees exact 0 dB sum magnitude and identical phase match at the crossover frequency.
@@ -129,10 +23,10 @@ impl LinkwitzRiley4thOrder {
     pub fn new(crossover_hz: f64, sample_rate: f64) -> Self {
         let q = std::f64::consts::FRAC_1_SQRT_2; // Butterworth Q = 0.7071
         Self {
-            lp1: BiquadFilter::new_lowpass(crossover_hz, q, sample_rate),
-            lp2: BiquadFilter::new_lowpass(crossover_hz, q, sample_rate),
-            hp1: BiquadFilter::new_highpass(crossover_hz, q, sample_rate),
-            hp2: BiquadFilter::new_highpass(crossover_hz, q, sample_rate),
+            lp1: BiquadFilter::lowpass(sample_rate, crossover_hz, q),
+            lp2: BiquadFilter::lowpass(sample_rate, crossover_hz, q),
+            hp1: BiquadFilter::highpass(sample_rate, crossover_hz, q),
+            hp2: BiquadFilter::highpass(sample_rate, crossover_hz, q),
         }
     }
 
@@ -357,8 +251,8 @@ impl AcousticGuitarBody {
             wood_high: WoodDiffusionBank::new(sample_rate),
             dispersion1: AllpassDispersion::new(11, 0.35),
             dispersion2: AllpassDispersion::new(23, 0.30),
-            air_damping_l: BiquadFilter::new_lowpass(5500.0, 0.7071, sample_rate),
-            air_damping_r: BiquadFilter::new_lowpass(5500.0, 0.7071, sample_rate),
+            air_damping_l: BiquadFilter::lowpass(sample_rate, 5500.0, 0.7071),
+            air_damping_r: BiquadFilter::lowpass(sample_rate, 5500.0, 0.7071),
             resonance_gain: 1.0,
         }
     }

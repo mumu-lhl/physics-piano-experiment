@@ -5,28 +5,7 @@
 //! - Cast-iron plate / frame shock impulse upon rapid pedal stomp
 //! - Restrike damper felt friction buzzing on vibrating strings
 
-use crate::core::action::Biquad;
-
-/// Lightweight, deterministic XorShift PRNG for zero-allocation real-time noise.
-#[derive(Debug, Clone)]
-struct FastNoise {
-    state: u32,
-}
-
-impl FastNoise {
-    fn new(seed: u32) -> Self {
-        Self { state: seed.max(1) }
-    }
-
-    #[inline(always)]
-    fn next_f64(&mut self) -> f64 {
-        self.state ^= self.state << 13;
-        self.state ^= self.state >> 17;
-        self.state ^= self.state << 5;
-        // Map to [-1.0, 1.0]
-        (self.state as f64) / 2147483648.0 - 1.0
-    }
-}
+use physics_dsp::{Biquad, XorShift32};
 
 /// Damper Bulk Lift Whoosh Synthesizer.
 ///
@@ -34,7 +13,7 @@ impl FastNoise {
 /// a gentle broadband acoustic whoosh is radiated through the rim and soundboard.
 pub struct DamperWhoosh {
     _sample_rate: f64,
-    noise: FastNoise,
+    noise: XorShift32,
     filter_l: Biquad,
     filter_r: Biquad,
     envelope: f64,
@@ -51,7 +30,7 @@ impl DamperWhoosh {
 
         Self {
             _sample_rate: sample_rate,
-            noise: FastNoise::new(0x1337BEEF),
+            noise: XorShift32::new(0x1337BEEF),
             filter_l: f_l,
             filter_r: f_r,
             envelope: 0.0,
@@ -182,7 +161,7 @@ impl PlateShock {
 /// creating a brief friction buzzing/scraping transient (~25ms).
 pub struct RestrikeBuzz {
     _sample_rate: f64,
-    noise: FastNoise,
+    noise: XorShift32,
     buzz_filters: [Biquad; 2],
     envelope: f64,
     decay_rate: f64,
@@ -199,7 +178,7 @@ impl RestrikeBuzz {
 
         Self {
             _sample_rate: sample_rate,
-            noise: FastNoise::new(0xCAFEBABE),
+            noise: XorShift32::new(0xCAFEBABE),
             buzz_filters: [f1, f2],
             envelope: 0.0,
             decay_rate,

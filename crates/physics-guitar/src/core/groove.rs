@@ -4,6 +4,7 @@
 //! fingerstyle arpeggios, funk chops, and palm-muted rock chugs.
 
 use crate::core::strummer::StrumDirection;
+use physics_dsp::XorShift64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GroovePattern {
@@ -50,7 +51,7 @@ pub struct GrooveEngine {
     step_index: usize,
     next_step_samples: usize,
     pub humanize_ms: f64,
-    rng_state: u64,
+    noise: XorShift64,
 }
 
 impl GrooveEngine {
@@ -64,7 +65,7 @@ impl GrooveEngine {
             step_index: 0,
             next_step_samples: 0,
             humanize_ms: 3.5, // 3.5ms natural human timing deviation
-            rng_state: 0x9371_8462_0192_8374,
+            noise: XorShift64::new(0x9371_8462_0192_8374),
         };
         engine.recalculate_subdivision();
         engine
@@ -102,10 +103,7 @@ impl GrooveEngine {
 
     #[inline(always)]
     fn next_jitter(&mut self) -> f64 {
-        self.rng_state ^= self.rng_state << 13;
-        self.rng_state ^= self.rng_state >> 7;
-        self.rng_state ^= self.rng_state << 17;
-        let uniform = (self.rng_state as f64 / u64::MAX as f64) * 2.0 - 1.0;
+        let uniform = self.noise.next_f64();
         uniform * (self.humanize_ms * 0.001 * self.sample_rate)
     }
 

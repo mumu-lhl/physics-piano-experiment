@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/physics-dsp",
     "crates/physics-piano",
     "crates/physics-guitar",
     "crates/physics-presets",

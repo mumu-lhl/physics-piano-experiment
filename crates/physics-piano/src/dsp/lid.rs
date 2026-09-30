@@ -5,69 +5,28 @@
 //! - Parameterized high-shelf diffraction filter.
 //! - Early lid reflection comb/delay network.
 
-use std::f64::consts::PI;
+use physics_dsp::Biquad;
 
-/// Parameterized High-Shelf Biquad Filter.
+/// High-shelf adapter around the shared biquad implementation.
 #[derive(Debug, Clone, Copy)]
-pub struct HighShelf {
-    b0: f64,
-    b1: f64,
-    b2: f64,
-    a1: f64,
-    a2: f64,
-    z1: f64,
-    z2: f64,
-}
+pub struct HighShelf(Biquad);
 
 impl HighShelf {
-    pub fn new(sample_rate: f64, freq: f64, gain_db: f64) -> Self {
-        let mut filter = Self {
-            b0: 1.0,
-            b1: 0.0,
-            b2: 0.0,
-            a1: 0.0,
-            a2: 0.0,
-            z1: 0.0,
-            z2: 0.0,
-        };
-        filter.update(sample_rate, freq, gain_db);
-        filter
+    pub fn new(sample_rate: f64, frequency: f64, gain_db: f64) -> Self {
+        Self(Biquad::high_shelf(sample_rate, frequency, gain_db))
     }
 
-    pub fn update(&mut self, sample_rate: f64, freq: f64, gain_db: f64) {
-        let a = 10.0f64.powf(gain_db / 40.0);
-        let w0 = 2.0 * PI * (freq / sample_rate).clamp(0.001, 0.49);
-        let cos_w0 = w0.cos();
-        let sin_w0 = w0.sin();
-        let alpha = sin_w0 / 2.0 * (2.0f64).sqrt(); // Q = 0.707 (slope = 1)
-
-        let two_sqrt_a_alpha = 2.0 * a.sqrt() * alpha;
-
-        let a0 = (a + 1.0) - (a - 1.0) * cos_w0 + two_sqrt_a_alpha;
-        let b0 = a * ((a + 1.0) + (a - 1.0) * cos_w0 + two_sqrt_a_alpha);
-        let b1 = -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0);
-        let b2 = a * ((a + 1.0) + (a - 1.0) * cos_w0 - two_sqrt_a_alpha);
-        let a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos_w0);
-        let a2 = (a + 1.0) - (a - 1.0) * cos_w0 - two_sqrt_a_alpha;
-
-        self.b0 = b0 / a0;
-        self.b1 = b1 / a0;
-        self.b2 = b2 / a0;
-        self.a1 = a1 / a0;
-        self.a2 = a2 / a0;
+    pub fn update(&mut self, sample_rate: f64, frequency: f64, gain_db: f64) {
+        self.0.set_high_shelf(sample_rate, frequency, gain_db);
     }
 
     #[inline(always)]
-    pub fn process(&mut self, x: f64) -> f64 {
-        let out = self.b0 * x + self.z1;
-        self.z1 = self.b1 * x - self.a1 * out + self.z2;
-        self.z2 = self.b2 * x - self.a2 * out;
-        out
+    pub fn process(&mut self, input: f64) -> f64 {
+        self.0.process(input)
     }
 
     pub fn reset(&mut self) {
-        self.z1 = 0.0;
-        self.z2 = 0.0;
+        self.0.reset();
     }
 }
 

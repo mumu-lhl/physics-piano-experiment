@@ -4,7 +4,7 @@
 //! wrapping coils of strings 4, 5, and 6 (D, A, low E) during position shifts
 //! and legato slides (docx Chapter 2 Coulomb-Stribeck friction & Chapter 6 hand shifting).
 
-use crate::core::body::BiquadFilter;
+use physics_dsp::{Biquad, XorShift64};
 
 /// Generator for wound string finger squeak / slide acoustic noise.
 #[derive(Debug, Clone)]
@@ -19,17 +19,17 @@ pub struct FingerSqueakGenerator {
     /// Center frequency of current squeak burst (Hz)
     pub current_fc: f64,
     /// Resonant bandpass filter simulating winding resonance
-    pub filter: BiquadFilter,
+    pub filter: Biquad,
     /// Last hand position on neck (0..24)
     pub last_hand_pos: u8,
-    /// Pseudo-random number generator state (xorshift64)
-    rng_state: u64,
+    /// Deterministic pseudo-random number generator for friction grain.
+    noise: XorShift64,
 }
 
 impl FingerSqueakGenerator {
     pub fn new(sample_rate: f64) -> Self {
         // Bandpass filter centered at 3100 Hz with Q=2.2 (typical acoustic wound string squeak resonance)
-        let filter = BiquadFilter::new_bandpass(3100.0, 2.2, sample_rate);
+        let filter = Biquad::bandpass(sample_rate, 3100.0, 2.2);
         Self {
             sample_rate,
             squeak_level: 0.40, // 40% natural studio squeak by default
@@ -38,18 +38,8 @@ impl FingerSqueakGenerator {
             current_fc: 3100.0,
             filter,
             last_hand_pos: 2,
-            rng_state: 0x8543_9281_4472_9103,
+            noise: XorShift64::new(0x8543_9281_4472_9103),
         }
-    }
-
-    /// Fast, deterministic zero-allocation PRNG for tactile friction grain.
-    #[inline(always)]
-    fn next_noise(&mut self) -> f64 {
-        self.rng_state ^= self.rng_state << 13;
-        self.rng_state ^= self.rng_state >> 7;
-        self.rng_state ^= self.rng_state << 17;
-        // Map to [-1.0, 1.0]
-        (self.rng_state as f64 / u64::MAX as f64) * 2.0 - 1.0
     }
 
     /// Triggers a finger squeak pulse when hand position shifts across frets.
@@ -70,7 +60,7 @@ impl FingerSqueakGenerator {
         self.current_fc = fc;
 
         // Reconfigure bandpass filter for the dynamic pitch of this slide
-        self.filter = BiquadFilter::new_bandpass(fc, 2.5, self.sample_rate);
+        self.filter = Biquad::bandpass(self.sample_rate, fc, 2.5);
 
         // Amplitude proportional to distance and string diameter (string 5/6 low E/A have deepest ribs)
         let string_rib_weight = match string_index {
@@ -99,7 +89,7 @@ impl FingerSqueakGenerator {
         }
 
         // Generate friction noise grain
-        let raw_grain = self.next_noise();
+        let raw_grain = self.noise.next_f64();
 
         // Resonant filtering through winding rib acoustics
         let filtered = self.filter.process(raw_grain);
