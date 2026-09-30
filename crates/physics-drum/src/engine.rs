@@ -357,12 +357,15 @@ mod tests {
     #[test]
     fn hat_choke_is_not_a_global_reset() {
         let mut engine = DrumEngine::new(48_000.0);
+        engine.trigger(49, 1.0);
         engine.trigger(46, 1.0);
         for _ in 0..64 {
             let _ = engine.process_sample();
         }
-        let before = engine.hats.energy();
+        let crash_energy_before = engine.crash.energy();
         engine.trigger(42, 1.0);
-        assert!(engine.hats.energy() < before + 1.0);
+        assert!(crash_energy_before > 0.0);
+        assert_eq!(engine.crash.energy(), crash_energy_before);
+        assert!(engine.hats.energy().is_finite() && engine.hats.energy() > 0.0);
     }
 }

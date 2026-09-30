@@ -218,6 +218,10 @@ popup {
     background-color: #222533;
 }
 
+.preset-dropdown:active label {
+    color: #ffd778;
+}
+
 .preset-dropdown-label {
     color: #ffd778;
     font-weight: bold;
