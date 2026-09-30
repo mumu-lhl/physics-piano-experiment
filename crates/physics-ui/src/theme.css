@@ -131,7 +131,7 @@ param-button:checked label {
 
 .btn-cycle:hover {
     background-color: #383e54;
-    border-color: #ffd778;
+    border-color: #6f7b95;
 }
 
 .btn-action {
@@ -147,21 +147,6 @@ param-button:checked label {
 .btn-action:hover {
     background-color: #32364a;
     border-color: #555b74;
-}
-
-.btn-action-gold {
-    font-size: 11.0;
-    font-weight: bold;
-    color: #121318;
-    background-color: #ffd778;
-    border-color: #e5b842;
-    border-width: 1px;
-    border-radius: 4px;
-    child-space: 1s;
-}
-
-.btn-action-gold:hover {
-    background-color: #ffe39a;
 }
 
 param-slider {

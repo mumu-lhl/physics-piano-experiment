@@ -144,7 +144,7 @@ pub fn preset_panel(
             .width(Pixels(layout.name_width))
             .height(Pixels(26.0));
         Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Save As", "另存为")))
-            .class("btn-action-gold")
+            .class("btn-action")
             .on_press(|cx| cx.emit(PresetPanelAction::SaveAs))
             .width(Pixels(layout.save_as_width));
         Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Rename", "重命名")))
