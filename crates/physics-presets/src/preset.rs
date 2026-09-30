@@ -20,7 +20,7 @@ pub struct Preset {
     #[serde(default = "default_author")]
     pub author: String,
 
-    /// Target instrument ("piano" or "guitar")
+    /// Target instrument ("piano", "guitar", "bass", or "drum")
     pub instrument: String,
 
     /// Category / genre (e.g., "Concert Grand", "Acoustic Fingerstyle", "High Gain Lead")

@@ -1,4 +1,4 @@
-//! Universal Preset and Undo/Redo System for Physics Piano and Physics Guitar.
+//! Universal Preset and Undo/Redo System for the physical-modeling instruments.
 
 pub mod manager;
 pub mod preset;
@@ -37,6 +37,36 @@ pub fn guitar_factory_presets() -> Vec<Preset> {
     ];
 
     GUITAR_PRESETS_JSON
+        .iter()
+        .filter_map(|json| Preset::from_json(json).ok())
+        .collect()
+}
+
+/// Load the physical bass factory presets from embedded JSON resources.
+pub fn bass_factory_presets() -> Vec<Preset> {
+    const BASS_PRESETS_JSON: &[&str] = &[
+        include_str!("../../../assets/presets/bass/finger_punch.json"),
+        include_str!("../../../assets/presets/bass/pick_attack.json"),
+        include_str!("../../../assets/presets/bass/slap_five.json"),
+        include_str!("../../../assets/presets/bass/upright_body.json"),
+    ];
+
+    BASS_PRESETS_JSON
+        .iter()
+        .filter_map(|json| Preset::from_json(json).ok())
+        .collect()
+}
+
+/// Load the physical drum factory presets from embedded JSON resources.
+pub fn drum_factory_presets() -> Vec<Preset> {
+    const DRUM_PRESETS_JSON: &[&str] = &[
+        include_str!("../../../assets/presets/drum/studio_kit.json"),
+        include_str!("../../../assets/presets/drum/dry_tight.json"),
+        include_str!("../../../assets/presets/drum/big_room.json"),
+        include_str!("../../../assets/presets/drum/low_punch.json"),
+    ];
+
+    DRUM_PRESETS_JSON
         .iter()
         .filter_map(|json| Preset::from_json(json).ok())
         .collect()

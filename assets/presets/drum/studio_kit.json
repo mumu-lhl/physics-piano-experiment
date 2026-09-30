@@ -1,0 +1,1 @@
+{"id":"drum_studio_kit","name":"Studio Kit","name_zh":"录音棚套鼓","author":"Physics Soundlab","instrument":"drum","category":"Acoustic Kit","description":"Balanced membrane decay with an open, articulate hi-hat.","params":{"snare_tightness":0.62,"snare_decay":0.58,"hihat_open":0.85,"cymbal_decay":0.70,"gain":0.78},"is_factory":true}

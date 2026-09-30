@@ -1,0 +1,30 @@
+[package]
+name = "physics-bass"
+version.workspace = true
+edition = "2024"
+rust-version = "1.85"
+authors = ["Mumulhl"]
+description = "Real-time physical-modeling electric and acoustic bass synthesizer"
+
+[lib]
+name = "physics_bass"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "physics-bass-rs"
+path = "src/bin/cli.rs"
+
+[[bin]]
+name = "physics-bass-standalone"
+path = "src/bin/standalone.rs"
+
+[dependencies]
+physics-dsp = { path = "../physics-dsp" }
+physics-ui = { path = "../physics-ui" }
+physics-presets = { path = "../physics-presets" }
+vizia_plug = { git = "https://github.com/vizia/vizia-plug.git", rev = "34812c0ba14c5df39621bab956c74e660220636b" }
+hound = "3.5.1"
+nice-plug = { version = "0.1.8", default-features = false, features = ["assert_process_allocs", "standalone", "vst3"] }
+
+[dev-dependencies]
+nice-assert-no-alloc = { version = "1.0", features = ["warn_debug"] }

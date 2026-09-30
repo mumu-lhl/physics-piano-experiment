@@ -2797,6 +2797,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "physics-bass"
+version = "0.3.0"
+dependencies = [
+ "hound",
+ "nice-assert-no-alloc",
+ "nice-plug",
+ "physics-dsp",
+ "physics-presets",
+ "physics-ui",
+ "vizia_plug",
+]
+
+[[package]]
+name = "physics-drum"
+version = "0.3.0"
+dependencies = [
+ "hound",
+ "nice-assert-no-alloc",
+ "nice-plug",
+ "physics-dsp",
+ "physics-presets",
+ "physics-ui",
+ "vizia_plug",
+]
+
+[[package]]
 name = "physics-dsp"
 version = "0.3.0"
 

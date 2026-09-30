@@ -28,6 +28,14 @@ physics-piano-experiment/
 │       ├── src/gui/              # Real-time fretboard tracking & string energy visualizer
 │       ├── src/presets.rs        # 6 factory presets (Martin D-28, Strat, Les Paul, etc.)
 │       └── src/nih_plugin.rs     # Native CLAP / VST3 / Standalone guitar plugin
+│   ├── physics-bass/             # FDTD electric/acoustic bass engine and plugin adapter
+│   │   ├── src/string.rs         # CFL-bounded stiff-string grid, fret contact, slap
+│   │   ├── src/acoustic.rs       # Finite pickup aperture and bass-body modes
+│   │   └── src/nice_plugin.rs    # CLAP / VST3 / standalone adapter
+│   └── physics-drum/             # Hybrid modal physical-modeling drum kit
+│       ├── src/membrane.rs       # Bessel-ratio circular membrane modes
+│       ├── src/voices.rs         # Double-head, snare-wire and cymbal models
+│       └── src/nice_plugin.rs    # General-MIDI CLAP / VST3 adapter
 ├── src/physics_piano/            # Python research harness & differentiable auto-voicing
 ├── xtask/                        # Build automation runner for plugin bundling (`cargo xtask bundle`)
 └── tests/                        # Comprehensive Python and Rust integration test suites
@@ -121,6 +129,12 @@ cargo run --release -p physics-piano --bin physics-piano-rs -- benchmark 35
 
 # Guitar: render open E2 note
 cargo run --release -p physics-guitar --bin physics-guitar-cli -- render E2 3.0 guitar_e2.wav 0.85
+
+# Bass: render low E1 (electric; use "acoustic" as the final argument for body radiation)
+cargo run --release -p physics-bass --bin physics-bass-rs -- E1 3.0 bass_e1.wav 0.85
+
+# Drums: render a General-MIDI kick/snare/hat demonstration
+cargo run --release -p physics-drum --bin physics-drum-rs -- 3.0 drums.wav
 ```
 
 ### 4. Running Workspace Test Suite

@@ -4,6 +4,8 @@ members = [
     "crates/physics-ui",
     "crates/physics-piano",
     "crates/physics-guitar",
+    "crates/physics-bass",
+    "crates/physics-drum",
     "crates/physics-presets",
     "xtask"
 ]
