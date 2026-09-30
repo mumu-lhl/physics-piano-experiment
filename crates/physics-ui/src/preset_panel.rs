@@ -64,6 +64,7 @@ pub fn preset_panel(
                 Label::new(cx, label).class("param-label");
             }
             Button::new(cx, |cx| Label::new(cx, "<"))
+                .class("btn-cycle")
                 .on_press(|cx| cx.emit(PresetPanelAction::Previous))
                 .width(Pixels(28.0));
             Dropdown::new(
@@ -74,12 +75,14 @@ pub fn preset_panel(
                         Button::new(cx, move |cx| {
                             HStack::new(cx, |cx| {
                                 Label::new(cx, selected_name.clone())
+                                    .class("preset-dropdown-label")
                                     .width(Stretch(1.0))
                                     .text_overflow(TextOverflow::Ellipsis);
                                 Label::new(cx, "▾").hoverable(false);
                             })
                             .width(Stretch(1.0))
                         })
+                        .class("preset-dropdown")
                         .on_press(|cx| cx.emit(PopupEvent::Switch))
                         .width(Stretch(1.0));
                     }
@@ -95,6 +98,7 @@ pub fn preset_panel(
                                         .alignment(Alignment::Left)
                                         .width(Stretch(1.0))
                                 })
+                                .class("preset-item")
                                 .on_press(move |cx| {
                                     cx.emit(PresetPanelAction::Select(event_id.clone()));
                                     cx.emit(PopupEvent::Close);
@@ -107,6 +111,7 @@ pub fn preset_panel(
             )
             .width(Pixels(layout.preset_width));
             Button::new(cx, |cx| Label::new(cx, ">"))
+                .class("btn-cycle")
                 .on_press(|cx| cx.emit(PresetPanelAction::Next))
                 .width(Pixels(28.0));
             Button::new(cx, move |cx| {
@@ -118,6 +123,7 @@ pub fn preset_panel(
                     }),
                 )
             })
+            .class("btn-action")
             .on_press(|cx| cx.emit(PresetPanelAction::ToggleLanguage))
             .width(Pixels(60.0));
 
@@ -138,27 +144,33 @@ pub fn preset_panel(
             .width(Pixels(layout.name_width))
             .height(Pixels(26.0));
         Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Save As", "另存为")))
+            .class("btn-action-gold")
             .on_press(|cx| cx.emit(PresetPanelAction::SaveAs))
             .width(Pixels(layout.save_as_width));
         Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Rename", "重命名")))
+            .class("btn-action")
             .on_press(|cx| cx.emit(PresetPanelAction::Rename))
             .disabled(is_user_preset.clone().map(|is_user| !is_user))
             .width(Pixels(layout.rename_width));
         Button::new(cx, |cx| {
             Label::new(cx, ui_text(lang, "Overwrite", "覆盖保存"))
         })
+        .class("btn-action")
         .on_press(|cx| cx.emit(PresetPanelAction::Overwrite))
         .disabled(is_user_preset.clone().map(|is_user| !is_user))
         .width(Pixels(layout.overwrite_width));
         Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Delete", "删除")))
+            .class("btn-action")
             .on_press(|cx| cx.emit(PresetPanelAction::Delete))
             .disabled(is_user_preset.clone().map(|is_user| !is_user))
             .width(Pixels(layout.delete_width));
         Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Undo", "撤销")))
+            .class("btn-action")
             .on_press(|cx| cx.emit(PresetPanelAction::Undo))
             .disabled(can_undo.clone().map(|enabled| !enabled))
             .width(Pixels(48.0));
         Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Redo", "重做")))
+            .class("btn-action")
             .on_press(|cx| cx.emit(PresetPanelAction::Redo))
             .disabled(can_redo.clone().map(|enabled| !enabled))
             .width(Pixels(48.0));

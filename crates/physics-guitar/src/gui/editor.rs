@@ -14,7 +14,7 @@ use crate::gui::i18n::{I18n, Language, setup_vizia_fonts};
 use crate::nice_plugin::{GuiGuitarEvent, PhysicsGuitarParams};
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
-    PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
+    PresetPanelAction, PresetPanelLayout, PresetPanelSignals, add_base_theme,
     discrete_selector as shared_discrete_selector, parameter_slider, preset_choices, preset_panel,
     redraw_custom_view, set_param, ui_text,
 };
@@ -504,10 +504,9 @@ pub fn create_vizia_guitar_editor(
         let can_redo_ui = can_redo.clone();
         let suppress_undo = Arc::new(AtomicU32::new(0));
         setup_vizia_fonts(cx);
-        if let Err(err) = cx.add_stylesheet(include_style!("src/gui/theme.css")) {
-            eprintln!("Failed to load Vizia stylesheet: {err:?}");
+        if let Err(err) = add_base_theme(cx) {
+            eprintln!("Failed to load shared Vizia theme: {err:?}");
         }
-
         GuitarUiState {
             params: params.clone(),
             manager: preset_manager.clone(),

@@ -25,7 +25,7 @@ struct Pad {
 const PADS: [Pad; VOICE_COUNT] = [
     Pad {
         note: 49,
-        label: "CRASH",
+        label: "Crash Cymbal",
         x: 0.12,
         y: 0.20,
         radius: 0.105,
@@ -33,7 +33,7 @@ const PADS: [Pad; VOICE_COUNT] = [
     },
     Pad {
         note: 51,
-        label: "RIDE",
+        label: "Ride Cymbal",
         x: 0.88,
         y: 0.20,
         radius: 0.105,
@@ -41,7 +41,7 @@ const PADS: [Pad; VOICE_COUNT] = [
     },
     Pad {
         note: 46,
-        label: "OPEN HAT",
+        label: "Open Hi-Hat",
         x: 0.22,
         y: 0.48,
         radius: 0.09,
@@ -49,7 +49,7 @@ const PADS: [Pad; VOICE_COUNT] = [
     },
     Pad {
         note: 42,
-        label: "CLOSED HAT",
+        label: "Closed Hi-Hat",
         x: 0.22,
         y: 0.73,
         radius: 0.085,
@@ -57,7 +57,7 @@ const PADS: [Pad; VOICE_COUNT] = [
     },
     Pad {
         note: 43,
-        label: "TOM 1",
+        label: "High Floor Tom",
         x: 0.43,
         y: 0.30,
         radius: 0.105,
@@ -65,7 +65,7 @@ const PADS: [Pad; VOICE_COUNT] = [
     },
     Pad {
         note: 45,
-        label: "TOM 2",
+        label: "Low Tom",
         x: 0.59,
         y: 0.30,
         radius: 0.11,
@@ -73,7 +73,7 @@ const PADS: [Pad; VOICE_COUNT] = [
     },
     Pad {
         note: 41,
-        label: "FLOOR TOM",
+        label: "Low Floor Tom",
         x: 0.77,
         y: 0.57,
         radius: 0.125,
@@ -81,7 +81,7 @@ const PADS: [Pad; VOICE_COUNT] = [
     },
     Pad {
         note: 38,
-        label: "SNARE",
+        label: "Acoustic Snare",
         x: 0.39,
         y: 0.58,
         radius: 0.105,
@@ -89,7 +89,7 @@ const PADS: [Pad; VOICE_COUNT] = [
     },
     Pad {
         note: 36,
-        label: "KICK",
+        label: "Bass Drum",
         x: 0.57,
         y: 0.73,
         radius: 0.145,
@@ -97,7 +97,7 @@ const PADS: [Pad; VOICE_COUNT] = [
     },
     Pad {
         note: 44,
-        label: "PEDAL",
+        label: "Pedal Hi-Hat",
         x: 0.12,
         y: 0.90,
         radius: 0.065,
@@ -107,25 +107,6 @@ const PADS: [Pad; VOICE_COUNT] = [
 
 fn voice_index(note: u8) -> usize {
     PADS.iter().position(|pad| pad.note == note).unwrap_or(0)
-}
-
-fn localized_label(note: u8, chinese: bool) -> &'static str {
-    if !chinese {
-        return PADS[voice_index(note)].label;
-    }
-    match note {
-        49 => "碎镲",
-        51 => "叮镲",
-        46 => "开镲",
-        42 => "闭镲",
-        43 => "通鼓 1",
-        45 => "通鼓 2",
-        41 => "落地鼓",
-        38 => "军鼓",
-        36 => "底鼓",
-        44 => "踩镲踏板",
-        _ => "鼓",
-    }
 }
 
 pub struct DrumPadWidget {
@@ -284,15 +265,13 @@ impl View for DrumPadWidget {
             outline.set_line_width(if pressed { 2.0 } else { 1.0 });
             canvas.stroke_path(&shape, &outline);
 
-            let mut label = vg::Paint::color(vg::Color::rgb(245, 247, 250));
-            label.set_font_size(if pad.label.len() > 8 { 8.0 } else { 9.0 });
+            let (label_r, label_g, label_b) = pad_label_rgb(pressed);
+            let mut label = vg::Paint::color(vg::Color::rgb(label_r, label_g, label_b));
+            let (top_line, bottom_line) = pad.label.rsplit_once(' ').unwrap_or((pad.label, ""));
+            label.set_font_size(if top_line.len() > 9 { 10.0 } else { 11.0 });
             label.set_text_align(vg::Align::Center);
-            canvas.fill_text(
-                center_x,
-                center_y + 3.0,
-                localized_label(pad.note, chinese),
-                &label,
-            );
+            canvas.fill_text(center_x, center_y - 2.0, top_line, &label);
+            canvas.fill_text(center_x, center_y + 10.0, bottom_line, &label);
         }
 
         let mut footer = vg::Paint::color(vg::Color::rgb(112, 124, 144));
@@ -308,5 +287,24 @@ impl View for DrumPadWidget {
             },
             &footer,
         );
+    }
+}
+
+fn pad_label_rgb(pressed: bool) -> (u8, u8, u8) {
+    if pressed {
+        (16, 19, 25)
+    } else {
+        (245, 247, 250)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pad_label_rgb;
+
+    #[test]
+    fn pressed_pad_uses_dark_text_on_the_gold_highlight() {
+        assert_eq!(pad_label_rgb(true), (16, 19, 25));
+        assert_eq!(pad_label_rgb(false), (245, 247, 250));
     }
 }

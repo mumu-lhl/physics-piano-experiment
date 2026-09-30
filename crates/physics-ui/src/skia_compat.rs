@@ -1,5 +1,6 @@
 //! Small shared compatibility layer for custom Vizia/Skia widgets.
 
+use std::sync::OnceLock;
 use vizia_plug::vizia::vg;
 
 pub struct Color(vg::Color4f);
@@ -131,6 +132,15 @@ impl Paint {
     }
 }
 
+fn text_typeface() -> Option<&'static vg::Typeface> {
+    static TYPEFACE: OnceLock<Option<vg::Typeface>> = OnceLock::new();
+    TYPEFACE
+        .get_or_init(|| {
+            vg::FontMgr::default().match_family_style("sans-serif", vg::FontStyle::normal())
+        })
+        .as_ref()
+}
+
 pub trait CanvasExt {
     fn fill_path(&self, path: &Path, paint: &Paint);
     fn stroke_path(&self, path: &Path, paint: &Paint);
@@ -150,6 +160,9 @@ impl CanvasExt for vg::Canvas {
 
     fn fill_text(&self, x: f32, y: f32, text: impl AsRef<str>, paint: &Paint) {
         let mut font = vg::Font::default();
+        if let Some(typeface) = text_typeface() {
+            font.set_typeface(typeface.clone());
+        }
         font.set_size(paint.font_size);
         let align = match paint.align {
             Align::Left => vg::utils::text_utils::Align::Left,

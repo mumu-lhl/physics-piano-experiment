@@ -330,6 +330,31 @@ mod tests {
     }
 
     #[test]
+    fn one_crash_hit_decays_after_the_gui_style_note_release() {
+        let mut engine = DrumEngine::new(48_000.0);
+        engine.set_cymbal_decay(0.7);
+        engine.trigger(49, 0.9);
+        let mut early_energy = 0.0;
+        let mut late_energy = 0.0;
+        let window = 24_000;
+        for sample in 0..10 * 48_000 {
+            let (left, right) = engine.process_sample();
+            let energy = (left * left + right * right) * 0.5;
+            if sample < window {
+                early_energy += energy;
+            } else if sample >= 19 * 24_000 {
+                late_energy += energy;
+            }
+        }
+        let early_rms = (early_energy / window as f64).sqrt();
+        let late_rms = (late_energy / window as f64).sqrt();
+        assert!(
+            late_rms < early_rms * 0.01,
+            "early={early_rms}, late={late_rms}"
+        );
+    }
+
+    #[test]
     fn hat_choke_is_not_a_global_reset() {
         let mut engine = DrumEngine::new(48_000.0);
         engine.trigger(46, 1.0);

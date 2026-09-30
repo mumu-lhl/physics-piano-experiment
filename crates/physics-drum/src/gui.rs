@@ -14,8 +14,8 @@ use nice_plug::prelude::{Editor, Param};
 use pad_view::DrumPadWidget;
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
-    PresetPanelAction, PresetPanelLayout, PresetPanelSignals, parameter_slider, preset_choices,
-    preset_panel, redraw_custom_view, set_param, setup_vizia_fonts,
+    PresetPanelAction, PresetPanelLayout, PresetPanelSignals, add_base_theme, parameter_slider,
+    preset_choices, preset_panel, redraw_custom_view, set_param, setup_vizia_fonts,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -342,10 +342,9 @@ pub fn create_vizia_drum_editor(
     let editor_state = params.editor_state.clone();
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
         setup_vizia_fonts(cx);
-        if let Err(error) = cx.add_stylesheet(include_style!("src/gui/theme.css")) {
-            eprintln!("Failed to load drum Vizia stylesheet: {error:?}");
+        if let Err(error) = add_base_theme(cx) {
+            eprintln!("Failed to load shared Vizia theme: {error:?}");
         }
-
         let selected_name_signal = Signal::new(selected_name.clone());
         let selected_id_signal = Signal::new(selected_id.clone());
         let preset_choices_signal =

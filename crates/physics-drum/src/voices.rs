@@ -312,7 +312,9 @@ impl CymbalMode {
             force_limit: omega * omega * 0.1,
             // A quartic modal strain potential supplies a conservative
             // von-Karman-inspired nonlinear restoring force.
-            beta: omega * omega * 35.0,
+            // Keep the explicit reduced-order strain term a bounded perturbation.
+            // Larger coefficients pump modal energy at high normalized frequencies.
+            beta: omega * omega * 0.35,
             radiation_gain: 0.0008 / (1.0 + index as f64 * 0.025),
         }
     }
@@ -545,6 +547,30 @@ mod tests {
                 .modes
                 .iter()
                 .all(|mode| mode.omega < std::f64::consts::PI * 32_000.0)
+        );
+    }
+
+    #[test]
+    fn single_cymbal_hit_decays_to_a_quiet_tail() {
+        let mut cymbal = CymbalVoice::new(48_000.0);
+        cymbal.set_decay_scale(1.475);
+        cymbal.trigger(1.0, 1.0);
+        let mut early_energy = 0.0;
+        let mut late_energy = 0.0;
+        let window = 24_000;
+        for sample in 0..10 * 48_000 {
+            let output = cymbal.step();
+            if sample < window {
+                early_energy += output * output;
+            } else if sample >= 19 * 24_000 {
+                late_energy += output * output;
+            }
+        }
+        let early_rms = (early_energy / window as f64).sqrt();
+        let late_rms = (late_energy / window as f64).sqrt();
+        assert!(
+            late_rms < early_rms * 0.01,
+            "early={early_rms}, late={late_rms}"
         );
     }
 

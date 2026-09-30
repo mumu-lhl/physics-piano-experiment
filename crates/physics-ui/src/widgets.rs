@@ -6,6 +6,35 @@ use vizia_plug::widgets::*;
 
 use crate::Language;
 
+#[derive(Default)]
+struct SliderRestoreState {
+    active_start: Option<f32>,
+    completed_start: Option<f32>,
+}
+
+impl SliderRestoreState {
+    fn begin(&mut self, value: f32) {
+        self.active_start = Some(value);
+        self.completed_start = None;
+    }
+
+    fn finish(&mut self) {
+        if let Some(value) = self.active_start.take() {
+            self.completed_start = Some(value);
+        }
+    }
+
+    fn take_restore_value(&mut self) -> Option<f32> {
+        let value = self
+            .active_start
+            .take()
+            .or_else(|| self.completed_start.take());
+        self.active_start = None;
+        self.completed_start = None;
+        value
+    }
+}
+
 /// Selects a localized string without allocating.
 pub fn ui_text(lang: Language, english: &'static str, chinese: &'static str) -> &'static str {
     match lang {
@@ -27,7 +56,7 @@ pub fn parameter_slider<P: Param + 'static>(
         let mut slider = ParamSlider::new(cx, param)
             .width(Stretch(1.0))
             .height(Pixels(20.0));
-        let drag_start = Arc::new(parking_lot::Mutex::new(None::<f32>));
+        let restore_state = Arc::new(parking_lot::Mutex::new(SliderRestoreState::default()));
         let slider_entity = slider.entity();
         slider.context().with_current(slider_entity, |cx| {
             cx.add_listener(
@@ -41,17 +70,17 @@ pub fn parameter_slider<P: Param + 'static>(
                                 && mouse.cursor_y >= bounds.y
                                 && mouse.cursor_y <= bounds.y + bounds.h;
                             if inside {
-                                *drag_start.lock() =
-                                    Some(unsafe { param_ptr.unmodulated_normalized_value() });
+                                restore_state
+                                    .lock()
+                                    .begin(unsafe { param_ptr.unmodulated_normalized_value() });
                             }
                         }
                         WindowEvent::MouseUp(MouseButton::Left) => {
-                            *drag_start.lock() = None;
+                            restore_state.lock().finish();
                         }
                         WindowEvent::MouseDown(MouseButton::Right) => {
-                            if let Some(value) = *drag_start.lock() {
+                            if let Some(value) = restore_state.lock().take_restore_value() {
                                 cx.emit(RawParamEvent::SetParameterNormalized(param_ptr, value));
-                                *drag_start.lock() = None;
                                 // Consume ParamSlider's default reset and end the active drag.
                                 cx.emit_custom(
                                     Event::new(WindowEvent::MouseUp(MouseButton::Left))
@@ -160,5 +189,37 @@ pub fn preset_choices(manager: &PresetManager, lang: Language) -> Vec<(String, S
 pub fn redraw_custom_view(cx: &mut EventContext, element: &str) {
     if let Some(entity) = cx.get_entity_by_element_id(element) {
         cx.with_current(entity, |cx| cx.needs_redraw());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SliderRestoreState;
+
+    #[test]
+    fn right_click_restores_value_from_the_last_completed_adjustment() {
+        let mut state = SliderRestoreState::default();
+        state.begin(0.25);
+        state.finish();
+        assert_eq!(state.take_restore_value(), Some(0.25));
+    }
+
+    #[test]
+    fn right_click_during_an_active_adjustment_restores_its_start() {
+        let mut state = SliderRestoreState::default();
+        state.begin(0.4);
+        assert_eq!(state.take_restore_value(), Some(0.4));
+        assert_eq!(state.take_restore_value(), None);
+    }
+
+    #[test]
+    fn beginning_a_new_adjustment_discards_the_previous_restore_point() {
+        let mut state = SliderRestoreState::default();
+        state.begin(0.25);
+        state.finish();
+        state.begin(0.6);
+        state.finish();
+        assert_eq!(state.take_restore_value(), Some(0.6));
+        assert_eq!(state.take_restore_value(), None);
     }
 }

@@ -19,8 +19,8 @@ use crate::gui::scope::{LissajousScopeWidget, StereoVuMeterWidget};
 use crate::nice_plugin::PhysicsPianoParams;
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
-    PresetPanelAction, PresetPanelLayout, PresetPanelSignals, parameter_slider, preset_choices,
-    preset_panel, redraw_custom_view, set_param,
+    PresetPanelAction, PresetPanelLayout, PresetPanelSignals, add_base_theme, parameter_slider,
+    preset_choices, preset_panel, redraw_custom_view, set_param,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -525,8 +525,8 @@ pub fn create_vizia_piano_editor(
         let can_redo_ui = can_redo.clone();
         let suppress_undo = Arc::new(AtomicU32::new(0));
         setup_vizia_fonts(cx);
-        if let Err(err) = cx.add_stylesheet(include_style!("src/gui/theme.css")) {
-            eprintln!("Failed to load Vizia stylesheet: {err:?}");
+        if let Err(err) = add_base_theme(cx) {
+            eprintln!("Failed to load shared Vizia theme: {err:?}");
         }
         PianoUiState {
             params: params.clone(),

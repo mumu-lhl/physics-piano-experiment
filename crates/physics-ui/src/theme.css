@@ -1,0 +1,256 @@
+/* Shared dark theme for Piano, Guitar, Bass, and Drum. */
+:root {
+    background-color: #121318;
+    color: #e2e4ec;
+    font-size: 11.5;
+}
+
+label {
+    color: #c4c7d4;
+}
+
+.root {
+    child-space: 14px;
+    row-between: 8px;
+}
+
+.header {
+    height: 42px;
+    child-space: 2px;
+    col-between: 12px;
+}
+
+.title {
+    font-size: 18.0;
+    font-weight: bold;
+    color: #ffd778;
+}
+
+.subtitle {
+    font-size: 10.5;
+    color: #8c90a2;
+}
+
+.status {
+    color: #9ba8bc;
+    font-size: 10;
+    child-top: 1s;
+    child-bottom: 1s;
+}
+
+.param-label {
+    font-size: 10.5;
+    color: #b0b4c8;
+}
+
+.rack-box {
+    background-color: #181922;
+    border-color: #292d3c;
+    border-width: 1px;
+    border-radius: 5px;
+    child-space: 8px;
+    row-between: 4px;
+}
+
+.rack-title {
+    font-size: 11.0;
+    font-weight: bold;
+    color: #ffd778;
+    bottom: 4px;
+}
+
+.instrument-view {
+    background-color: #0c0f14;
+    border-color: #303949;
+    border-width: 1px;
+    border-radius: 8px;
+}
+
+.rack-row {
+    col-between: 8px;
+}
+
+.small-note,
+.hint-text {
+    font-size: 10.0;
+    color: #727688;
+}
+
+button {
+    background-color: #242735;
+    border-color: #3d4256;
+    border-width: 1px;
+    border-radius: 4px;
+    color: #dce0f0;
+    height: 24px;
+    child-space: 4px;
+}
+
+button:hover {
+    background-color: #32364a;
+    border-color: #555b74;
+}
+
+button:active {
+    background-color: #ffd778;
+    color: #121318;
+}
+
+button:active label {
+    color: #121318;
+}
+
+button:disabled {
+    background-color: #1b1d26;
+    border-color: #303342;
+    color: #777b8c;
+}
+
+button:disabled label {
+    color: #777b8c;
+}
+
+param-button:checked {
+    background-color: #ffd778;
+    border-color: #e5b842;
+}
+
+param-button:checked label {
+    color: #121318;
+}
+
+.btn-cycle {
+    font-size: 12.0;
+    color: #ffd778;
+    background-color: #242735;
+    border-color: #3d4256;
+    border-width: 1px;
+    border-radius: 4px;
+    child-space: 1s;
+}
+
+.btn-cycle:hover {
+    background-color: #383e54;
+    border-color: #ffd778;
+}
+
+.btn-action {
+    font-size: 11.0;
+    color: #dce0f0;
+    background-color: #242735;
+    border-color: #3d4256;
+    border-width: 1px;
+    border-radius: 4px;
+    child-space: 1s;
+}
+
+.btn-action:hover {
+    background-color: #32364a;
+    border-color: #555b74;
+}
+
+.btn-action-gold {
+    font-size: 11.0;
+    font-weight: bold;
+    color: #121318;
+    background-color: #ffd778;
+    border-color: #e5b842;
+    border-width: 1px;
+    border-radius: 4px;
+    child-space: 1s;
+}
+
+.btn-action-gold:hover {
+    background-color: #ffe39a;
+}
+
+param-slider {
+    height: 20px;
+    border-color: #2b3042;
+    border-width: 1px;
+    border-radius: 3px;
+    background-color: #13151d;
+    child-top: 1s;
+    child-bottom: 1s;
+}
+
+param-slider:hover {
+    border-color: #4a5472;
+    background-color: #171a24;
+}
+
+param-slider .fill {
+    background-color: #8c6a22;
+    border-radius: 2px;
+}
+
+param-slider:hover .fill {
+    background-color: #ab832c;
+}
+
+param-slider .value {
+    color: #ffffff;
+    font-size: 10.5;
+    font-weight: bold;
+    child-space: 1s;
+}
+
+textbox {
+    height: 26px;
+    background-color: #10151d;
+    border-color: #303b4b;
+    border-width: 1px;
+    border-radius: 4px;
+    color: #f2f5fb;
+    child-space: 5px;
+}
+
+textbox:focus {
+    border-color: #ffd778;
+}
+
+popup {
+    background-color: #181a24;
+    border-color: #383e54;
+    border-width: 1px;
+    border-radius: 5px;
+    child-space: 4px;
+    row-between: 2px;
+}
+
+.preset-dropdown {
+    background-color: #1a1c26;
+    border-color: #383e54;
+    border-width: 1px;
+    border-radius: 4px;
+    child-space: 4px;
+    child-left: 8px;
+    child-right: 8px;
+}
+
+.preset-dropdown:hover {
+    border-color: #ffd778;
+    background-color: #222533;
+}
+
+.preset-dropdown-label {
+    color: #ffd778;
+    font-weight: bold;
+    font-size: 11.5;
+}
+
+.preset-item {
+    child-left: 10px;
+    child-top: 1s;
+    child-bottom: 1s;
+    color: #dce0f0;
+    font-size: 11.0;
+    background-color: #181a24;
+    height: 26px;
+    border-radius: 3px;
+}
+
+.preset-item:hover {
+    background-color: #2c3246;
+    color: #ffd778;
+}
