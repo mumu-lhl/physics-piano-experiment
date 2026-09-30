@@ -1,6 +1,7 @@
 //! Euler-Bernoulli Damped Stiff String Engine with Dual Polarization in Rust.
 
 use crate::params::StringPhysicalParams;
+use physics_dsp::{ModalTransition, OverdampedPolicy};
 use std::f64::consts::PI;
 
 #[repr(C, align(64))]
@@ -233,39 +234,27 @@ impl StiffStringModal {
             let omega_p = omega_t * (1.0 + self.params.polarization_mistuning);
             let gamma_p = self.sigma0 * 0.22 + self.sigma1 * 0.30 * (n * PI / self.length).powi(2);
 
-            let (pt, gt) = Self::compute_discrete_transition(omega_t, gamma_t, self.dt);
-            let (pp, gp) = Self::compute_discrete_transition(omega_p, gamma_p, self.dt);
+            let transition_t = ModalTransition::new(
+                omega_t,
+                gamma_t,
+                self.dt,
+                OverdampedPolicy::ClampDampedFrequency(1e-3),
+            );
+            let transition_p = ModalTransition::new(
+                omega_p,
+                gamma_p,
+                self.dt,
+                OverdampedPolicy::ClampDampedFrequency(1e-3),
+            );
 
             self.omega_t.push(omega_t);
-            self.gamma_t.push(gt);
-            self.phi_t.push(pt);
+            self.gamma_t.push(transition_t.gamma);
+            self.phi_t.push(transition_t.phi);
 
             self.omega_p.push(omega_p);
-            self.gamma_p.push(gp);
-            self.phi_p.push(pp);
+            self.gamma_p.push(transition_p.gamma);
+            self.phi_p.push(transition_p.phi);
         }
-    }
-
-    #[inline]
-    fn compute_discrete_transition(
-        omega: f64,
-        gamma: f64,
-        dt: f64,
-    ) -> ((f64, f64, f64, f64), (f64, f64)) {
-        let omega_d = (omega.powi(2) - gamma.powi(2)).max(1e-6).sqrt();
-        let decay = (-gamma * dt).exp();
-        let sin_wd = (omega_d * dt).sin();
-        let cos_wd = (omega_d * dt).cos();
-
-        let phi_11 = decay * (cos_wd + (gamma / omega_d) * sin_wd);
-        let phi_12 = decay * (sin_wd / omega_d);
-        let phi_21 = -decay * ((omega.powi(2) / omega_d) * sin_wd);
-        let phi_22 = decay * (cos_wd - (gamma / omega_d) * sin_wd);
-
-        let gamma_1 = (1.0 / omega.powi(2)) * (1.0 - decay * (cos_wd + (gamma / omega_d) * sin_wd));
-        let gamma_2 = phi_12;
-
-        ((phi_11, phi_12, phi_21, phi_22), (gamma_1, gamma_2))
     }
 
     pub fn set_damper(&mut self, active: bool, depth: f64) {

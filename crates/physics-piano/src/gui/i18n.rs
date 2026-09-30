@@ -1,27 +1,6 @@
 //! Internationalization (i18n) for Physics Piano GUI supporting English and Simplified Chinese.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Language {
-    English,
-    SimplifiedChinese,
-}
-
-impl Language {
-    pub fn from_system_locale() -> Self {
-        let is_chinese = std::env::var("LANG")
-            .map(|l| l.contains("zh"))
-            .unwrap_or(false)
-            || std::env::var("LC_ALL")
-                .map(|l| l.contains("zh"))
-                .unwrap_or(false);
-
-        if is_chinese {
-            Language::SimplifiedChinese
-        } else {
-            Language::English
-        }
-    }
-}
+pub use physics_ui::Language;
 
 pub struct I18n;
 
@@ -192,32 +171,4 @@ impl I18n {
     }
 }
 
-/// Discovers available system CJK fonts and installs fallback font definitions into Vizia context.
-pub fn setup_vizia_fonts(cx: &mut vizia_plug::vizia::prelude::Context) {
-    // Priority list of common Chinese fonts on Linux, Windows, macOS
-    let candidate_paths = [
-        // Linux system fonts
-        "/usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf",
-        "/usr/share/fonts/google-noto-sans-cjk-fonts/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-        "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
-        "/home/mumulhl/.local/share/fonts/LXGWWenKai-Regular.ttf",
-        // Windows system fonts
-        "C:\\Windows\\Fonts\\msyh.ttc",
-        "C:\\Windows\\Fonts\\simsun.ttc",
-        "C:\\Windows\\Fonts\\simhei.ttf",
-        // macOS system fonts
-        "/System/Library/Fonts/PingFang.ttc",
-        "/Library/Fonts/Songti.ttc",
-    ];
-
-    for &path in &candidate_paths {
-        if let Ok(bytes) = std::fs::read(path) {
-            let static_bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
-            cx.add_font_mem(static_bytes);
-            break;
-        }
-    }
-}
+pub use physics_ui::setup_vizia_fonts;

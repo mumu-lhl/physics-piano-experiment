@@ -1,0 +1,16 @@
+[package]
+name = "physics-ui"
+version.workspace = true
+edition = "2024"
+rust-version = "1.85"
+authors = ["Mumulhl"]
+description = "Shared Vizia UI and drawing support for physical-modeling instruments"
+
+[lib]
+name = "physics_ui"
+
+[dependencies]
+nice-plug = { version = "0.1.8", default-features = false }
+parking_lot = "0.12"
+physics-presets = { path = "../physics-presets" }
+vizia_plug = { git = "https://github.com/vizia/vizia-plug.git", rev = "34812c0ba14c5df39621bab956c74e660220636b" }

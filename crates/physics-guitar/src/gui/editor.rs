@@ -13,6 +13,11 @@ use crate::gui::fretboard_view::GuitarFretboardWidget;
 use crate::gui::i18n::{I18n, Language, setup_vizia_fonts};
 use crate::nice_plugin::{GuiGuitarEvent, PhysicsGuitarParams};
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
+use physics_ui::{
+    PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
+    discrete_selector as shared_discrete_selector, parameter_slider, preset_choices, preset_panel,
+    redraw_custom_view, set_param, ui_text,
+};
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -36,62 +41,8 @@ enum DiscreteParam {
 pub const EDITOR_WIDTH: u32 = 1080;
 pub const EDITOR_HEIGHT: u32 = 560;
 
-fn ui_text(lang: Language, english: &'static str, chinese: &'static str) -> &'static str {
-    match lang {
-        Language::English => english,
-        Language::SimplifiedChinese => chinese,
-    }
-}
-
-fn slider<'a, P: Param + 'static>(cx: &'a mut Context, label: &'static str, param: &'a P) {
-    let param_ptr = param.as_ptr();
-    HStack::new(cx, move |cx| {
-        Label::new(cx, label).width(Pixels(92.0));
-        let mut slider = ParamSlider::new(cx, param)
-            .width(Stretch(1.0))
-            .height(Pixels(20.0));
-        let drag_start = Arc::new(parking_lot::Mutex::new(None::<f32>));
-        let slider_entity = slider.entity();
-        slider.context().with_current(slider_entity, |cx| {
-            cx.add_listener(
-                move |_: &mut ParamSlider, cx: &mut EventContext, event: &mut Event| {
-                    event.map(|window, meta| match window {
-                        WindowEvent::MouseDown(MouseButton::Left) => {
-                            let bounds = cx.bounds();
-                            let mouse = cx.mouse();
-                            let inside = mouse.cursor_x >= bounds.x
-                                && mouse.cursor_x <= bounds.x + bounds.w
-                                && mouse.cursor_y >= bounds.y
-                                && mouse.cursor_y <= bounds.y + bounds.h;
-                            if inside {
-                                *drag_start.lock() =
-                                    Some(unsafe { param_ptr.unmodulated_normalized_value() });
-                            }
-                        }
-                        WindowEvent::MouseUp(MouseButton::Left) => {
-                            *drag_start.lock() = None;
-                        }
-                        WindowEvent::MouseDown(MouseButton::Right) => {
-                            let value = *drag_start.lock();
-                            if let Some(value) = value {
-                                cx.emit(RawParamEvent::SetParameterNormalized(param_ptr, value));
-                                *drag_start.lock() = None;
-                                cx.emit_custom(
-                                    Event::new(WindowEvent::MouseUp(MouseButton::Left))
-                                        .target(cx.current())
-                                        .propagate(Propagation::Direct),
-                                );
-                                meta.consume();
-                            }
-                        }
-                        _ => {}
-                    });
-                },
-            );
-        });
-    })
-    .height(Pixels(23.0))
-    .horizontal_gap(Pixels(6.0));
+fn slider<P: Param + 'static>(cx: &mut Context, label: &'static str, param: &P) {
+    parameter_slider(cx, label, param, 92.0);
 }
 
 fn discrete_selector(
@@ -102,55 +53,9 @@ fn discrete_selector(
     params: Arc<PhysicsGuitarParams>,
     param: DiscreteParam,
 ) {
-    let trigger_options = options.clone();
-    HStack::new(cx, move |cx| {
-        Label::new(cx, label).width(Pixels(92.0));
-        Dropdown::new(
-            cx,
-            move |cx| {
-                let display_options = trigger_options.clone();
-                Button::new(cx, move |cx| {
-                    HStack::new(cx, move |cx| {
-                        Label::new(
-                            cx,
-                            selected.map(move |value| {
-                                display_options
-                                    .iter()
-                                    .find(|(option, _)| *option == *value)
-                                    .map(|(_, name)| name.clone())
-                                    .unwrap_or_default()
-                            }),
-                        )
-                        .width(Stretch(1.0))
-                        .text_overflow(TextOverflow::Ellipsis);
-                        Label::new(cx, "▾").hoverable(false);
-                    })
-                    .width(Stretch(1.0))
-                })
-                .on_press(|cx| cx.emit(PopupEvent::Switch))
-                .width(Stretch(1.0))
-                .height(Pixels(22.0));
-            },
-            move |cx| {
-                for (value, name) in options.clone() {
-                    let params = params.clone();
-                    Button::new(cx, move |cx| {
-                        Label::new(cx, name.clone())
-                            .alignment(Alignment::Left)
-                            .width(Stretch(1.0))
-                    })
-                    .on_press(move |cx| {
-                        set_discrete_param(cx, &params, param, value);
-                        cx.emit(PopupEvent::Close);
-                    })
-                    .width(Stretch(1.0));
-                }
-            },
-        )
-        .width(Stretch(1.0));
-    })
-    .height(Pixels(23.0))
-    .horizontal_gap(Pixels(6.0));
+    shared_discrete_selector(cx, label, selected, options, 92.0, move |cx, value| {
+        set_discrete_param(cx, &params, param, value);
+    });
 }
 
 fn set_discrete_param(
@@ -199,27 +104,6 @@ enum GuitarUiEvent {
     Undo,
     Redo,
     RefreshDisplay,
-}
-
-fn preset_choices(manager: &PresetManager, lang: Language) -> Vec<(String, String)> {
-    manager
-        .presets()
-        .iter()
-        .map(|preset| {
-            (
-                preset.id.clone(),
-                preset
-                    .display_name(lang == Language::SimplifiedChinese)
-                    .to_string(),
-            )
-        })
-        .collect()
-}
-
-fn redraw_custom_view(cx: &mut EventContext, element: &str) {
-    if let Some(entity) = cx.get_entity_by_element_id(element) {
-        cx.with_current(entity, |cx| cx.needs_redraw());
-    }
 }
 
 fn guitar_value(params: &PhysicsGuitarParams, id: &str) -> Option<f32> {
@@ -316,14 +200,21 @@ impl GuitarUiState {
     }
 }
 
-fn set_param<P: Param>(cx: &mut EventContext, param: &P, value: P::Plain) {
-    cx.emit(ParamEvent::BeginSetParameter(param).upcast());
-    cx.emit(ParamEvent::SetParameter(param, value).upcast());
-    cx.emit(ParamEvent::EndSetParameter(param).upcast());
-}
-
 impl Model for GuitarUiState {
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
+        event.map(|action: &PresetPanelAction, _| match action {
+            PresetPanelAction::Previous => cx.emit(GuitarUiEvent::PreviousPreset),
+            PresetPanelAction::Next => cx.emit(GuitarUiEvent::NextPreset),
+            PresetPanelAction::ToggleLanguage => cx.emit(GuitarUiEvent::ToggleLanguage),
+            PresetPanelAction::Select(id) => cx.emit(GuitarUiEvent::SelectPreset(id.clone())),
+            PresetPanelAction::SetName(name) => cx.emit(GuitarUiEvent::SetName(name.clone())),
+            PresetPanelAction::SaveAs => cx.emit(GuitarUiEvent::SaveAs),
+            PresetPanelAction::Rename => cx.emit(GuitarUiEvent::Rename),
+            PresetPanelAction::Overwrite => cx.emit(GuitarUiEvent::Overwrite),
+            PresetPanelAction::Delete => cx.emit(GuitarUiEvent::Delete),
+            PresetPanelAction::Undo => cx.emit(GuitarUiEvent::Undo),
+            PresetPanelAction::Redo => cx.emit(GuitarUiEvent::Redo),
+        });
         event.map(|event, _| match event {
             GuitarUiEvent::RefreshDisplay => {
                 self.discrete.mode.set(self.params.mode.value());
@@ -690,104 +581,29 @@ pub fn create_vizia_guitar_editor(
                     .map(|index| (index, I18n::groove_name(index, lang).to_string()))
                     .collect();
 
-                HStack::new(cx, |cx| {
-                    Element::new(cx).width(Stretch(1.0));
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, I18n::preset(lang)).class("param-label");
-                        Button::new(cx, |cx| Label::new(cx, "<"))
-                            .on_press(|cx| cx.emit(GuitarUiEvent::PreviousPreset))
-                            .width(Pixels(28.0));
-                        Dropdown::new(
-                            cx,
-                            move |cx| {
-                                Button::new(cx, move |cx| {
-                                    HStack::new(cx, |cx| {
-                                        Label::new(cx, initial_preset_name.clone())
-                                            .width(Stretch(1.0))
-                                            .text_overflow(TextOverflow::Ellipsis);
-                                        Label::new(cx, "▾").hoverable(false);
-                                    })
-                                    .width(Stretch(1.0))
-                                })
-                                .on_press(|cx| cx.emit(PopupEvent::Switch))
-                                .width(Stretch(1.0));
-                            },
-                            move |cx| {
-                                Binding::new(cx, preset_choices, move |cx| {
-                                    for (id, name) in preset_choices.get() {
-                                        let event_id = id.clone();
-                                        Button::new(cx, move |cx| {
-                                            Label::new(cx, name.clone())
-                                                .alignment(Alignment::Left)
-                                                .width(Stretch(1.0))
-                                        })
-                                        .on_press(move |cx| {
-                                            cx.emit(GuitarUiEvent::SelectPreset(event_id.clone()));
-                                            cx.emit(PopupEvent::Close);
-                                        })
-                                        .width(Stretch(1.0));
-                                    }
-                                });
-                            },
-                        )
-                        .width(Pixels(180.0));
-                        Button::new(cx, |cx| Label::new(cx, ">"))
-                            .on_press(|cx| cx.emit(GuitarUiEvent::NextPreset))
-                            .width(Pixels(28.0));
-                        Button::new(cx, move |cx| {
-                            Label::new(
-                                cx,
-                                language_view.map(|lang| match lang {
-                                    Language::English => "中文".to_string(),
-                                    Language::SimplifiedChinese => "English".to_string(),
-                                }),
-                            )
-                        })
-                        .on_press(|cx| cx.emit(GuitarUiEvent::ToggleLanguage))
-                        .width(Pixels(60.0));
-                    })
-                    .height(Pixels(38.0))
-                    .horizontal_gap(Pixels(8.0));
-                    Element::new(cx).width(Stretch(1.0));
-                })
-                .height(Pixels(38.0))
-                .width(Stretch(1.0));
-
-                HStack::new(cx, |cx| {
-                    Textbox::new(cx, name_input.clone())
-                        .name(ui_text(lang, "Preset name", "预设名称"))
-                        .placeholder(ui_text(lang, "Preset name", "预设名称"))
-                        .on_edit(|cx, text| cx.emit(GuitarUiEvent::SetName(text)))
-                        .width(Pixels(130.0))
-                        .height(Pixels(26.0));
-                    Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Save As", "另存为")))
-                        .on_press(|cx| cx.emit(GuitarUiEvent::SaveAs))
-                        .width(Pixels(64.0));
-                    Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Rename", "重命名")))
-                        .on_press(|cx| cx.emit(GuitarUiEvent::Rename))
-                        .disabled(is_user_preset.clone().map(|is_user| !is_user))
-                        .width(Pixels(58.0));
-                    Button::new(cx, |cx| {
-                        Label::new(cx, ui_text(lang, "Overwrite", "覆盖保存"))
-                    })
-                    .on_press(|cx| cx.emit(GuitarUiEvent::Overwrite))
-                    .disabled(is_user_preset.clone().map(|is_user| !is_user))
-                    .width(Pixels(68.0));
-                    Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Delete", "删除")))
-                        .on_press(|cx| cx.emit(GuitarUiEvent::Delete))
-                        .disabled(is_user_preset.clone().map(|is_user| !is_user))
-                        .width(Pixels(48.0));
-                    Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Undo", "撤销")))
-                        .on_press(|cx| cx.emit(GuitarUiEvent::Undo))
-                        .disabled(can_undo.clone().map(|enabled| !enabled))
-                        .width(Pixels(48.0));
-                    Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Redo", "重做")))
-                        .on_press(|cx| cx.emit(GuitarUiEvent::Redo))
-                        .disabled(can_redo.clone().map(|enabled| !enabled))
-                        .width(Pixels(48.0));
-                })
-                .height(Pixels(30.0))
-                .horizontal_gap(Pixels(8.0));
+                preset_panel(
+                    cx,
+                    lang,
+                    PresetPanelSignals {
+                        selected_name: initial_preset_name,
+                        preset_choices,
+                        language: language_view,
+                        name_input,
+                        is_user_preset,
+                        can_undo,
+                        can_redo,
+                    },
+                    PresetPanelLayout {
+                        preset_label: Some(I18n::preset(lang)),
+                        preset_width: 180.0,
+                        name_width: 130.0,
+                        save_as_width: 64.0,
+                        rename_width: 58.0,
+                        overwrite_width: 68.0,
+                        delete_width: 48.0,
+                    },
+                    |_| {},
+                );
 
                 HStack::new(cx, |cx| {
                     VStack::new(cx, |cx| {

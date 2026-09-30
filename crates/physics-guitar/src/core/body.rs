@@ -3,7 +3,7 @@
 //! 2. 4th-order Linkwitz-Riley phase-aligned complementary crossover filter.
 //! 3. Orthotropic Sitka Spruce soundboard & Indian Rosewood high-frequency modal diffusion.
 
-use physics_dsp::Biquad;
+use physics_dsp::{Biquad, ModalTransition, OverdampedPolicy};
 use std::f64::consts::PI;
 
 /// Compatibility alias for the shared real-time biquad implementation.
@@ -66,26 +66,10 @@ impl BodyModalOscillator {
         let omega = 2.0 * PI * freq_hz;
         let zeta = 1.0 / (2.0 * q_factor);
         let sigma = zeta * omega;
-        let omega_d_sq = omega.powi(2) - sigma.powi(2);
-        let decay = (-sigma * dt).exp();
-
-        let (phi11, phi12, phi21, phi22, gamma1, gamma2) = if omega_d_sq > 0.0 {
-            let omega_d = omega_d_sq.sqrt();
-            let cos_d = (omega_d * dt).cos();
-            let sin_d = (omega_d * dt).sin();
-
-            let p11 = decay * (cos_d + (sigma / omega_d) * sin_d);
-            let p12 = decay * (sin_d / omega_d);
-            let p21 = -decay * (omega.powi(2) / omega_d) * sin_d;
-            let p22 = decay * (cos_d - (sigma / omega_d) * sin_d);
-
-            let g1 = (1.0 - p11) / omega.powi(2);
-            let g2 = -p21 / omega.powi(2);
-
-            (p11, p12, p21, p22, g1, g2)
-        } else {
-            (decay, dt * decay, 0.0, decay, 0.0, dt)
-        };
+        let transition =
+            ModalTransition::new(omega, sigma, dt, OverdampedPolicy::ExponentialFallback);
+        let (phi11, phi12, phi21, phi22) = transition.phi;
+        let (gamma1, gamma2) = transition.gamma;
 
         Self {
             omega,

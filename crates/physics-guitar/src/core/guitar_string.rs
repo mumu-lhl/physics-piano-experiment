@@ -3,6 +3,7 @@
 
 use crate::core::pluck::PluckExciter;
 use crate::params::GuitarStringParams;
+use physics_dsp::{ModalTransition, OverdampedPolicy};
 use std::f64::consts::PI;
 
 #[repr(C, align(64))]
@@ -173,15 +174,25 @@ impl GuitarString {
             let sigma_m_p = sigma_m * 0.40;
 
             // Discrete state-space operators via matrix exponential for mode m
-            let (phi_t, gamma_t) = Self::compute_discrete_operators(omega_m_t, sigma_m, self.dt);
-            let (phi_p, gamma_p) = Self::compute_discrete_operators(omega_m_p, sigma_m_p, self.dt);
+            let transition_t = ModalTransition::new(
+                omega_m_t,
+                sigma_m,
+                self.dt,
+                OverdampedPolicy::ExponentialFallback,
+            );
+            let transition_p = ModalTransition::new(
+                omega_m_p,
+                sigma_m_p,
+                self.dt,
+                OverdampedPolicy::ExponentialFallback,
+            );
 
-            self.phi_t.push(phi_t);
-            self.gamma_t.push(gamma_t);
+            self.phi_t.push(transition_t.phi);
+            self.gamma_t.push(transition_t.gamma);
             self.omega_t.push(omega_m_t);
 
-            self.phi_p.push(phi_p);
-            self.gamma_p.push(gamma_p);
+            self.phi_p.push(transition_p.phi);
+            self.gamma_p.push(transition_p.gamma);
             self.omega_p.push(omega_m_p);
 
             // Mode shape spatial gradient at bridge pin x = L: d/dx phi_m(L) = sqrt(2/L) * (m*pi/L) * (-1)^m
@@ -195,40 +206,6 @@ impl GuitarString {
             .resize(active_modes, ModalState { q: 0.0, v: 0.0 });
         self.state_p
             .resize(active_modes, ModalState { q: 0.0, v: 0.0 });
-    }
-
-    /// Discrete transition matrix via analytical matrix exponential:
-    /// [q(n+1); v(n+1)] = Phi * [q(n); v(n)] + Gamma * F(n)
-    fn compute_discrete_operators(
-        omega: f64,
-        sigma: f64,
-        dt: f64,
-    ) -> ((f64, f64, f64, f64), (f64, f64)) {
-        let omega_d_sq = omega.powi(2) - sigma.powi(2);
-        let decay = (-sigma * dt).exp();
-
-        if omega_d_sq > 0.0 {
-            let omega_d = omega_d_sq.sqrt();
-            let cos_d = (omega_d * dt).cos();
-            let sin_d = (omega_d * dt).sin();
-
-            let phi11 = decay * (cos_d + (sigma / omega_d) * sin_d);
-            let phi12 = decay * (sin_d / omega_d);
-            let phi21 = -decay * (omega.powi(2) / omega_d) * sin_d;
-            let phi22 = decay * (cos_d - (sigma / omega_d) * sin_d);
-
-            let gamma1 = (1.0 - phi11) / omega.powi(2);
-            let gamma2 = -phi21 / omega.powi(2);
-
-            ((phi11, phi12, phi21, phi22), (gamma1, gamma2))
-        } else {
-            // Overdamped fallback
-            let phi11 = decay;
-            let phi12 = dt * decay;
-            let phi21 = 0.0;
-            let phi22 = decay;
-            ((phi11, phi12, phi21, phi22), (0.0, dt))
-        }
     }
 
     /// Plucks the string with given exciter, pluck position, and velocity.
