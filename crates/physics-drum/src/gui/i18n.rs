@@ -23,13 +23,6 @@ impl I18n {
         }
     }
 
-    pub fn audition(lang: Language) -> &'static str {
-        match lang {
-            Language::English => "Click the pads below to audition",
-            Language::SimplifiedChinese => "点击下方鼓垫即可试听",
-        }
-    }
-
     pub fn preset(lang: Language) -> &'static str {
         match lang {
             Language::English => "Preset:",

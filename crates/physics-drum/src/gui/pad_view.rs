@@ -218,9 +218,9 @@ impl View for DrumPadWidget {
             bounds.x + 14.0,
             bounds.y + 18.0,
             if chinese {
-                "点击鼓垫演奏 · 通用 MIDI 鼓组"
+                "通用 MIDI 鼓组"
             } else {
-                "CLICK A PAD TO PLAY · MIDI DRUM MAP"
+                "MIDI DRUM MAP"
             },
             &title,
         );

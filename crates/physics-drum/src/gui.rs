@@ -419,9 +419,7 @@ pub fn create_vizia_drum_editor(
                         overwrite_width: 68.0,
                         delete_width: 48.0,
                     },
-                    move |cx| {
-                        Label::new(cx, I18n::audition(lang)).class("status");
-                    },
+                    |_| {},
                 );
 
                 HStack::new(cx, |cx| {
@@ -430,7 +428,6 @@ pub fn create_vizia_drum_editor(
                         Label::new(cx, I18n::subtitle(lang)).class("subtitle");
                     })
                     .width(Stretch(1.0));
-                    Label::new(cx, I18n::audition(lang)).class("status");
                 })
                 .class("header")
                 .width(Stretch(1.0));
