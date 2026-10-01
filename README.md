@@ -190,6 +190,14 @@ physics-piano verify contact --note A4
 physics-piano verify all --note A4
 ```
 
+The native Rust engine also has audio-output regressions. These check rendered partials against the stiff-string inharmonicity model, velocity-dependent attack brightness, unison detuning spread, damper release, and hammer contact contraction:
+
+```bash
+cargo test -p physics-piano --test test_acoustic
+```
+
+These tests validate physical relationships without licensed reference recordings. MAPS/VSL comparison remains an optional listening-reference audit.
+
 ---
 
 ## Continuous Integration & Release (GitHub Actions)
