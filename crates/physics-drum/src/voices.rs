@@ -12,7 +12,8 @@ use crate::membrane::{HEAD_MODE_COUNT, MembraneHead};
 use physics_dsp::{ModalTransition, OverdampedPolicy};
 use std::f64::consts::{PI, SQRT_2, TAU};
 
-pub const CYMBAL_MODE_COUNT: usize = 128;
+pub const CYMBAL_MODE_COUNT: usize = 256;
+pub const MAX_CYMBAL_NEIGHBORS: usize = 4;
 const SNARE_WIRE_COUNT: usize = 24;
 const SNARE_CONTACT_POINT_COUNT: usize = 3;
 
@@ -199,8 +200,8 @@ impl DoubleHeadVoice {
         if !self.active {
             self.reset();
         }
-        self.top.geometry_nonlinearity = 0.02 * velocity * velocity;
-        self.bottom.geometry_nonlinearity = 0.01 * velocity * velocity;
+        self.top.geometry_nonlinearity = 0.0;
+        self.bottom.geometry_nonlinearity = 0.0;
         let mallet_mass = if self.is_kick { 0.065 } else { 0.025 };
         let mallet_stiff = if self.is_kick { 1.2e6 } else { 2.2e6 };
         self.exciter.trigger(
@@ -278,7 +279,7 @@ impl DoubleHeadVoice {
             bot_sound += mode.v * mode.radiation_shape * 0.35;
         }
 
-        let shell_input = top_sound + strike_force * 0.0002;
+        let shell_input = top_sound + strike_force * 0.0001;
         let shell_sound = self.shell1.step(shell_input) * 0.18 + self.shell2.step(shell_input) * 0.10;
 
         let output = (top_sound + shell_sound - bot_sound * 0.30) * self.output_gain * self.tail_gain;
@@ -351,6 +352,9 @@ pub struct SnareVoice {
     pub cavity_damping: f64,
     pub wire_modal_forces: [f64; HEAD_MODE_COUNT],
     pub active: bool,
+    wire_filter_lp: f64,
+    wire_filter_hp: f64,
+    wire_filter_prev: f64,
 }
 
 impl SnareVoice {
@@ -403,6 +407,9 @@ impl SnareVoice {
             cavity_damping: 0.12,
             wire_modal_forces: [0.0; HEAD_MODE_COUNT],
             active: false,
+            wire_filter_lp: 0.0,
+            wire_filter_hp: 0.0,
+            wire_filter_prev: 0.0,
         }
     }
 
@@ -446,8 +453,8 @@ impl SnareVoice {
             self.cavity_pressure = 0.0;
             self.wire_modal_forces.fill(0.0);
         }
-        self.top.geometry_nonlinearity = 0.25 * velocity * velocity;
-        self.bottom.geometry_nonlinearity = 0.12 * velocity * velocity;
+        self.top.geometry_nonlinearity = 0.0;
+        self.bottom.geometry_nonlinearity = 0.0;
         let t60_top = 0.10 + 0.20 * self.decay;
         let t60_bot = 0.08 + 0.16 * self.decay;
         self.top.set_t60(t60_top);
@@ -531,10 +538,16 @@ impl SnareVoice {
             }
         }
 
-        // Pure physical radiation: Top head + Bottom head + Shell resonance + Steel wire rattle
-        let shell_input = top_velocity + strike_force * 0.0002;
+        // Pure physical radiation: Top head + Bottom head + Shell resonance + Smooth steel wire rattle
+        let shell_input = top_velocity + strike_force * 0.0001;
         let shell_sound = self.shell1.step(shell_input) * 0.18 + self.shell2.step(shell_input) * 0.10;
-        let rattle_sound = chatter_force * 0.003;
+
+        let wire_raw = chatter_force * 0.00045;
+        self.wire_filter_lp += 0.45 * (wire_raw - self.wire_filter_lp);
+        self.wire_filter_hp = 0.88 * (self.wire_filter_hp + self.wire_filter_lp - self.wire_filter_prev);
+        self.wire_filter_prev = self.wire_filter_lp;
+        let rattle_sound = self.wire_filter_hp;
+
         let output = (top_velocity * 0.75 - bottom_velocity * 0.20 + shell_sound + rattle_sound) * 1.05;
 
         let cavity_energy = 0.5 * self.cavity_stiffness * vol_delta * vol_delta;
@@ -555,6 +568,9 @@ impl SnareVoice {
             wire.displacement = 0.0;
             wire.velocity = 0.0;
         }
+        self.wire_filter_lp = 0.0;
+        self.wire_filter_hp = 0.0;
+        self.wire_filter_prev = 0.0;
         self.active = false;
         self.cavity_pressure = 0.0;
         self.wire_modal_forces.fill(0.0);
@@ -574,16 +590,26 @@ pub struct CymbalMode {
     pub q: f64,
     pub v: f64,
     pub omega: f64,
-    pub base_omega: f64,
-    pub beta: f64,
-    pub radiation_gain: f64,
     pub t60: f64,
+    pub modal_mass: f64,
+    pub strike_gain: f64,
+    pub radiation_gain: f64,
+    pub neighbor_count: usize,
+    pub neighbors: [usize; MAX_CYMBAL_NEIGHBORS],
+    pub coupling_weights: [f64; MAX_CYMBAL_NEIGHBORS],
 }
 
 impl CymbalMode {
-    pub fn new(sample_rate: f64, frequency: f64, beta: f64, radiation_gain: f64, t60: f64) -> Self {
-        let omega = TAU * frequency.min(sample_rate * 0.45);
-        let sigma = (1000.0_f64.ln() / t60.max(0.02)).min(omega * 0.9);
+    pub fn new(
+        sample_rate: f64,
+        frequency: f64,
+        modal_mass: f64,
+        strike_gain: f64,
+        radiation_gain: f64,
+        t60: f64,
+    ) -> Self {
+        let omega = TAU * frequency.min(sample_rate * 0.44);
+        let sigma = (1000.0_f64.ln() / t60.max(0.008)).min(omega * 0.9);
         Self {
             transition: ModalTransition::new(
                 omega,
@@ -594,60 +620,39 @@ impl CymbalMode {
             q: 0.0,
             v: 0.0,
             omega,
-            base_omega: omega,
-            beta,
-            radiation_gain,
             t60,
+            modal_mass,
+            strike_gain,
+            radiation_gain,
+            neighbor_count: 0,
+            neighbors: [0; MAX_CYMBAL_NEIGHBORS],
+            coupling_weights: [0.0; MAX_CYMBAL_NEIGHBORS],
         }
     }
 
-    pub fn set_t60(&mut self, sample_rate: f64, t60: f64) {
-        self.t60 = t60.max(0.02);
-        let sigma = (1000.0_f64.ln() / self.t60).min(self.omega * 0.9);
-        self.transition = ModalTransition::new(
-            self.omega,
-            sigma,
-            1.0 / sample_rate,
-            OverdampedPolicy::ExponentialFallback,
-        );
-    }
-
-    #[inline]
-    pub fn step(&mut self, modal_force: f64) -> f64 {
-        let (p11, p12, p21, p22) = self.transition.phi;
-        let (g1, g2) = self.transition.gamma;
-        let next_q = p11 * self.q + p12 * self.v + g1 * modal_force;
-        let next_v = p21 * self.q + p22 * self.v + g2 * modal_force;
-        self.q = next_q;
-        self.v = next_v;
-        self.v * self.radiation_gain
-    }
-
+    #[inline(always)]
     pub fn energy(&self) -> f64 {
-        0.5 * (self.v * self.v + self.omega * self.omega * self.q * self.q)
+        0.5 * (self.v * self.v + self.omega * self.omega * self.q * self.q) * self.modal_mass
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct SparseCouplePair {
-    i: usize,
-    j: usize,
-    beta: f64,
-}
-
-/// 128-mode plate bank with sparse Hamiltonian nonlinear coupling.
-/// Simulates energy cascade (shimmer/turbulent wash) and boundary damping with ZERO white noise!
+/// 256-mode bronze plate bank with sparse Hamiltonian nonlinear coupling.
+/// Replicates the physical bronze plate dispersion law, micro-detuned inharmonics,
+/// finite mallet contact duration, and acoustic radiation filtering with ZERO white noise!
 #[derive(Debug, Clone)]
 pub struct CymbalVoice {
     sample_rate: f64,
     pub kind: CymbalKind,
-    pub modes: [CymbalMode; CYMBAL_MODE_COUNT],
-    couplings: [SparseCouplePair; CYMBAL_MODE_COUNT + 32],
-    coupling_count: usize,
+    pub modes: Box<[CymbalMode; CYMBAL_MODE_COUNT]>,
+    pub exciter: HuntCrossleyExciter,
     pub open_amount: f64,
     pub decay_scale: f64,
     pub active: bool,
     base_t60: f64,
+    nonlinear_forces: [f64; CYMBAL_MODE_COUNT],
+    hp_state: f64,
+    hp_prev_in: f64,
+    output_scale: f64,
 }
 
 impl CymbalVoice {
@@ -657,87 +662,99 @@ impl CymbalVoice {
 
     pub fn new_for_kind(sample_rate: f64, kind: CymbalKind) -> Self {
         let sample_rate = sample_rate.max(1.0);
-        let (base_hz, base_t60, nl_beta) = match kind {
-            CymbalKind::HiHat => (360.0, 4.4, 120.0),
-            CymbalKind::Crash => (280.0, 6.0, 250.0),
-            CymbalKind::Ride => (420.0, 2.5, 30.0),
+        let (base_hz, base_t60, coupling_strength, output_scale) = match kind {
+            CymbalKind::HiHat => (380.0, 2.5, 3.0e4, 0.42),
+            CymbalKind::Crash => (280.0, 5.5, 4.5e4, 0.45),
+            CymbalKind::Ride => (440.0, 4.0, 2.0e4, 0.38),
         };
 
-        let max_hz = match kind {
-            CymbalKind::Crash => sample_rate * 0.32,
-            CymbalKind::HiHat => sample_rate * 0.30,
-            CymbalKind::Ride => sample_rate * 0.36,
-        };
-        let f0 = base_hz;
+        let dummy_mode = CymbalMode::new(sample_rate, base_hz, 0.0025, 1.0, 0.01, base_t60);
+        let mut modes: Box<[CymbalMode; CYMBAL_MODE_COUNT]> =
+            vec![dummy_mode; CYMBAL_MODE_COUNT].into_boxed_slice().try_into().unwrap();
 
-        let mut modes = [CymbalMode {
-            transition: ModalTransition::new(100.0, 1.0, 1.0 / sample_rate, OverdampedPolicy::ExponentialFallback),
-            q: 0.0,
-            v: 0.0,
-            omega: 100.0,
-            base_omega: 100.0,
-            beta: 0.0,
-            radiation_gain: 0.0,
-            t60: 1.0,
-        }; CYMBAL_MODE_COUNT];
+        let effective_t60 = if kind == CymbalKind::HiHat {
+            0.06 + (base_t60 - 0.06) * 1.0
+        } else {
+            base_t60
+        };
 
         for i in 0..CYMBAL_MODE_COUNT {
-            let frac = i as f64 / (CYMBAL_MODE_COUNT - 1) as f64;
-            let freq = (f0 + (max_hz - f0) * frac.powf(1.3)).min(max_hz);
-            let t60 = (base_t60 / (1.0 + (freq / 3500.0).powf(0.85)) + 0.02).max(0.015);
-            let rad_gain = match kind {
-                CymbalKind::Crash => 0.0035 / (1.0 + (freq / 4200.0).powf(1.8)),
-                CymbalKind::HiHat => 0.0032 / (1.0 + (freq / 8000.0).powf(1.5)),
-                CymbalKind::Ride => 0.0032 / (1.0 + (freq / 8500.0).powf(1.6)),
-            };
-            modes[i] = CymbalMode::new(sample_rate, freq, nl_beta, rad_gain, t60);
+            let norm = i as f64 / (CYMBAL_MODE_COUNT - 1) as f64;
+            // Dispersion law of circular bronze plate with inharmonic micro-detuning
+            let ratio = 1.0 + 8.5 * norm.powf(1.1) + 42.0 * norm.powf(1.6);
+            let inharmonic_detune = 1.0 + 0.015 * (i as f64 * 3.7).sin();
+            let freq = (base_hz * ratio * inharmonic_detune).min(sample_rate * 0.44);
+
+            let t60 = (effective_t60 / (1.0 + (freq / 3500.0).powf(1.2)) + 0.015).max(0.008);
+            let modal_mass = 0.0025 * (1.0 + 0.5 * norm);
+            let strike_gain = 1.0 / (1.0 + (freq / 2500.0).powf(1.4));
+            let radiation_gain = (freq / 1000.0).clamp(0.4, 2.8) / (CYMBAL_MODE_COUNT as f64).sqrt();
+
+            modes[i] = CymbalMode::new(sample_rate, freq, modal_mass, strike_gain, radiation_gain, t60);
         }
 
-        let mut couplings = [SparseCouplePair { i: 0, j: 0, beta: 0.0 }; CYMBAL_MODE_COUNT + 32];
-        let mut count = 0;
+        // Construct sparse coupling graph:
+        // 1. Immediate frequency neighbors
+        // 2. 2:1 internal resonance partner
+        for i in 0..CYMBAL_MODE_COUNT {
+            let mut neighbors = [0; MAX_CYMBAL_NEIGHBORS];
+            let mut weights = [0.0; MAX_CYMBAL_NEIGHBORS];
+            let mut count = 0;
 
-        // Neighbor chain
-        for i in 0..CYMBAL_MODE_COUNT - 1 {
-            couplings[count] = SparseCouplePair {
-                i,
-                j: i + 1,
-                beta: nl_beta * 0.15,
-            };
-            count += 1;
-        }
-
-        // 2:1 Octave pairs
-        for i in 0..CYMBAL_MODE_COUNT / 2 {
-            let target_omega = modes[i].omega * 2.0;
-            let mut best_j = i;
-            let mut best_diff = f64::MAX;
-            for j in (i + 1)..CYMBAL_MODE_COUNT {
-                let diff = (modes[j].omega - target_omega).abs();
-                if diff < best_diff {
-                    best_diff = diff;
-                    best_j = j;
-                }
-            }
-            if best_diff < modes[i].omega * 0.15 && count < couplings.len() {
-                couplings[count] = SparseCouplePair {
-                    i,
-                    j: best_j,
-                    beta: nl_beta * 0.25,
-                };
+            if i + 1 < CYMBAL_MODE_COUNT && count < MAX_CYMBAL_NEIGHBORS {
+                neighbors[count] = i + 1;
+                weights[count] = coupling_strength;
                 count += 1;
             }
+            if i > 0 && count < MAX_CYMBAL_NEIGHBORS {
+                neighbors[count] = i - 1;
+                weights[count] = coupling_strength;
+                count += 1;
+            }
+            if i + 3 < CYMBAL_MODE_COUNT && count < MAX_CYMBAL_NEIGHBORS {
+                neighbors[count] = i + 3;
+                weights[count] = coupling_strength * 0.4;
+                count += 1;
+            }
+
+            let target_omega = modes[i].omega * 2.0;
+            if target_omega < sample_rate * 0.44 * TAU && count < MAX_CYMBAL_NEIGHBORS {
+                let mut best_partner = None;
+                let mut best_diff = f64::INFINITY;
+                for j in (i + 1)..CYMBAL_MODE_COUNT {
+                    let diff = (modes[j].omega - target_omega).abs();
+                    if diff < best_diff {
+                        best_diff = diff;
+                        best_partner = Some(j);
+                    }
+                }
+                if let Some(partner) = best_partner {
+                    if best_diff < modes[i].omega * 0.15 {
+                        neighbors[count] = partner;
+                        weights[count] = coupling_strength * 0.7;
+                        count += 1;
+                    }
+                }
+            }
+
+            modes[i].neighbor_count = count;
+            modes[i].neighbors = neighbors;
+            modes[i].coupling_weights = weights;
         }
 
         let mut voice = Self {
             sample_rate,
             kind,
             modes,
-            couplings,
-            coupling_count: count,
+            exciter: HuntCrossleyExciter::default(),
             open_amount: 1.0,
             decay_scale: 1.0,
             active: false,
             base_t60,
+            nonlinear_forces: [0.0; CYMBAL_MODE_COUNT],
+            hp_state: 0.0,
+            hp_prev_in: 0.0,
+            output_scale,
         };
         voice.update_decay();
         voice
@@ -759,41 +776,31 @@ impl CymbalVoice {
         let velocity = velocity.clamp(0.001, 1.0);
 
         if !self.active {
-            for mode in &mut self.modes {
+            for mode in self.modes.iter_mut() {
                 mode.q = 0.0;
                 mode.v = 0.0;
             }
         }
 
-        let base_w = self.modes[0].omega;
-        let scale = match self.kind {
-            CymbalKind::Crash => 0.0028,
-            CymbalKind::Ride => 0.0015,
-            CymbalKind::HiHat => 0.0018,
+        let strike_vel = (1.5 + 5.0 * velocity.powf(1.1)) * match self.kind {
+            CymbalKind::Crash => 1.0,
+            CymbalKind::Ride => 0.85,
+            CymbalKind::HiHat => 0.80,
         };
-        for (i, mode) in self.modes.iter_mut().enumerate() {
-            let frac = i as f64 / (CYMBAL_MODE_COUNT - 1) as f64;
-            let impact_gain = match self.kind {
-                CymbalKind::Crash => (1.0 - frac * 0.40) * (0.7 + 0.3 * frac.powf(0.5)),
-                CymbalKind::Ride => 0.60 + 0.40 * frac,
-                CymbalKind::HiHat => 0.40 + 0.60 * frac.powf(0.8),
-            };
-            let freq_tilt = match self.kind {
-                CymbalKind::Crash => (mode.omega / base_w).powf(0.24),
-                CymbalKind::Ride => (mode.omega / base_w).powf(0.32),
-                CymbalKind::HiHat => (mode.omega / base_w).powf(0.26),
-            };
-            mode.v += velocity.powf(0.8) * base_w * scale * freq_tilt * impact_gain;
-        }
-
+        let (mass, stiffness) = match self.kind {
+            CymbalKind::Crash => (0.022, 1.4e7),
+            CymbalKind::Ride => (0.018, 2.2e7),
+            CymbalKind::HiHat => (0.016, 1.8e7),
+        };
+        self.exciter.trigger(strike_vel, mass, stiffness, 1.5);
         self.active = true;
     }
 
     pub fn choke(&mut self, amount: f64) {
         let factor = amount.clamp(0.0, 1.0);
-        for mode in &mut self.modes {
-            mode.q *= factor;
-            mode.v *= factor;
+        for mode in self.modes.iter_mut() {
+            mode.q *= factor * 0.15;
+            mode.v *= factor * 0.15;
         }
         self.open_amount *= factor;
         self.update_decay();
@@ -805,27 +812,63 @@ impl CymbalVoice {
             return 0.0;
         }
 
-        let mut nl_forces = [0.0; CYMBAL_MODE_COUNT];
-        for k in 0..self.coupling_count {
-            let pair = &self.couplings[k];
-            let qi = self.modes[pair.i].q;
-            let qj = self.modes[pair.j].q;
-            let fi = -pair.beta * qi * qj * qj;
-            let fj = -pair.beta * qj * qi * qi;
-            nl_forces[pair.i] += fi;
-            nl_forces[pair.j] += fj;
+        let dt = 1.0 / self.sample_rate;
+
+        // 1. Strike surface displacement & velocity
+        let mut x_surf = 0.0;
+        let mut v_surf = 0.0;
+        for mode in self.modes.iter() {
+            x_surf += mode.q * mode.strike_gain;
+            v_surf += mode.v * mode.strike_gain;
         }
 
-        let mut output = 0.0;
+        // Mallet exciter contact force
+        let strike_force = self.exciter.step(x_surf, v_surf, dt);
+
+        // 2. Conservative Hamiltonian sparse nonlinear coupling:
+        // F_nl,i = - q_i * sum_{j in N(i)} beta_ij * q_j^2
+        self.nonlinear_forces.fill(0.0);
         for i in 0..CYMBAL_MODE_COUNT {
-            output += self.modes[i].step(nl_forces[i]);
+            let q_i = self.modes[i].q;
+            let count = self.modes[i].neighbor_count;
+            let mut stiffness_shift = 0.0;
+            for k in 0..count {
+                let j = self.modes[i].neighbors[k];
+                let weight = self.modes[i].coupling_weights[k];
+                let q_j = self.modes[j].q;
+                stiffness_shift += weight * (q_j * q_j);
+            }
+            self.nonlinear_forces[i] = -q_i * stiffness_shift;
         }
 
-        if self.energy() < 1e-11 {
+        // 3. Advance modal state
+        let mut sound_out = 0.0;
+        for (i, mode) in self.modes.iter_mut().enumerate() {
+            let (p11, p12, p21, p22) = mode.transition.phi;
+            let (g1, g2) = mode.transition.gamma;
+            let total_force = strike_force * mode.strike_gain + self.nonlinear_forces[i];
+            let force_over_m = total_force / mode.modal_mass;
+
+            let next_q = p11 * mode.q + p12 * mode.v + g1 * force_over_m;
+            let next_v = p21 * mode.q + p22 * mode.v + g2 * force_over_m;
+
+            mode.q = next_q;
+            mode.v = next_v;
+
+            sound_out += mode.v * mode.radiation_gain;
+        }
+
+        // 4. High-pass radiation filter (320 Hz) to eliminate sub-audio IMD products
+        let hp_alpha = (-TAU * 320.0 * dt).exp();
+        let hp_out = hp_alpha * (self.hp_state + sound_out - self.hp_prev_in);
+        self.hp_prev_in = sound_out;
+        self.hp_state = hp_out;
+
+        if !self.exciter.is_contacting && self.energy() < 1e-11 {
             self.active = false;
         }
 
-        output.clamp(-1.0, 1.0)
+        (hp_out * self.output_scale).clamp(-1.0, 1.0)
     }
 
     pub fn energy(&self) -> f64 {
@@ -833,34 +876,37 @@ impl CymbalVoice {
     }
 
     pub fn reset(&mut self) {
-        for mode in &mut self.modes {
+        for mode in self.modes.iter_mut() {
             mode.q = 0.0;
             mode.v = 0.0;
         }
+        self.exciter.reset();
+        self.hp_state = 0.0;
+        self.hp_prev_in = 0.0;
         self.active = false;
     }
 
     fn update_decay(&mut self) {
         let is_hihat = self.kind == CymbalKind::HiHat;
-        let open_sq = self.open_amount.powf(1.2);
-        let t60_scale = if is_hihat {
-            0.030 + 0.970 * open_sq
+        let open_sq = self.open_amount.powf(1.8);
+        let effective_t60 = if is_hihat {
+            0.06 + (self.base_t60 - 0.06) * open_sq
         } else {
-            1.0
+            self.base_t60
         } * self.decay_scale;
 
-        let freq_ref = match self.kind {
-            CymbalKind::Crash => 8500.0,
-            CymbalKind::HiHat => 8000.0,
-            CymbalKind::Ride => 6000.0,
-        };
-
-        for (i, mode) in self.modes.iter_mut().enumerate() {
-            let frac = i as f64 / (CYMBAL_MODE_COUNT - 1) as f64;
+        let dt = 1.0 / self.sample_rate;
+        for mode in self.modes.iter_mut() {
             let freq = mode.omega / TAU;
-            let mode_t60 = (self.base_t60 * t60_scale / (1.0 + (freq / freq_ref).powf(0.55)) + 0.02)
-                / (1.0 + if is_hihat { (1.0 - open_sq) * (1.0 - frac) * 0.5 } else { 0.0 });
-            mode.set_t60(self.sample_rate, mode_t60);
+            let t60 = (effective_t60 / (1.0 + (freq / 3500.0).powf(1.2)) + 0.015).max(0.008);
+            let sigma = (1000.0_f64.ln() / t60).min(mode.omega * 0.9);
+            mode.t60 = t60;
+            mode.transition = ModalTransition::new(
+                mode.omega,
+                sigma,
+                dt,
+                OverdampedPolicy::ExponentialFallback,
+            );
         }
     }
 }

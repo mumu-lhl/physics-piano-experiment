@@ -311,18 +311,33 @@ impl MembraneHead {
             } else {
                 self.tension_modulation_gain
             };
-            let target_scale = (1.0 + gain * self.smoothed_energy).sqrt().min(1.5);
-            self.current_scale = target_scale;
-
-            for mode in &mut self.modes {
-                let current_omega = mode.base_omega * self.current_scale;
-                let sigma = (1000.0_f64.ln() / mode.t60).min(current_omega * 0.9);
-                mode.transition = ModalTransition::new(
-                    current_omega,
-                    sigma,
-                    self.dt,
-                    OverdampedPolicy::ExponentialFallback,
-                );
+            if gain > 0.0 && self.smoothed_energy > 1e-4 {
+                let target_scale = (1.0 + gain * self.smoothed_energy).sqrt().min(1.5);
+                if (target_scale - self.current_scale).abs() > 0.005 {
+                    self.current_scale = target_scale;
+                    for mode in &mut self.modes {
+                        let current_omega = mode.base_omega * self.current_scale;
+                        let sigma = (1000.0_f64.ln() / mode.t60).min(current_omega * 0.9);
+                        mode.transition = ModalTransition::new(
+                            current_omega,
+                            sigma,
+                            self.dt,
+                            OverdampedPolicy::ExponentialFallback,
+                        );
+                    }
+                }
+            } else if self.current_scale != 1.0 {
+                self.current_scale = 1.0;
+                for mode in &mut self.modes {
+                    let current_omega = mode.base_omega;
+                    let sigma = (1000.0_f64.ln() / mode.t60).min(current_omega * 0.9);
+                    mode.transition = ModalTransition::new(
+                        current_omega,
+                        sigma,
+                        self.dt,
+                        OverdampedPolicy::ExponentialFallback,
+                    );
+                }
             }
         }
         self.step_counter += 1;
