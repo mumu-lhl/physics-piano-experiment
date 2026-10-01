@@ -4,6 +4,9 @@
 //! on gesture release) and atomic compound batch changes (such as applying a preset).
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
+const WHEEL_IDLE_TIMEOUT: Duration = Duration::from_millis(400);
 
 /// An individual parameter value transition
 #[derive(Debug, Clone, PartialEq)]
@@ -36,6 +39,7 @@ pub struct UndoManager {
     undo_stack: Vec<UndoAction>,
     redo_stack: Vec<UndoAction>,
     max_history: usize,
+    last_wheel_update: Option<(String, Instant)>,
     /// Pending gesture tracking: param_id -> initial and latest gesture values.
     active_gestures: HashMap<String, ActiveGesture>,
 }
@@ -52,6 +56,7 @@ impl UndoManager {
             undo_stack: Vec::with_capacity(max_history),
             redo_stack: Vec::with_capacity(max_history),
             max_history: max_history.max(10),
+            last_wheel_update: None,
             active_gestures: HashMap::new(),
         }
     }
@@ -92,6 +97,47 @@ impl UndoManager {
         false
     }
 
+    /// Keep consecutive wheel updates of the same parameter in one immediately undoable action.
+    /// A pause of 400 ms or another recorded action starts a separate adjustment.
+    pub fn end_wheel_gesture(&mut self, param_id: &str, final_val: f32) -> bool {
+        let now = Instant::now();
+        let continuing = self.last_wheel_update.as_ref().is_some_and(|(id, last)| {
+            id == param_id && now.saturating_duration_since(*last) < WHEEL_IDLE_TIMEOUT
+        });
+        let Some(gesture) = self.active_gestures.remove(param_id) else {
+            self.last_wheel_update = continuing.then(|| (param_id.to_string(), now));
+            return false;
+        };
+        let final_val = gesture.latest_value.unwrap_or(final_val);
+        if (final_val - gesture.initial_value).abs() <= 1e-6 {
+            self.last_wheel_update = continuing.then(|| (param_id.to_string(), now));
+            return false;
+        }
+        if continuing {
+            if let Some(UndoAction::SingleParam(transition)) = self.undo_stack.last_mut() {
+                if transition.param_id == param_id {
+                    transition.new_value = final_val;
+                    // Returning to the start of the burst leaves nothing to undo.
+                    if (transition.new_value - transition.old_value).abs() <= 1e-6 {
+                        self.undo_stack.pop();
+                        self.last_wheel_update = None;
+                    } else {
+                        self.last_wheel_update = Some((param_id.to_string(), now));
+                    }
+                    self.redo_stack.clear();
+                    return true;
+                }
+            }
+        }
+        self.push_action(UndoAction::SingleParam(ParamTransition {
+            param_id: param_id.to_string(),
+            old_value: gesture.initial_value,
+            new_value: final_val,
+        }));
+        self.last_wheel_update = Some((param_id.to_string(), now));
+        true
+    }
+
     /// Discard the most recent completed single-parameter gesture when a slider restores its
     /// starting value through the right-click cancel action.
     pub fn cancel_last_single_param(&mut self, param_id: &str, restored_value: f32) -> bool {
@@ -103,6 +149,7 @@ impl UndoManager {
         }
 
         self.undo_stack.pop();
+        self.last_wheel_update = None;
         true
     }
 
@@ -118,6 +165,7 @@ impl UndoManager {
     }
 
     fn push_action(&mut self, action: UndoAction) {
+        self.last_wheel_update = None;
         self.undo_stack.push(action);
         if self.undo_stack.len() > self.max_history {
             self.undo_stack.remove(0);
@@ -137,6 +185,7 @@ impl UndoManager {
     /// Undo the most recent action.
     /// Returns the list of `(param_id, target_value)` pairs to restore.
     pub fn undo(&mut self) -> Option<Vec<(String, f32)>> {
+        self.last_wheel_update = None;
         let action = self.undo_stack.pop()?;
         let mut restorations = Vec::new();
 
@@ -158,6 +207,7 @@ impl UndoManager {
     /// Redo the previously undone action.
     /// Returns the list of `(param_id, target_value)` pairs to restore.
     pub fn redo(&mut self) -> Option<Vec<(String, f32)>> {
+        self.last_wheel_update = None;
         let action = self.redo_stack.pop()?;
         let mut restorations = Vec::new();
 
@@ -177,6 +227,7 @@ impl UndoManager {
     }
 
     pub fn clear(&mut self) {
+        self.last_wheel_update = None;
         self.undo_stack.clear();
         self.redo_stack.clear();
         self.active_gestures.clear();

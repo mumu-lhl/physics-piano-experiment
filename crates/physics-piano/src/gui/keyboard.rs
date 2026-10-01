@@ -34,7 +34,7 @@ impl PianoKeyboardWidget {
         active_keys_high: Arc<AtomicU64>,
         key_velocities: Arc<parking_lot::RwLock<[f32; 88]>>,
     ) -> Handle<'_, Self> {
-        Self {
+        let mut keyboard = Self {
             gui_tx,
             active_keys_low,
             active_keys_high,
@@ -42,7 +42,44 @@ impl PianoKeyboardWidget {
             held_mouse_key: None,
         }
         .build(cx, |_| {})
-        .focusable(true)
+        .focusable(true);
+        let entity = keyboard.entity();
+        keyboard.context().with_current(entity, |cx| {
+            // Observe releases before routing so a focus change or another captured view
+            // cannot leave the keyboard holding all subsequent mouse events.
+            cx.add_listener(
+                |keyboard: &mut Self, cx: &mut EventContext, event: &mut Event| {
+                    event.map(|window: &WindowEvent, meta| match window {
+                        WindowEvent::MouseUp(MouseButton::Left)
+                        | WindowEvent::WindowFocused(false) => keyboard.finish_mouse_note(cx),
+                        WindowEvent::MouseDown(MouseButton::Left) => {
+                            let mouse = cx.mouse();
+                            if keyboard
+                                .find_key_at(&cx.bounds(), mouse.cursor_x, mouse.cursor_y)
+                                .is_none()
+                            {
+                                keyboard.finish_mouse_note(cx);
+                            }
+                        }
+                        WindowEvent::FocusOut
+                            if meta.target == cx.current() && cx.focused() != cx.current() =>
+                        {
+                            keyboard.finish_mouse_note(cx);
+                        }
+                        _ => {}
+                    });
+                },
+            );
+        });
+        keyboard
+    }
+
+    fn finish_mouse_note(&mut self, cx: &mut EventContext) {
+        if let Some(key) = self.held_mouse_key.take() {
+            self.release_note(key);
+            cx.needs_redraw();
+        }
+        cx.release();
     }
 
     #[inline]
@@ -133,12 +170,14 @@ impl View for PianoKeyboardWidget {
 
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
         event.map(|window_event, meta| match window_event {
-            WindowEvent::MouseDown(MouseButton::Left) => {
-                cx.focus();
+            WindowEvent::MouseDown(MouseButton::Left)
+            | WindowEvent::MouseDoubleClick(MouseButton::Left)
+            | WindowEvent::MouseTripleClick(MouseButton::Left) => {
                 let bounds = cx.bounds();
                 let mouse_x = cx.mouse().cursor_x;
                 let mouse_y = cx.mouse().cursor_y;
                 if let Some((key, vel)) = self.find_key_at(&bounds, mouse_x, mouse_y) {
+                    cx.focus();
                     if let Some(prev) = self.held_mouse_key {
                         if prev != key {
                             self.release_note(prev);
@@ -175,12 +214,10 @@ impl View for PianoKeyboardWidget {
                     meta.consume();
                 }
             }
-            WindowEvent::FocusOut => {
-                if let Some(prev) = self.held_mouse_key.take() {
-                    self.release_note(prev);
-                    cx.needs_redraw();
-                }
+            WindowEvent::FocusOut if cx.focused() != cx.current() => {
+                self.finish_mouse_note(cx);
             }
+            WindowEvent::WindowFocused(false) => self.finish_mouse_note(cx),
             _ => {}
         });
     }

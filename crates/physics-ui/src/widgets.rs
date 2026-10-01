@@ -19,6 +19,18 @@ pub struct CancelParamGestureEvent {
     pub restore_normalized: f32,
 }
 
+/// Marks a wheel update for history coalescing while preserving host gesture boundaries.
+#[derive(Debug, Clone, Copy)]
+struct WheelGestureEnd(ParamPtr);
+
+/// Delivers host parameter events and wheel completion events to the history recorder.
+pub fn map_param_history_event(event: &mut Event, mut callback: impl FnMut(&RawParamEvent, bool)) {
+    event.map(|raw: &RawParamEvent, _| callback(raw, false));
+    event.map(|wheel: &WheelGestureEnd, _| {
+        callback(&RawParamEvent::EndSetParameter(wheel.0), true);
+    });
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct RestorePoint {
     normalized: f32,
@@ -114,14 +126,15 @@ pub fn parameter_slider<P: Param + 'static>(
                             let mut state = restore_state.lock();
                             state.scrolled_lines += scroll_y;
 
-                            let mut normalized =
-                                unsafe { param_ptr.unmodulated_normalized_value() };
+                            let initial = unsafe { param_ptr.unmodulated_normalized_value() };
+                            let mut normalized = initial;
 
                             while state.scrolled_lines >= 1.0 {
-                                let next =
-                                    unsafe { param_ptr.next_normalized_step(normalized, finer_steps) };
+                                let next = unsafe {
+                                    param_ptr.next_normalized_step(normalized, finer_steps)
+                                };
                                 state.scrolled_lines -= 1.0;
-                                emit_wheel_step(cx, param_ptr, &mut normalized, next);
+                                apply_wheel_step(param_ptr, &mut normalized, next);
                             }
 
                             while state.scrolled_lines <= -1.0 {
@@ -129,7 +142,27 @@ pub fn parameter_slider<P: Param + 'static>(
                                     param_ptr.previous_normalized_step(normalized, finer_steps)
                                 };
                                 state.scrolled_lines += 1.0;
-                                emit_wheel_step(cx, param_ptr, &mut normalized, next);
+                                apply_wheel_step(param_ptr, &mut normalized, next);
+                            }
+
+                            let changed = (normalized - initial).abs() > f32::EPSILON;
+                            let dragging = state.active_start.is_some();
+                            if changed {
+                                state.completed_start = None;
+                                if !dragging {
+                                    cx.emit(RawParamEvent::BeginSetParameter(param_ptr));
+                                }
+                                cx.emit(RawParamEvent::SetParameterNormalized(
+                                    param_ptr, normalized,
+                                ));
+                            }
+                            if !dragging {
+                                // Even fractional deltas and movement against a limit keep a
+                                // continuous scroll burst alive in the history recorder.
+                                cx.emit(WheelGestureEnd(param_ptr));
+                                if changed {
+                                    cx.emit(RawParamEvent::EndSetParameter(param_ptr));
+                                }
                             }
 
                             // A hovered parameter slider owns the wheel, including fractional
@@ -137,6 +170,15 @@ pub fn parameter_slider<P: Param + 'static>(
                             meta.consume();
                         }
                         WindowEvent::MouseDown(MouseButton::Right) => {
+                            let bounds = cx.bounds();
+                            let mouse = cx.mouse();
+                            if mouse.cursor_x < bounds.x
+                                || mouse.cursor_x > bounds.x + bounds.w
+                                || mouse.cursor_y < bounds.y
+                                || mouse.cursor_y > bounds.y + bounds.h
+                            {
+                                return;
+                            }
                             if let Some(point) = restore_state.lock().take_restore_value() {
                                 if point.completed {
                                     // Discard the completed drag's undo record, then restore the
@@ -176,12 +218,7 @@ pub fn parameter_slider<P: Param + 'static>(
     .horizontal_gap(Pixels(6.0));
 }
 
-fn emit_wheel_step(
-    cx: &mut EventContext,
-    param_ptr: ParamPtr,
-    current_normalized: &mut f32,
-    requested_normalized: f32,
-) {
+fn apply_wheel_step(param_ptr: ParamPtr, current_normalized: &mut f32, requested_normalized: f32) {
     let next_normalized = unsafe {
         let plain_value = param_ptr.preview_plain(requested_normalized);
         param_ptr.preview_normalized(plain_value)
@@ -191,12 +228,6 @@ fn emit_wheel_step(
         return;
     }
 
-    cx.emit(RawParamEvent::BeginSetParameter(param_ptr));
-    cx.emit(RawParamEvent::SetParameterNormalized(
-        param_ptr,
-        next_normalized,
-    ));
-    cx.emit(RawParamEvent::EndSetParameter(param_ptr));
     *current_normalized = next_normalized;
 }
 

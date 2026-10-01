@@ -10,6 +10,6 @@ pub use language::{Language, setup_vizia_fonts};
 pub use preset_panel::{PresetPanelAction, PresetPanelLayout, PresetPanelSignals, preset_panel};
 pub use theme::add_base_theme;
 pub use widgets::{
-    CancelParamGestureEvent, discrete_selector, parameter_slider, preset_choices,
-    redraw_custom_view, set_param, ui_text,
+    CancelParamGestureEvent, discrete_selector, map_param_history_event, parameter_slider,
+    preset_choices, redraw_custom_view, set_param, ui_text,
 };

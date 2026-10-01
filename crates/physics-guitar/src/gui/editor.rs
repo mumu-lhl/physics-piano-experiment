@@ -15,8 +15,8 @@ use crate::nice_plugin::{GuiGuitarEvent, PhysicsGuitarParams};
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
     CancelParamGestureEvent, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
-    add_base_theme, discrete_selector as shared_discrete_selector, parameter_slider,
-    preset_choices, preset_panel, redraw_custom_view, set_param, ui_text,
+    add_base_theme, discrete_selector as shared_discrete_selector, map_param_history_event,
+    parameter_slider, preset_choices, preset_panel, redraw_custom_view, set_param, ui_text,
 };
 use std::collections::HashMap;
 
@@ -424,7 +424,7 @@ impl Model for GuitarUiState {
             }
         });
 
-        event.map(|raw: &RawParamEvent, _| {
+        map_param_history_event(event, |raw, wheel| {
             let (ptr, begin) = match raw {
                 RawParamEvent::BeginSetParameter(ptr) => (*ptr, true),
                 RawParamEvent::EndSetParameter(ptr) => (*ptr, false),
@@ -480,8 +480,15 @@ impl Model for GuitarUiState {
             }
             if begin {
                 self.undo.write().begin_gesture(id, value);
-            } else if self.undo.write().end_gesture(id, value) {
-                self.update_history_state();
+            } else {
+                let changed = if wheel {
+                    self.undo.write().end_wheel_gesture(id, value)
+                } else {
+                    self.undo.write().end_gesture(id, value)
+                };
+                if changed {
+                    self.update_history_state();
+                }
             }
         });
 

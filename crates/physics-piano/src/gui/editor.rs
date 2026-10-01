@@ -20,7 +20,8 @@ use crate::nice_plugin::PhysicsPianoParams;
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
     CancelParamGestureEvent, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
-    add_base_theme, parameter_slider, preset_choices, preset_panel, redraw_custom_view, set_param,
+    add_base_theme, map_param_history_event, parameter_slider, preset_choices, preset_panel,
+    redraw_custom_view, set_param,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -84,6 +85,8 @@ fn piano_value(params: &PhysicsPianoParams, id: &str) -> Option<f32> {
         "lid_angle" => params.lid_angle.value(),
         "velocity_curve" => params.velocity_curve.value(),
         "sustain" => params.sustain_pedal.value(),
+        "gain" => params.master_gain.value(),
+        "unacorda" => f32::from(params.una_corda.value()),
         _ => return None,
     })
 }
@@ -103,6 +106,8 @@ fn set_piano_value(cx: &mut EventContext, params: &PhysicsPianoParams, id: &str,
         "lid_angle" => set_param(cx, &params.lid_angle, value),
         "velocity_curve" => set_param(cx, &params.velocity_curve, value),
         "sustain" => set_param(cx, &params.sustain_pedal, value),
+        "gain" => set_param(cx, &params.master_gain, value),
+        "unacorda" => set_param(cx, &params.una_corda, value >= 0.5),
         _ => {}
     }
 }
@@ -122,6 +127,8 @@ fn piano_snapshot(params: &PhysicsPianoParams) -> HashMap<String, f32> {
         "lid_angle",
         "velocity_curve",
         "sustain",
+        "gain",
+        "unacorda",
     ]
     .into_iter()
     .filter_map(|id| piano_value(params, id).map(|value| (id.to_string(), value)))
@@ -376,6 +383,10 @@ impl Model for PianoUiState {
                 "velocity_curve"
             } else if ptr == params.sustain_pedal.as_ptr() {
                 "sustain"
+            } else if ptr == params.master_gain.as_ptr() {
+                "gain"
+            } else if ptr == params.una_corda.as_ptr() {
+                "unacorda"
             } else {
                 return;
             };
@@ -386,7 +397,7 @@ impl Model for PianoUiState {
             }
         });
 
-        event.map(|raw: &RawParamEvent, _| {
+        map_param_history_event(event, |raw, wheel| {
             let (ptr, begin) = match raw {
                 RawParamEvent::BeginSetParameter(ptr) => (*ptr, true),
                 RawParamEvent::EndSetParameter(ptr) => (*ptr, false),
@@ -424,6 +435,10 @@ impl Model for PianoUiState {
                 ("velocity_curve", params.velocity_curve.value())
             } else if ptr == params.sustain_pedal.as_ptr() {
                 ("sustain", params.sustain_pedal.value())
+            } else if ptr == params.master_gain.as_ptr() {
+                ("gain", params.master_gain.value())
+            } else if ptr == params.una_corda.as_ptr() {
+                ("unacorda", f32::from(params.una_corda.value()))
             } else {
                 return;
             };
@@ -435,8 +450,15 @@ impl Model for PianoUiState {
             }
             if begin {
                 self.undo.write().begin_gesture(id, value);
-            } else if self.undo.write().end_gesture(id, value) {
-                self.set_undo_state();
+            } else {
+                let changed = if wheel {
+                    self.undo.write().end_wheel_gesture(id, value)
+                } else {
+                    self.undo.write().end_gesture(id, value)
+                };
+                if changed {
+                    self.set_undo_state();
+                }
             }
         });
 
