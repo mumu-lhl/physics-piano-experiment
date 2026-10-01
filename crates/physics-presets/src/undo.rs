@@ -25,13 +25,19 @@ pub enum UndoAction {
     },
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ActiveGesture {
+    initial_value: f32,
+    latest_value: Option<f32>,
+}
+
 #[derive(Debug, Clone)]
 pub struct UndoManager {
     undo_stack: Vec<UndoAction>,
     redo_stack: Vec<UndoAction>,
     max_history: usize,
-    /// Pending gesture tracking: param_id -> initial value before drag
-    active_gestures: HashMap<String, f32>,
+    /// Pending gesture tracking: param_id -> initial and latest gesture values.
+    active_gestures: HashMap<String, ActiveGesture>,
 }
 
 impl Default for UndoManager {
@@ -55,23 +61,49 @@ impl UndoManager {
     pub fn begin_gesture(&mut self, param_id: &str, current_val: f32) {
         self.active_gestures
             .entry(param_id.to_string())
-            .or_insert(current_val);
+            .or_insert(ActiveGesture {
+                initial_value: current_val,
+                latest_value: None,
+            });
+    }
+
+    /// Track the value requested during a gesture. Parameter wrappers may not expose the
+    /// normalized value through `Param::value()` until after the gesture's end event.
+    pub fn update_gesture_value(&mut self, param_id: &str, value: f32) {
+        if let Some(gesture) = self.active_gestures.get_mut(param_id) {
+            gesture.latest_value = Some(value);
+        }
     }
 
     /// Mark the completion of a user interaction gesture (mouse release / drag end).
     /// If the value actually changed, commits a SingleParam undo action.
     pub fn end_gesture(&mut self, param_id: &str, final_val: f32) -> bool {
-        if let Some(initial_val) = self.active_gestures.remove(param_id) {
-            if (final_val - initial_val).abs() > 1e-6 {
+        if let Some(gesture) = self.active_gestures.remove(param_id) {
+            let final_val = gesture.latest_value.unwrap_or(final_val);
+            if (final_val - gesture.initial_value).abs() > 1e-6 {
                 self.push_action(UndoAction::SingleParam(ParamTransition {
                     param_id: param_id.to_string(),
-                    old_value: initial_val,
+                    old_value: gesture.initial_value,
                     new_value: final_val,
                 }));
                 return true;
             }
         }
         false
+    }
+
+    /// Discard the most recent completed single-parameter gesture when a slider restores its
+    /// starting value through the right-click cancel action.
+    pub fn cancel_last_single_param(&mut self, param_id: &str, restored_value: f32) -> bool {
+        let Some(UndoAction::SingleParam(transition)) = self.undo_stack.last() else {
+            return false;
+        };
+        if transition.param_id != param_id || (transition.old_value - restored_value).abs() > 1e-5 {
+            return false;
+        }
+
+        self.undo_stack.pop();
+        true
     }
 
     /// Record an atomic compound batch change (e.g. applying a preset).

@@ -149,6 +149,26 @@ param-button:checked label {
     border-color: #555b74;
 }
 
+.btn-action:disabled {
+    background-color: #1b1d26;
+    border-color: #303342;
+    color: #777b8c;
+}
+
+.btn-action:disabled label {
+    color: #777b8c;
+}
+
+.btn-disabled {
+    background-color: #1b1d26;
+    border-color: #303342;
+    color: #777b8c;
+}
+
+.btn-disabled label {
+    color: #777b8c;
+}
+
 param-slider {
     height: 20px;
     border-color: #2b3042;

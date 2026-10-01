@@ -14,8 +14,9 @@ use nice_plug::prelude::{Editor, Param};
 use pad_view::DrumPadWidget;
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
-    PresetPanelAction, PresetPanelLayout, PresetPanelSignals, add_base_theme, parameter_slider,
-    preset_choices, preset_panel, redraw_custom_view, set_param, setup_vizia_fonts,
+    CancelParamGestureEvent, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
+    add_base_theme, parameter_slider, preset_choices, preset_panel, redraw_custom_view, set_param,
+    setup_vizia_fonts,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -282,10 +283,34 @@ impl Model for DrumUiState {
             DrumUiEvent::Redo => self.apply_history(cx, true),
         });
 
+        event.map(|cancel: &CancelParamGestureEvent, _| {
+            let ptr = cancel.param;
+            let params = &self.params;
+            let id = if ptr == params.snare_tightness.as_ptr() {
+                "snare_tightness"
+            } else if ptr == params.snare_decay.as_ptr() {
+                "snare_decay"
+            } else if ptr == params.hihat_open.as_ptr() {
+                "hihat_open"
+            } else if ptr == params.cymbal_decay.as_ptr() {
+                "cymbal_decay"
+            } else if ptr == params.master_gain.as_ptr() {
+                "gain"
+            } else {
+                return;
+            };
+            self.suppress_undo.fetch_add(1, Ordering::Relaxed);
+            let restored = unsafe { ptr.preview_plain(cancel.restore_normalized) };
+            if self.undo.write().cancel_last_single_param(id, restored) {
+                self.update_history_state();
+            }
+        });
+
         event.map(|raw: &RawParamEvent, _| {
             let (ptr, begin) = match raw {
                 RawParamEvent::BeginSetParameter(ptr) => (*ptr, true),
                 RawParamEvent::EndSetParameter(ptr) => (*ptr, false),
+                RawParamEvent::SetParameterNormalized(ptr, _) => (*ptr, false),
                 _ => return,
             };
             if begin && self.suppress_undo.load(Ordering::Relaxed) > 0 {
@@ -306,6 +331,12 @@ impl Model for DrumUiState {
             } else {
                 return;
             };
+            if let RawParamEvent::SetParameterNormalized(_, normalized) = raw {
+                self.undo
+                    .write()
+                    .update_gesture_value(id, unsafe { ptr.preview_plain(*normalized) });
+                return;
+            }
             if begin {
                 self.undo.write().begin_gesture(id, value);
             } else if self.undo.write().end_gesture(id, value) {

@@ -1,4 +1,4 @@
-use nice_plug::prelude::Param;
+use nice_plug::prelude::{Param, ParamPtr};
 use physics_presets::PresetManager;
 use std::sync::Arc;
 use vizia_plug::vizia::prelude::*;
@@ -10,6 +10,18 @@ use crate::Language;
 struct SliderRestoreState {
     active_start: Option<f32>,
     completed_start: Option<f32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CancelParamGestureEvent {
+    pub param: ParamPtr,
+    pub restore_normalized: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RestorePoint {
+    normalized: f32,
+    completed: bool,
 }
 
 impl SliderRestoreState {
@@ -24,14 +36,21 @@ impl SliderRestoreState {
         }
     }
 
-    fn take_restore_value(&mut self) -> Option<f32> {
-        let value = self
-            .active_start
-            .take()
-            .or_else(|| self.completed_start.take());
+    fn take_restore_value(&mut self) -> Option<RestorePoint> {
+        let point = if let Some(normalized) = self.active_start.take() {
+            Some(RestorePoint {
+                normalized,
+                completed: false,
+            })
+        } else {
+            self.completed_start.take().map(|normalized| RestorePoint {
+                normalized,
+                completed: true,
+            })
+        };
         self.active_start = None;
         self.completed_start = None;
-        value
+        point
     }
 }
 
@@ -79,14 +98,32 @@ pub fn parameter_slider<P: Param + 'static>(
                             restore_state.lock().finish();
                         }
                         WindowEvent::MouseDown(MouseButton::Right) => {
-                            if let Some(value) = restore_state.lock().take_restore_value() {
-                                cx.emit(RawParamEvent::SetParameterNormalized(param_ptr, value));
-                                // Consume ParamSlider's default reset and end the active drag.
-                                cx.emit_custom(
-                                    Event::new(WindowEvent::MouseUp(MouseButton::Left))
-                                        .target(cx.current())
-                                        .propagate(Propagation::Direct),
-                                );
+                            if let Some(point) = restore_state.lock().take_restore_value() {
+                                if point.completed {
+                                    // Discard the completed drag's undo record, then restore the
+                                    // parameter inside a properly bracketed host gesture.
+                                    cx.emit(CancelParamGestureEvent {
+                                        param: param_ptr,
+                                        restore_normalized: point.normalized,
+                                    });
+                                    cx.emit(RawParamEvent::BeginSetParameter(param_ptr));
+                                    cx.emit(RawParamEvent::SetParameterNormalized(
+                                        param_ptr,
+                                        point.normalized,
+                                    ));
+                                    cx.emit(RawParamEvent::EndSetParameter(param_ptr));
+                                } else {
+                                    cx.emit(RawParamEvent::SetParameterNormalized(
+                                        param_ptr,
+                                        point.normalized,
+                                    ));
+                                    // Consume ParamSlider's default reset and end the active drag.
+                                    cx.emit_custom(
+                                        Event::new(WindowEvent::MouseUp(MouseButton::Left))
+                                            .target(cx.current())
+                                            .propagate(Propagation::Direct),
+                                    );
+                                }
                                 meta.consume();
                             }
                         }
@@ -201,14 +238,26 @@ mod tests {
         let mut state = SliderRestoreState::default();
         state.begin(0.25);
         state.finish();
-        assert_eq!(state.take_restore_value(), Some(0.25));
+        assert_eq!(
+            state.take_restore_value(),
+            Some(super::RestorePoint {
+                normalized: 0.25,
+                completed: true,
+            })
+        );
     }
 
     #[test]
     fn right_click_during_an_active_adjustment_restores_its_start() {
         let mut state = SliderRestoreState::default();
         state.begin(0.4);
-        assert_eq!(state.take_restore_value(), Some(0.4));
+        assert_eq!(
+            state.take_restore_value(),
+            Some(super::RestorePoint {
+                normalized: 0.4,
+                completed: false,
+            })
+        );
         assert_eq!(state.take_restore_value(), None);
     }
 
@@ -219,7 +268,13 @@ mod tests {
         state.finish();
         state.begin(0.6);
         state.finish();
-        assert_eq!(state.take_restore_value(), Some(0.6));
+        assert_eq!(
+            state.take_restore_value(),
+            Some(super::RestorePoint {
+                normalized: 0.6,
+                completed: true,
+            })
+        );
         assert_eq!(state.take_restore_value(), None);
     }
 }

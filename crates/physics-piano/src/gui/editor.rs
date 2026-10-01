@@ -19,8 +19,8 @@ use crate::gui::scope::{LissajousScopeWidget, StereoVuMeterWidget};
 use crate::nice_plugin::PhysicsPianoParams;
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
-    PresetPanelAction, PresetPanelLayout, PresetPanelSignals, add_base_theme, parameter_slider,
-    preset_choices, preset_panel, redraw_custom_view, set_param,
+    CancelParamGestureEvent, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
+    add_base_theme, parameter_slider, preset_choices, preset_panel, redraw_custom_view, set_param,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -347,10 +347,50 @@ impl Model for PianoUiState {
             }
         });
 
+        event.map(|cancel: &CancelParamGestureEvent, _| {
+            let ptr = cancel.param;
+            let params = &self.params;
+            let id = if ptr == params.inharmonicity_scale.as_ptr() {
+                "inharm"
+            } else if ptr == params.hammer_hardness.as_ptr() {
+                "hardness"
+            } else if ptr == params.unison_detuning.as_ptr() {
+                "detune"
+            } else if ptr == params.phantom_gain.as_ptr() {
+                "phantom"
+            } else if ptr == params.key_noise.as_ptr() {
+                "keynoise"
+            } else if ptr == params.damper_noise.as_ptr() {
+                "dampernoise"
+            } else if ptr == params.pedal_noise.as_ptr() {
+                "pedalnoise"
+            } else if ptr == params.mic_close.as_ptr() {
+                "mic_close"
+            } else if ptr == params.mic_player.as_ptr() {
+                "mic_player"
+            } else if ptr == params.mic_ambient.as_ptr() {
+                "mic_ambient"
+            } else if ptr == params.lid_angle.as_ptr() {
+                "lid_angle"
+            } else if ptr == params.velocity_curve.as_ptr() {
+                "velocity_curve"
+            } else if ptr == params.sustain_pedal.as_ptr() {
+                "sustain"
+            } else {
+                return;
+            };
+            self.suppress_undo.fetch_add(1, Ordering::Relaxed);
+            let restored = unsafe { ptr.preview_plain(cancel.restore_normalized) };
+            if self.undo.write().cancel_last_single_param(id, restored) {
+                self.set_undo_state();
+            }
+        });
+
         event.map(|raw: &RawParamEvent, _| {
             let (ptr, begin) = match raw {
                 RawParamEvent::BeginSetParameter(ptr) => (*ptr, true),
                 RawParamEvent::EndSetParameter(ptr) => (*ptr, false),
+                RawParamEvent::SetParameterNormalized(ptr, _) => (*ptr, false),
                 _ => return,
             };
             if begin && self.suppress_undo.load(Ordering::Relaxed) > 0 {
@@ -387,6 +427,12 @@ impl Model for PianoUiState {
             } else {
                 return;
             };
+            if let RawParamEvent::SetParameterNormalized(_, normalized) = raw {
+                self.undo
+                    .write()
+                    .update_gesture_value(id, unsafe { ptr.preview_plain(*normalized) });
+                return;
+            }
             if begin {
                 self.undo.write().begin_gesture(id, value);
             } else if self.undo.write().end_gesture(id, value) {

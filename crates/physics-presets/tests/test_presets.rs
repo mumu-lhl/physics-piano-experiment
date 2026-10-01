@@ -112,6 +112,62 @@ fn test_undo_manager_single_param_gesture() {
 }
 
 #[test]
+fn test_undo_manager_uses_latest_set_when_end_value_is_stale() {
+    let mut undo_mgr = UndoManager::new(20);
+    undo_mgr.begin_gesture("hihat_open", 0.85);
+    undo_mgr.update_gesture_value("hihat_open", 0.83);
+
+    assert!(undo_mgr.end_gesture("hihat_open", 0.85));
+    assert_eq!(
+        undo_mgr.undo().unwrap(),
+        vec![("hihat_open".to_string(), 0.85)]
+    );
+}
+
+#[test]
+fn test_undo_manager_cancel_only_removes_the_latest_matching_gesture() {
+    let mut undo_mgr = UndoManager::new(20);
+    undo_mgr.begin_gesture("snare_tightness", 0.62);
+    undo_mgr.update_gesture_value("snare_tightness", 0.71);
+    assert!(undo_mgr.end_gesture("snare_tightness", 0.71));
+    undo_mgr.record_batch(
+        "preset",
+        vec![ParamTransition {
+            param_id: "hihat_open".into(),
+            old_value: 0.2,
+            new_value: 0.8,
+        }],
+    );
+
+    assert!(!undo_mgr.cancel_last_single_param("snare_tightness", 0.62));
+    assert!(undo_mgr.can_undo());
+}
+
+#[test]
+fn test_undo_manager_does_not_commit_an_active_gesture_restored_before_end() {
+    let mut undo_mgr = UndoManager::new(20);
+    undo_mgr.begin_gesture("snare_tightness", 0.62);
+    undo_mgr.update_gesture_value("snare_tightness", 0.71);
+    undo_mgr.update_gesture_value("snare_tightness", 0.62);
+
+    assert!(!undo_mgr.end_gesture("snare_tightness", 0.71));
+    assert!(!undo_mgr.can_undo());
+}
+
+#[test]
+fn test_undo_manager_discards_a_cancelled_completed_gesture() {
+    let mut undo_mgr = UndoManager::new(20);
+    undo_mgr.begin_gesture("snare_tightness", 0.62);
+    undo_mgr.update_gesture_value("snare_tightness", 0.71);
+    assert!(undo_mgr.end_gesture("snare_tightness", 0.71));
+    assert!(undo_mgr.can_undo());
+
+    assert!(undo_mgr.cancel_last_single_param("snare_tightness", 0.62));
+    assert!(!undo_mgr.can_undo());
+    assert!(!undo_mgr.can_redo());
+}
+
+#[test]
 fn test_undo_manager_batch_param_preset() {
     let mut undo_mgr = UndoManager::new(20);
 

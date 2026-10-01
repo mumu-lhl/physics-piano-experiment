@@ -141,10 +141,31 @@ pub fn preset_panel(
     .width(Stretch(1.0));
 
     HStack::new(cx, move |cx| {
-        Textbox::new(cx, name_input.clone())
+        let mut name_textbox = Textbox::new(cx, name_input.clone())
             .name(ui_text(lang, "Preset name", "预设名称"))
             .placeholder(ui_text(lang, "Preset name", "预设名称"))
-            .on_edit(|cx, text| cx.emit(PresetPanelAction::SetName(text)))
+            .on_edit(|cx, text| cx.emit(PresetPanelAction::SetName(text)));
+        let name_textbox_entity = name_textbox.entity();
+        name_textbox
+            .context()
+            .with_current(name_textbox_entity, |cx| {
+                cx.add_listener(
+                    move |_: &mut Textbox<Signal<String>, String>,
+                          cx: &mut EventContext,
+                          event: &mut Event| {
+                        event.map(|window: &WindowEvent, _| {
+                            if matches!(window, WindowEvent::MouseDown(MouseButton::Left))
+                                && cx.hovered() != name_textbox_entity
+                            {
+                                cx.with_current(Entity::root(), |cx| {
+                                    cx.focus_with_visibility(false)
+                                });
+                            }
+                        });
+                    },
+                );
+            });
+        name_textbox
             .width(Pixels(layout.name_width))
             .height(Pixels(26.0));
         Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Save As", "另存为")))
@@ -155,6 +176,10 @@ pub fn preset_panel(
             .class("btn-action")
             .on_press(|cx| cx.emit(PresetPanelAction::Rename))
             .disabled(is_user_preset.clone().map(|is_user| !is_user))
+            .toggle_class(
+                "btn-disabled",
+                is_user_preset.clone().map(|is_user| !is_user),
+            )
             .width(Pixels(layout.rename_width));
         Button::new(cx, |cx| {
             Label::new(cx, ui_text(lang, "Overwrite", "覆盖保存"))
@@ -162,21 +187,31 @@ pub fn preset_panel(
         .class("btn-action")
         .on_press(|cx| cx.emit(PresetPanelAction::Overwrite))
         .disabled(is_user_preset.clone().map(|is_user| !is_user))
+        .toggle_class(
+            "btn-disabled",
+            is_user_preset.clone().map(|is_user| !is_user),
+        )
         .width(Pixels(layout.overwrite_width));
         Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Delete", "删除")))
             .class("btn-action")
             .on_press(|cx| cx.emit(PresetPanelAction::Delete))
             .disabled(is_user_preset.clone().map(|is_user| !is_user))
+            .toggle_class(
+                "btn-disabled",
+                is_user_preset.clone().map(|is_user| !is_user),
+            )
             .width(Pixels(layout.delete_width));
         Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Undo", "撤销")))
             .class("btn-action")
             .on_press(|cx| cx.emit(PresetPanelAction::Undo))
             .disabled(can_undo.clone().map(|enabled| !enabled))
+            .toggle_class("btn-disabled", can_undo.clone().map(|enabled| !enabled))
             .width(Pixels(48.0));
         Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Redo", "重做")))
             .class("btn-action")
             .on_press(|cx| cx.emit(PresetPanelAction::Redo))
             .disabled(can_redo.clone().map(|enabled| !enabled))
+            .toggle_class("btn-disabled", can_redo.clone().map(|enabled| !enabled))
             .width(Pixels(48.0));
     })
     .height(Pixels(30.0))

@@ -14,9 +14,9 @@ use i18n::{I18n, Language};
 use nice_plug::prelude::{Editor, Param};
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
-    PresetPanelAction, PresetPanelLayout, PresetPanelSignals, add_base_theme, discrete_selector,
-    parameter_slider, preset_choices, preset_panel, redraw_custom_view, set_param,
-    setup_vizia_fonts,
+    CancelParamGestureEvent, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
+    add_base_theme, discrete_selector, parameter_slider, preset_choices, preset_panel,
+    redraw_custom_view, set_param, setup_vizia_fonts,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -308,10 +308,42 @@ impl Model for BassUiState {
             BassUiEvent::Redo => self.apply_history(cx, true),
         });
 
+        event.map(|cancel: &CancelParamGestureEvent, _| {
+            let ptr = cancel.param;
+            let params = &self.params;
+            let id = if ptr == params.mode.as_ptr() {
+                "mode"
+            } else if ptr == params.pluck_style.as_ptr() {
+                "pluck_style"
+            } else if ptr == params.five_string.as_ptr() {
+                "five_string"
+            } else if ptr == params.pickup_position.as_ptr() {
+                "pickup_position"
+            } else if ptr == params.pluck_position.as_ptr() {
+                "pluck_position"
+            } else if ptr == params.tone.as_ptr() {
+                "tone"
+            } else if ptr == params.fret_buzz.as_ptr() {
+                "fret_buzz"
+            } else if ptr == params.body_mix.as_ptr() {
+                "body_mix"
+            } else if ptr == params.master_gain.as_ptr() {
+                "gain"
+            } else {
+                return;
+            };
+            self.suppress_undo.fetch_add(1, Ordering::Relaxed);
+            let restored = unsafe { ptr.preview_plain(cancel.restore_normalized) };
+            if self.undo.write().cancel_last_single_param(id, restored) {
+                self.update_history_state();
+            }
+        });
+
         event.map(|raw: &RawParamEvent, _| {
             let (ptr, begin) = match raw {
                 RawParamEvent::BeginSetParameter(ptr) => (*ptr, true),
                 RawParamEvent::EndSetParameter(ptr) => (*ptr, false),
+                RawParamEvent::SetParameterNormalized(ptr, _) => (*ptr, false),
                 _ => return,
             };
             if begin && self.suppress_undo.load(Ordering::Relaxed) > 0 {
@@ -340,6 +372,12 @@ impl Model for BassUiState {
             } else {
                 return;
             };
+            if let RawParamEvent::SetParameterNormalized(_, normalized) = raw {
+                self.undo
+                    .write()
+                    .update_gesture_value(id, unsafe { ptr.preview_plain(*normalized) });
+                return;
+            }
             if begin {
                 self.undo.write().begin_gesture(id, value);
             } else if self.undo.write().end_gesture(id, value) {
