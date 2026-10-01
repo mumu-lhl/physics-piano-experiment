@@ -188,7 +188,7 @@ impl DoubleHeadVoice {
             )
         };
 
-        let output_gain = if is_kick { 1.10 } else { 0.95 };
+        let output_gain = if is_kick { 0.22 } else { 0.20 };
 
         Self {
             top,
@@ -222,9 +222,9 @@ impl DoubleHeadVoice {
         let mallet_mass = if self.is_kick { 0.065 } else { 0.025 };
         let mallet_stiff = if self.is_kick { 1.2e6 } else { 2.2e6 };
         let strike_vel = if self.is_kick {
-            1.2 + 4.5 * velocity
+            5.0 * velocity.powf(1.15)
         } else {
-            1.2 + 5.0 * velocity.powf(1.2)
+            5.2 * velocity.powf(1.2)
         };
         self.exciter.trigger(
             strike_vel,
@@ -522,8 +522,9 @@ impl SnareVoice {
         }
         self.top.geometry_nonlinearity = 0.0;
         self.bottom.geometry_nonlinearity = 0.0;
+        let strike_vel = 5.2 * velocity.powf(1.2);
         self.exciter.trigger(
-            1.5 + 4.8 * velocity.powf(1.2),
+            strike_vel,
             0.022,
             1.2e7 + 2.5e6 * velocity,
             1.5,
@@ -642,7 +643,7 @@ impl SnareVoice {
         self.wire_filter_prev = self.wire_filter_lp;
         let rattle_sound = self.wire_filter_hp;
 
-        let raw_output = (top_sound + shell_sound + bot_sound + rattle_sound) * 1.05;
+        let raw_output = (top_sound + shell_sound + bot_sound * 0.35 + rattle_sound) * 0.22;
 
         // 8. DC Blocker (~20 Hz HP)
         let dc_alpha = (-TAU * 20.0 * dt).exp();
@@ -771,9 +772,9 @@ impl CymbalVoice {
     pub fn new_for_kind(sample_rate: f64, kind: CymbalKind) -> Self {
         let sample_rate = sample_rate.max(1.0);
         let (base_hz, base_t60, coupling_strength, output_scale) = match kind {
-            CymbalKind::HiHat => (380.0, 2.5, 3.0e4, 0.42),
-            CymbalKind::Crash => (280.0, 5.5, 4.5e4, 0.45),
-            CymbalKind::Ride => (440.0, 4.0, 2.0e4, 0.38),
+            CymbalKind::HiHat => (380.0, 2.5, 3.0e4, 0.40),
+            CymbalKind::Crash => (280.0, 5.5, 4.5e4, 0.38),
+            CymbalKind::Ride => (440.0, 4.0, 2.0e4, 0.35),
         };
 
         let dummy_mode = CymbalMode::new(sample_rate, base_hz, 0.0025, 1.0, 0.01, base_t60);
@@ -890,7 +891,7 @@ impl CymbalVoice {
             }
         }
 
-        let strike_vel = (1.5 + 5.0 * velocity.powf(1.1)) * match self.kind {
+        let strike_vel = (5.5 * velocity.powf(1.2)) * match self.kind {
             CymbalKind::Crash => 1.0,
             CymbalKind::Ride => 0.85,
             CymbalKind::HiHat => 0.80,
