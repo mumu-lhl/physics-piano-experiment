@@ -7,12 +7,13 @@
 use physics_dsp::{ModalTransition, OverdampedPolicy};
 use std::f64::consts::PI;
 
-pub const HEAD_MODE_COUNT: usize = 32;
+pub const HEAD_MODE_COUNT: usize = 59;
+const MEMBRANE_ROOT_COUNT: usize = 32;
 
 /// `(angular order m, radial index n, J_m zero)` for the first useful
 /// circular-membrane modes. Keeping the roots explicit avoids a runtime root
 /// search while retaining the actual Bessel spectrum from the design.
-const MEMBRANE_MODE_SPECS: [(u8, u8, f64); HEAD_MODE_COUNT] = [
+const MEMBRANE_MODE_SPECS: [(u8, u8, f64); MEMBRANE_ROOT_COUNT] = [
     (0, 1, 2.404_825_557_7),
     (1, 1, 3.831_705_970_2),
     (2, 1, 5.135_622_301_8),
@@ -53,12 +54,13 @@ struct HeadMode {
     q: f64,
     v: f64,
     frequency: f64,
-    shape_gain: f64,
+    modal_mass_kg: f64,
     angular_order: u8,
     radial_root: f64,
+    sine_orientation: bool,
     strike_shape: f64,
-    sensor_shape: f64,
     area_average_shape: f64,
+    radiation_shape: f64,
 }
 
 impl HeadMode {
@@ -66,11 +68,27 @@ impl HeadMode {
         sample_rate: f64,
         frequency: f64,
         t60: f64,
-        shape_gain: f64,
+        radius_m: f64,
+        contact_patch_radius_m: f64,
+        surface_density_kg_m2: f64,
         angular_order: u8,
         radial_root: f64,
+        sine_orientation: bool,
     ) -> Self {
         let sigma = (1000.0_f64.ln() / t60.max(0.03)).min(2.0 * PI * frequency * 0.9);
+        let angular_integral = if angular_order == 0 { 2.0 * PI } else { PI };
+        let next_order_root = bessel_j(angular_order + 1, radial_root);
+        let modal_mass_kg = surface_density_kg_m2
+            * radius_m
+            * radius_m
+            * 0.5
+            * next_order_root.powi(2)
+            * angular_integral;
+        let area_average_shape = if angular_order == 0 && !sine_orientation {
+            2.0 * bessel_j(1, radial_root) / radial_root
+        } else {
+            0.0
+        };
         Self {
             transition: ModalTransition::new(
                 2.0 * PI * frequency,
@@ -81,17 +99,32 @@ impl HeadMode {
             q: 0.0,
             v: 0.0,
             frequency,
-            shape_gain,
+            modal_mass_kg: modal_mass_kg.max(1e-9),
             angular_order,
             radial_root,
-            strike_shape: bessel_j(angular_order, radial_root * 0.5) * shape_gain,
-            sensor_shape: bessel_j(angular_order, radial_root * 0.42) * shape_gain,
-            area_average_shape: if angular_order == 0 {
-                2.0 * bessel_j(1, radial_root) / radial_root * shape_gain
-            } else {
-                0.0
-            },
+            sine_orientation,
+            strike_shape: mode_shape(angular_order, radial_root, sine_orientation, 0.5, 0.0)
+                * (-0.5 * (radial_root * contact_patch_radius_m / radius_m).powi(2)).exp(),
+            area_average_shape,
+            radiation_shape: modal_radiation_shape(
+                angular_order,
+                radial_root,
+                frequency,
+                radius_m,
+                0.37,
+                sine_orientation,
+            ),
         }
+    }
+
+    fn shape_at(&self, radius: f64, angle: f64) -> f64 {
+        mode_shape(
+            self.angular_order,
+            self.radial_root,
+            self.sine_orientation,
+            radius,
+            angle,
+        )
     }
 
     fn set_t60(&mut self, sample_rate: f64, t60: f64) {
@@ -108,8 +141,12 @@ impl HeadMode {
     fn step(&mut self, force: f64, nonlinear_amount: f64) -> (f64, f64) {
         let (p11, p12, p21, p22) = self.transition.phi;
         let (g1, g2) = self.transition.gamma;
-        // A cubic restoring perturbation is an explicit reduced von-Kármán term.
-        let nonlinear_force = -nonlinear_amount * self.q * self.q * self.q;
+        // `nonlinear_amount` is the shared membrane strain computed from all
+        // modes. Applying it as a fractional stiffness shift keeps the
+        // nonlinear energy coupled across modes rather than adding an
+        // unrelated cubic spring to every coordinate.
+        let omega = 2.0 * PI * self.frequency;
+        let nonlinear_force = -nonlinear_amount * omega * omega * self.q;
         let total_force = (force + nonlinear_force).clamp(-1.0e5, 1.0e5);
         let next_q = p11 * self.q + p12 * self.v + g1 * total_force;
         let next_v = p21 * self.q + p22 * self.v + g2 * total_force;
@@ -123,11 +160,13 @@ impl HeadMode {
 #[derive(Debug, Clone)]
 pub struct MembraneHead {
     sample_rate: f64,
-    modal_mass_kg: f64,
+    radius_m: f64,
     pub fundamental_hz: f64,
     pub t60: f64,
     modes: [HeadMode; HEAD_MODE_COUNT],
     strike_position: f64,
+    strike_angle: f64,
+    contact_patch_radius_m: f64,
     last_displacement: f64,
     last_velocity: f64,
     pub geometry_nonlinearity: f64,
@@ -135,33 +174,46 @@ pub struct MembraneHead {
 
 impl MembraneHead {
     pub fn new(sample_rate: f64, fundamental_hz: f64, t60: f64) -> Self {
+        Self::new_with_geometry(sample_rate, fundamental_hz, t60, 0.1778, 0.30)
+    }
+
+    pub fn new_with_geometry(
+        sample_rate: f64,
+        fundamental_hz: f64,
+        t60: f64,
+        radius_m: f64,
+        surface_density_kg_m2: f64,
+    ) -> Self {
+        let radius_m = radius_m.max(0.02);
+        let contact_patch_radius_m = 0.012;
+        let surface_density_kg_m2 = surface_density_kg_m2.max(0.02);
         let f0 = fundamental_hz.max(20.0);
         let fundamental_root = MEMBRANE_MODE_SPECS[0].2;
         let modes = std::array::from_fn(|index| {
-            let (angular_order, _radial_index, radial_root) = MEMBRANE_MODE_SPECS[index];
+            let (angular_order, _radial_index, radial_root, sine_orientation) =
+                expanded_mode_spec(index);
             let frequency = f0 * radial_root / fundamental_root;
-            let gain = if index == 0 {
-                1.0
-            } else {
-                0.60 / (1.0 + index as f64 * 0.16)
-            };
             HeadMode::new(
                 sample_rate,
                 frequency,
                 modal_t60(t60, index),
-                gain,
+                radius_m,
+                contact_patch_radius_m,
+                surface_density_kg_m2,
                 angular_order,
                 radial_root,
+                sine_orientation,
             )
         });
         Self {
             sample_rate: sample_rate.max(1.0),
-            // Effective modal mass for a standard polyester drum head.
-            modal_mass_kg: 0.012,
+            radius_m,
             fundamental_hz: f0,
             t60: t60.max(0.03),
             modes,
             strike_position: 0.5,
+            strike_angle: 0.0,
+            contact_patch_radius_m,
             last_displacement: 0.0,
             last_velocity: 0.0,
             geometry_nonlinearity: 0.0,
@@ -169,12 +221,25 @@ impl MembraneHead {
     }
 
     pub fn set_strike_position(&mut self, position: f64) {
-        self.strike_position = position.clamp(0.05, 0.95);
+        self.set_strike_point(position, 0.0);
+    }
+
+    pub fn set_strike_point(&mut self, radius: f64, angle: f64) {
+        self.strike_position = radius.clamp(0.05, 0.95);
+        self.strike_angle = angle;
         for mode in &mut self.modes {
-            mode.strike_shape =
-                bessel_j(mode.angular_order, mode.radial_root * self.strike_position)
-                    * mode.shape_gain;
+            mode.strike_shape = mode.shape_at(self.strike_position, angle)
+                * (-0.5 * (mode.radial_root * self.contact_patch_radius_m / self.radius_m).powi(2))
+                    .exp();
         }
+    }
+
+    /// Sets the standard deviation of the Gaussian mallet contact patch.
+    /// Smoothing the spatial force prevents a point strike from exciting
+    /// truncated modes with unrealistically equal strength.
+    pub fn set_strike_contact_radius(&mut self, radius_m: f64) {
+        self.contact_patch_radius_m = radius_m.clamp(0.001, self.radius_m * 0.25);
+        self.set_strike_point(self.strike_position, self.strike_angle);
     }
 
     /// Updates the membrane damping without disturbing current modal state.
@@ -191,7 +256,7 @@ impl MembraneHead {
         for mode in &mut self.modes {
             // The strike is at theta=0, so angular coupling is one and radial
             // coupling is J_m(alpha_mn r/a).
-            mode.v += impulse / self.modal_mass_kg * mode.strike_shape * 0.015;
+            mode.v += impulse / mode.modal_mass_kg * mode.strike_shape * 0.015;
         }
     }
 
@@ -218,30 +283,43 @@ impl MembraneHead {
         uniform_pressure: f64,
         additional_forces: &[f64; HEAD_MODE_COUNT],
     ) -> (f64, f64) {
+        let modal_strain = self
+            .modes
+            .iter()
+            .map(|mode| (mode.radial_root * mode.q / self.radius_m).powi(2))
+            .sum::<f64>()
+            .min(1.0);
+        let coupled_nonlinearity = self.geometry_nonlinearity * modal_strain;
         for (index, mode) in self.modes.iter_mut().enumerate() {
             let modal_force = point_force * mode.strike_shape
-                + uniform_pressure * mode.area_average_shape
+                + uniform_pressure * PI * self.radius_m * self.radius_m * mode.area_average_shape
                 + additional_forces[index];
-            mode.step(modal_force / self.modal_mass_kg, self.geometry_nonlinearity);
+            mode.step(modal_force / mode.modal_mass_kg, coupled_nonlinearity);
         }
         let mut displacement = 0.0;
         let mut velocity = 0.0;
         for mode in &self.modes {
-            displacement += mode.q * mode.sensor_shape;
-            velocity += mode.v * mode.sensor_shape;
+            displacement += mode.q * mode.radiation_shape;
+            velocity += mode.v * mode.radiation_shape;
         }
-        self.last_velocity = (velocity * 0.18).clamp(-10.0, 10.0);
-        self.last_displacement = (displacement * 0.18).clamp(-10.0, 10.0);
+        self.last_velocity = velocity.clamp(-10.0, 10.0);
+        self.last_displacement = displacement.clamp(-10.0, 10.0);
         (self.last_displacement, self.last_velocity)
     }
 
     /// Projects a localized contact force into all fixed modal coordinates.
     pub fn shapes_at_radius(&self, radius: f64) -> [f64; HEAD_MODE_COUNT] {
+        self.shapes_at_polar(radius, 0.0)
+    }
+
+    pub fn shapes_at_polar(&self, radius: f64, angle: f64) -> [f64; HEAD_MODE_COUNT] {
         let radius = radius.clamp(0.0, 1.0);
-        std::array::from_fn(|index| {
-            let mode = self.modes[index];
-            mode.shape_gain * bessel_j(mode.angular_order, mode.radial_root * radius)
-        })
+        std::array::from_fn(|index| self.modes[index].shape_at(radius, angle))
+    }
+
+    pub fn shapes_at_xy(&self, x: f64, y: f64) -> [f64; HEAD_MODE_COUNT] {
+        let radius = x.hypot(y).clamp(0.0, 1.0);
+        self.shapes_at_polar(radius, y.atan2(x))
     }
 
     pub fn accumulate_modal_force(
@@ -262,7 +340,7 @@ impl MembraneHead {
             displacement += mode.q * shape;
             velocity += mode.v * shape;
         }
-        (displacement * 0.18, velocity * 0.18)
+        (displacement, velocity)
     }
 
     pub fn displacement(&self) -> f64 {
@@ -288,7 +366,17 @@ impl MembraneHead {
             displacement += mode.q * mode.area_average_shape;
             velocity += mode.v * mode.area_average_shape;
         }
-        (displacement * 0.18, velocity * 0.18)
+        (displacement, velocity)
+    }
+
+    /// Effective modal mass for the area-average displacement coordinate.
+    pub fn area_average_effective_mass(&self) -> f64 {
+        let compliance = self
+            .modes
+            .iter()
+            .map(|mode| mode.area_average_shape.powi(2) / mode.modal_mass_kg)
+            .sum::<f64>();
+        1.0 / compliance.max(1.0e-12)
     }
 
     pub fn strike_state(&self) -> (f64, f64) {
@@ -298,7 +386,7 @@ impl MembraneHead {
             displacement += mode.q * mode.strike_shape;
             velocity += mode.v * mode.strike_shape;
         }
-        (displacement * 0.18, velocity * 0.18)
+        (displacement, velocity)
     }
 
     pub fn mode_frequencies(&self) -> [f64; HEAD_MODE_COUNT] {
@@ -309,7 +397,7 @@ impl MembraneHead {
         self.modes
             .iter()
             .map(|mode| {
-                0.5 * self.modal_mass_kg
+                0.5 * mode.modal_mass_kg
                     * (mode.q * mode.q * mode.frequency * mode.frequency + mode.v * mode.v)
             })
             .sum::<f64>()
@@ -328,11 +416,73 @@ impl MembraneHead {
     pub fn sample_rate(&self) -> f64 {
         self.sample_rate
     }
+
+    pub fn radius_m(&self) -> f64 {
+        self.radius_m
+    }
 }
 
 #[inline]
 fn modal_t60(base_t60: f64, index: usize) -> f64 {
-    (base_t60 / (1.0 + index as f64 * 0.4)).max(0.03)
+    let mode_position = index as f64 / (HEAD_MODE_COUNT - 1) as f64;
+    (base_t60 / (1.0 + mode_position * 12.0)).max(0.03)
+}
+
+fn expanded_mode_spec(index: usize) -> (u8, u8, f64, bool) {
+    let mut expanded_index = 0;
+    for (order, radial_index, root) in MEMBRANE_MODE_SPECS {
+        if expanded_index == index {
+            return (order, radial_index, root, false);
+        }
+        expanded_index += 1;
+        if order > 0 {
+            if expanded_index == index {
+                return (order, radial_index, root, true);
+            }
+            expanded_index += 1;
+        }
+    }
+    unreachable!("expanded membrane mode index out of range")
+}
+
+#[inline]
+fn mode_shape(order: u8, root: f64, sine_orientation: bool, radius: f64, angle: f64) -> f64 {
+    let angular = if order == 0 {
+        1.0
+    } else if sine_orientation {
+        (order as f64 * angle).sin()
+    } else {
+        (order as f64 * angle).cos()
+    };
+    bessel_j(order, root * radius) * angular
+}
+
+/// Approximate baffled-membrane far-field radiation at an oblique listening
+/// angle. The radial integral is evaluated once per mode, during construction.
+fn modal_radiation_shape(
+    order: u8,
+    root: f64,
+    frequency: f64,
+    radius_m: f64,
+    listener_angle: f64,
+    sine_orientation: bool,
+) -> f64 {
+    let k_radius = 2.0 * PI * frequency * radius_m / 343.0 * 0.7;
+    let quadrature_count = 64;
+    let step = 1.0 / quadrature_count as f64;
+    let mut integral = 0.0;
+    for sample in 0..quadrature_count {
+        let radius = (sample as f64 + 0.5) * step;
+        integral += bessel_j(order, root * radius) * bessel_j(order, k_radius * radius) * radius;
+    }
+    let angular_response = if order == 0 {
+        1.0
+    } else if sine_orientation {
+        (order as f64 * listener_angle).sin()
+    } else {
+        (order as f64 * listener_angle).cos()
+    };
+    2.0 * integral * step * (frequency / 500.0) * angular_response
 }
 
 /// Integer-order Bessel J_m evaluated by its convergent power series. The
@@ -363,7 +513,7 @@ fn factorial(n: usize) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{MEMBRANE_MODE_SPECS, MembraneHead, bessel_j};
+    use super::{MEMBRANE_MODE_SPECS, MembraneHead, PI, bessel_j};
 
     #[test]
     fn modes_follow_circular_membrane_ratios() {
@@ -387,6 +537,21 @@ mod tests {
                 .filter(|mode| mode.angular_order != 0)
                 .all(|mode| mode.q == 0.0)
         );
+    }
+
+    #[test]
+    fn strike_location_and_gaussian_patch_control_modal_coupling() {
+        let mut head = MembraneHead::new(48_000.0, 200.0, 0.3);
+        assert_eq!(head.modes[2].strike_shape, 0.0);
+        head.set_strike_point(0.43, PI / 2.0);
+        let off_axis_strike = head.modes[2].strike_shape.abs();
+        assert!(off_axis_strike > 0.01);
+
+        head.set_strike_contact_radius(0.003);
+        let narrow_patch_high_mode = head.modes[58].strike_shape.abs();
+        head.set_strike_contact_radius(0.03);
+        let broad_patch_high_mode = head.modes[58].strike_shape.abs();
+        assert!(broad_patch_high_mode < narrow_patch_high_mode);
     }
 
     #[test]

@@ -3,10 +3,12 @@
 use crate::contact::HuntCrossleyExciter;
 use crate::membrane::{HEAD_MODE_COUNT, MembraneHead};
 use physics_dsp::{ModalTransition, OverdampedPolicy, XorShift32};
-use std::f64::consts::TAU;
+use std::f64::consts::{PI, TAU};
 
 const CYMBAL_MODE_COUNT: usize = 96;
 const CYMBAL_REFERENCE_MODE_COUNT: usize = 32;
+const SNARE_WIRE_COUNT: usize = 24;
+const SNARE_CONTACT_POINT_COUNT: usize = 3;
 const CYMBAL_MODE_RATIOS: [f64; CYMBAL_REFERENCE_MODE_COUNT] = [
     1.00, 1.73, 2.32, 3.15, 4.21, 5.08, 5.92, 6.77, 7.63, 8.49, 9.34, 10.2, 11.1, 12.0, 13.1, 14.3,
     15.6, 17.0, 18.5, 20.1, 21.8, 23.7, 25.7, 27.9, 30.2, 32.6, 35.1, 37.8, 40.5, 43.5, 46.6, 49.8,
@@ -27,9 +29,43 @@ pub struct DoubleHeadVoice {
 
 impl DoubleHeadVoice {
     pub fn new(sample_rate: f64, fundamental_hz: f64, t60: f64, cavity_stiffness: f64) -> Self {
+        Self::new_with_geometry(
+            sample_rate,
+            fundamental_hz,
+            t60,
+            cavity_stiffness,
+            0.1778,
+            0.30,
+        )
+    }
+
+    pub fn new_with_geometry(
+        sample_rate: f64,
+        fundamental_hz: f64,
+        t60: f64,
+        cavity_stiffness: f64,
+        head_radius_m: f64,
+        surface_density_kg_m2: f64,
+    ) -> Self {
+        let strike_radius = if head_radius_m > 0.22 { 0.20 } else { 0.36 };
+        let mut top = MembraneHead::new_with_geometry(
+            sample_rate,
+            fundamental_hz,
+            t60,
+            head_radius_m,
+            surface_density_kg_m2,
+        );
+        top.set_strike_point(strike_radius, 0.0);
+        top.set_strike_contact_radius(head_radius_m * 0.07);
         Self {
-            top: MembraneHead::new(sample_rate, fundamental_hz, t60),
-            bottom: MembraneHead::new(sample_rate, fundamental_hz * 1.04, t60 * 0.82),
+            top,
+            bottom: MembraneHead::new_with_geometry(
+                sample_rate,
+                fundamental_hz * 1.04,
+                t60 * 0.82,
+                head_radius_m,
+                surface_density_kg_m2,
+            ),
             exciter: HuntCrossleyExciter::default(),
             cavity_pressure: 0.0,
             cavity_stiffness,
@@ -65,27 +101,34 @@ impl DoubleHeadVoice {
         }
         let (top_before, top_velocity_before) = self.top.strike_state();
         let contact_force = self.exciter.step(top_before, top_velocity_before, dt);
-        // Reduced cavity compliance: pressure is a second-order acoustic state,
-        // not an instantaneous or one-pole gain. The two heads feed the volume
-        // displacement, and the pressure accelerates both heads in opposite
-        // directions on the next modal update.
+        // Reduced cavity compliance couples the area-average motion of both
+        // heads through a spring and damper. Pressure pushes each head in the
+        // opposite direction on the next modal update.
         let (top_volume, top_volume_velocity) = self.top.area_average_state();
         let (bottom_volume, bottom_volume_velocity) = self.bottom.area_average_state();
         let volume_delta = top_volume - bottom_volume;
         let volume_velocity = top_volume_velocity - bottom_volume_velocity;
-        let acoustic_damping = 2.0 * self.cavity_damping * self.cavity_stiffness.sqrt();
-        self.cavity_pressure = (self.cavity_stiffness * volume_delta
+        let effective_mass = 1.0
+            / (1.0 / self.top.area_average_effective_mass()
+                + 1.0 / self.bottom.area_average_effective_mass());
+        let acoustic_damping =
+            2.0 * self.cavity_damping * (self.cavity_stiffness * effective_mass).sqrt();
+        let head_area = PI * self.top.radius_m().powi(2);
+        self.cavity_pressure = ((self.cavity_stiffness * volume_delta
             + acoustic_damping * volume_velocity)
+            / head_area)
             .clamp(-1.0e6, 1.0e6);
 
-        let cavity_load = self.cavity_pressure * 0.08;
-        let (_top_displacement, top_velocity) = self.top.step_coupled(contact_force, -cavity_load);
-        let (_bottom_displacement, bottom_velocity) = self.bottom.step_coupled(0.0, cavity_load);
+        let (_top_displacement, top_velocity) =
+            self.top.step_coupled(contact_force, -self.cavity_pressure);
+        let (_bottom_displacement, bottom_velocity) =
+            self.bottom.step_coupled(0.0, self.cavity_pressure);
         let output = (top_velocity * 0.90 - bottom_velocity * 0.24 + contact_force * 0.0008)
             * self.tail_gain;
         self.tail_gain *= 0.999_999;
 
-        let energy = self.top.energy() + self.bottom.energy() + self.cavity_pressure.abs() * 0.01;
+        let cavity_energy = 0.5 * self.cavity_stiffness * volume_delta * volume_delta;
+        let energy = self.top.energy() + self.bottom.energy() + cavity_energy;
         if !self.exciter.is_contacting && energy < 1.0e-7 {
             self.active = false;
         }
@@ -117,8 +160,8 @@ pub struct SnareVoice {
     pub top: MembraneHead,
     pub bottom: MembraneHead,
     pub exciter: HuntCrossleyExciter,
-    wires: [SnareWire; 24],
-    wire_shapes: [[f64; HEAD_MODE_COUNT]; 24],
+    wires: [SnareWire; SNARE_WIRE_COUNT],
+    wire_shapes: [[[f64; HEAD_MODE_COUNT]; SNARE_CONTACT_POINT_COUNT]; SNARE_WIRE_COUNT],
     pub wire_count: usize,
     pub tightness: f64,
     pub decay: f64,
@@ -131,16 +174,24 @@ pub struct SnareVoice {
     noise_state: f64,
     noise_fast_state: f64,
     noise_envelope: f64,
+    noise_velocity_gain: f64,
 }
 
 impl SnareVoice {
     pub fn new(sample_rate: f64) -> Self {
-        let top = MembraneHead::new(sample_rate, 205.0, 0.32);
+        let mut top = MembraneHead::new(sample_rate, 205.0, 0.32);
+        top.set_strike_point(0.35, 0.37);
+        top.set_strike_contact_radius(0.007);
         let bottom = MembraneHead::new(sample_rate, 188.0, 0.46);
         let wire_shapes = std::array::from_fn(|index| {
-            let position = index as f64 / 23.0;
-            let radius = 0.10 + 1.70 * (position - 0.5).abs();
-            bottom.shapes_at_radius(radius)
+            let lateral_position = -0.14 + 0.28 * index as f64 / (SNARE_WIRE_COUNT - 1) as f64;
+            std::array::from_fn(|point_index| {
+                // Snare strands run across the lower head and sit side by
+                // side over a narrow central bed. Three quadrature points
+                // retain their line contact while keeping audio cost fixed.
+                let along_wire = [-0.58, 0.0, 0.58][point_index];
+                bottom.shapes_at_xy(along_wire, lateral_position)
+            })
         });
         Self {
             top,
@@ -151,7 +202,7 @@ impl SnareVoice {
                 displacement: 0.0,
                 velocity: 0.0,
             }),
-            wire_count: 20,
+            wire_count: SNARE_WIRE_COUNT,
             tightness: 0.62,
             decay: 0.58,
             cavity_pressure: 0.0,
@@ -163,6 +214,7 @@ impl SnareVoice {
             noise_state: 0.0,
             noise_fast_state: 0.0,
             noise_envelope: 0.0,
+            noise_velocity_gain: 1.0,
         }
     }
 
@@ -181,6 +233,7 @@ impl SnareVoice {
 
     pub fn trigger(&mut self, velocity: f64) {
         let velocity = velocity.clamp(0.001, 1.0);
+        self.noise_velocity_gain = velocity.powf(0.75);
         if !self.active {
             self.top.reset();
             self.bottom.reset();
@@ -204,8 +257,6 @@ impl SnareVoice {
             1.0e6 + 2.0e6 * velocity,
             1.5,
         );
-        let noise_gain = 0.20 + 0.08 * self.tightness;
-        self.noise_envelope = (self.noise_envelope + noise_gain * velocity.powf(0.75)).min(1.0);
         self.active = true;
     }
 
@@ -220,14 +271,19 @@ impl SnareVoice {
         let (bottom_volume, bottom_volume_velocity) = self.bottom.area_average_state();
         let volume_delta = top_volume - bottom_volume;
         let volume_velocity = top_volume_velocity - bottom_volume_velocity;
-        let acoustic_damping = 2.0 * self.cavity_damping * self.cavity_stiffness.sqrt();
+        let effective_mass = 1.0
+            / (1.0 / self.top.area_average_effective_mass()
+                + 1.0 / self.bottom.area_average_effective_mass());
+        let acoustic_damping =
+            2.0 * self.cavity_damping * (self.cavity_stiffness * effective_mass).sqrt();
+        let head_area = PI * self.top.radius_m().powi(2);
         self.cavity_pressure =
-            self.cavity_stiffness * volume_delta + acoustic_damping * volume_velocity;
-        let cavity_load = self.cavity_pressure * 0.08;
-        let (_top_displacement, top_velocity) = self.top.step_coupled(strike_force, -cavity_load);
+            (self.cavity_stiffness * volume_delta + acoustic_damping * volume_velocity) / head_area;
+        let (_top_displacement, top_velocity) =
+            self.top.step_coupled(strike_force, -self.cavity_pressure);
         let (_bottom_displacement, _bottom_velocity) =
             self.bottom
-                .step_with_modal_forces(0.0, cavity_load, &self.wire_modal_forces);
+                .step_with_modal_forces(0.0, self.cavity_pressure, &self.wire_modal_forces);
         self.wire_modal_forces.fill(0.0);
 
         let mut chatter_force = 0.0;
@@ -236,28 +292,28 @@ impl SnareVoice {
         let clearance = 0.000_001_5 + (1.0 - self.tightness) * 0.000_006;
         let wire_mass = 0.00055;
         let wire_stiffness = 4_000.0 + 18_000.0 * self.tightness;
+        let wire_damping = 18.0 + 72.0 * (1.0 - self.decay);
+        let local_contact_stiffness =
+            (500_000.0 + 1_000_000.0 * self.tightness) / SNARE_CONTACT_POINT_COUNT as f64;
         for (index, wire) in self.wires[..count].iter_mut().enumerate() {
-            let shapes = &self.wire_shapes[index];
-            let (local_bottom, local_bottom_velocity) = self.bottom.state_with_shapes(shapes);
-            let gap = local_bottom - wire.displacement - clearance;
-            let wire_velocity_relative = local_bottom_velocity - wire.velocity;
-            let force = if gap > 0.0 {
-                let elastic = (500_000.0 + 1_000_000.0 * self.tightness) * gap.powf(1.4);
-                let dissipative = (elastic * 0.06 * wire_velocity_relative).max(0.0);
-                (elastic + dissipative).min(30.0)
-            } else {
-                0.0
-            };
-            if force > 0.0 {
-                chatter_force += force;
-                self.bottom
-                    .accumulate_modal_force(shapes, -force, &mut self.wire_modal_forces);
-                wire.velocity += force / wire_mass * dt;
-            } else {
-                let wire_damping = 18.0 + 72.0 * (1.0 - self.decay);
-                let restoring = -wire_stiffness * wire.displacement - wire_damping * wire.velocity;
-                wire.velocity += restoring / wire_mass * dt;
+            let contact_shapes = &self.wire_shapes[index];
+            let mut wire_contact_force = 0.0;
+            for shapes in contact_shapes {
+                let (local_bottom, local_bottom_velocity) = self.bottom.state_with_shapes(shapes);
+                let gap = local_bottom - wire.displacement - clearance;
+                if gap > 0.0 {
+                    let elastic = local_contact_stiffness * gap.powf(1.4);
+                    let relative_velocity = local_bottom_velocity - wire.velocity;
+                    let dissipative = (elastic * 0.06 * relative_velocity).max(0.0);
+                    let force = (elastic + dissipative).min(10.0);
+                    wire_contact_force += force;
+                    chatter_force += force;
+                    self.bottom
+                        .accumulate_modal_force(shapes, -force, &mut self.wire_modal_forces);
+                }
             }
+            let restoring = -wire_stiffness * wire.displacement - wire_damping * wire.velocity;
+            wire.velocity += (wire_contact_force + restoring) / wire_mass * dt;
             wire.displacement += wire.velocity * dt;
             wire.displacement = wire.displacement.clamp(-0.01, 0.01);
             wire.velocity = wire.velocity.clamp(-30.0, 30.0);
@@ -270,11 +326,22 @@ impl SnareVoice {
         self.noise_fast_state = self.noise_fast_state * 0.48 + white * 0.52;
         let bright_noise = self.noise_fast_state - self.noise_state;
         let noise_t60 = 0.12 + 0.46 * self.decay;
-        self.noise_envelope *= (-(6.907_755_278_982_137 * dt / noise_t60)).exp();
+        let noise_release = (-(6.907_755_278_982_137 * dt / noise_t60)).exp();
+        let collision_noise =
+            ((0.009 + 0.0045 * self.tightness) * chatter_force.sqrt() * self.noise_velocity_gain)
+                .clamp(0.0, 0.35);
+        // Wire friction and repeated impacts excite the broadband component;
+        // after separation, the wire bed rings down with its own T60.
+        self.noise_envelope = collision_noise.max(self.noise_envelope * noise_release);
         let output = top_velocity * 0.52 - self.bottom.velocity() * 0.18
             + chatter_force * 0.000055
             + bright_noise * self.noise_envelope;
-        let energy = self.top.energy() + self.bottom.energy() + wire_energy + self.noise_envelope;
+        let cavity_energy = 0.5 * self.cavity_stiffness * volume_delta * volume_delta;
+        let energy = self.top.energy()
+            + self.bottom.energy()
+            + cavity_energy
+            + wire_energy
+            + self.noise_envelope;
         if !self.exciter.is_contacting && energy < 1e-7 {
             self.active = false;
         }
