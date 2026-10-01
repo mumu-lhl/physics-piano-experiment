@@ -6,17 +6,15 @@
 //! tiny buttons, so it remains usable at plugin-sized window dimensions.
 
 mod fretboard_view;
-mod i18n;
 
 use crate::nice_plugin::{GuiBassEvent, PhysicsBassParams};
 use fretboard_view::BassFretboardWidget;
-use i18n::{I18n, Language};
 use nice_plug::prelude::{Editor, Param};
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
-    CancelParamGestureEvent, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
+    CancelParamGestureEvent, Language, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
     add_base_theme, discrete_selector, map_param_history_event, parameter_slider, preset_choices,
-    preset_panel, redraw_custom_view, set_param, setup_vizia_fonts,
+    preset_display_name, preset_panel, redraw_custom_view, set_param, setup_vizia_fonts, translate,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -38,7 +36,7 @@ struct DiscreteSelections {
 enum BassUiEvent {
     PreviousPreset,
     NextPreset,
-    ToggleLanguage,
+    SetLanguage(Language),
     SelectPreset(String),
     SetName(String),
     SaveAs,
@@ -142,7 +140,9 @@ impl Model for BassUiState {
         event.map(|action: &PresetPanelAction, _| match action {
             PresetPanelAction::Previous => cx.emit(BassUiEvent::PreviousPreset),
             PresetPanelAction::Next => cx.emit(BassUiEvent::NextPreset),
-            PresetPanelAction::ToggleLanguage => cx.emit(BassUiEvent::ToggleLanguage),
+            PresetPanelAction::SelectLanguage(language) => {
+                cx.emit(BassUiEvent::SetLanguage(*language))
+            }
             PresetPanelAction::Select(id) => cx.emit(BassUiEvent::SelectPreset(id.clone())),
             PresetPanelAction::SetName(name) => cx.emit(BassUiEvent::SetName(name.clone())),
             PresetPanelAction::SaveAs => cx.emit(BassUiEvent::SaveAs),
@@ -203,9 +203,7 @@ impl Model for BassUiState {
                         self.undo.write().record_batch(&preset.name, changes);
                     }
                     self.selected_id.set(preset.id.clone());
-                    let display_name = preset
-                        .display_name(self.language.get() == Language::SimplifiedChinese)
-                        .to_string();
+                    let display_name = preset_display_name(&preset, self.language.get());
                     self.selected_name.set(display_name.clone());
                     self.name_input.set(display_name);
                     self.is_user_preset
@@ -215,21 +213,13 @@ impl Model for BassUiState {
                     self.update_history_state();
                 }
             }
-            BassUiEvent::ToggleLanguage => {
-                let language = if self.language.get() == Language::English {
-                    Language::SimplifiedChinese
-                } else {
-                    Language::English
-                };
+            BassUiEvent::SetLanguage(language) => {
+                let language = *language;
                 self.language.set(language);
-                self.language_atom.store(
-                    u8::from(language == Language::SimplifiedChinese),
-                    Ordering::Relaxed,
-                );
+                self.language_atom
+                    .store(language.index(), Ordering::Relaxed);
                 if let Some(preset) = self.manager.read().get_preset(&self.selected_id.get()) {
-                    let display_name = preset
-                        .display_name(language == Language::SimplifiedChinese)
-                        .to_string();
+                    let display_name = preset_display_name(preset, language);
                     self.selected_name.set(display_name.clone());
                     self.name_input.set(display_name);
                 }
@@ -241,7 +231,12 @@ impl Model for BassUiState {
             BassUiEvent::SaveAs => {
                 let name = self.name_input.get().trim().to_string();
                 let name = if name.is_empty() {
-                    "Custom Bass".to_string()
+                    translate(
+                        self.language.get(),
+                        "bass.preset.default-name",
+                        "Custom Bass",
+                    )
+                    .to_owned()
                 } else {
                     name
                 };
@@ -403,20 +398,12 @@ pub fn create_vizia_bass_editor(
     preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
 ) -> Option<Box<dyn Editor>> {
-    let language_initial = if language_atom.load(Ordering::Relaxed) == 1 {
-        Language::SimplifiedChinese
-    } else {
-        Language::English
-    };
+    let language_initial = Language::from_index(language_atom.load(Ordering::Relaxed));
     let selected_id = "bass_finger_punch".to_string();
     let selected_name = preset_manager
         .read()
         .get_preset(&selected_id)
-        .map(|preset| {
-            preset
-                .display_name(language_initial == Language::SimplifiedChinese)
-                .to_string()
-        })
+        .map(|preset| preset_display_name(preset, language_initial))
         .unwrap_or_else(|| "Finger Punch".to_string());
 
     let editor_state = params.editor_state.clone();
@@ -489,11 +476,11 @@ pub fn create_vizia_bass_editor(
             VStack::new(cx, move |cx| {
                 HStack::new(cx, |cx| {
                     VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::title(lang)).class("title");
-                        Label::new(cx, I18n::subtitle(lang)).class("subtitle");
+                        Label::new(cx, translate(lang, "bass.title", "PHYSICS BASS")).class("title");
+                        Label::new(cx, translate(lang, "bass.subtitle", "FDTD stiff string · fret contact · finite pickup aperture · body modes")).class("subtitle");
                     })
                     .width(Stretch(1.0));
-                    Label::new(cx, I18n::audition(lang)).class("status");
+                    Label::new(cx, translate(lang, "bass.audition", "Click or drag the fretboard below to audition")).class("status");
                 })
                 .class("header")
                 .width(Stretch(1.0));
@@ -511,7 +498,7 @@ pub fn create_vizia_bass_editor(
                         can_redo: can_redo_ui.clone(),
                     },
                     PresetPanelLayout {
-                        preset_label: Some(I18n::preset(lang)),
+                        preset_label: Some(translate(lang, "bass.preset", "Preset:")),
                         preset_width: 190.0,
                         name_width: 130.0,
                         save_as_width: 64.0,
@@ -520,20 +507,20 @@ pub fn create_vizia_bass_editor(
                         delete_width: 48.0,
                     },
                     move |cx| {
-                        Label::new(cx, I18n::audition(lang)).class("status");
+                        Label::new(cx, translate(lang, "bass.audition", "Click or drag the fretboard below to audition")).class("status");
                     },
                 );
 
                 HStack::new(cx, |cx| {
                     VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::instrument(lang)).class("rack-title");
+                        Label::new(cx, translate(lang, "bass.instrument", "INSTRUMENT")).class("rack-title");
                         discrete_selector(
                             cx,
-                            I18n::model(lang),
+                            translate(lang, "bass.model", "Model"),
                             discrete.mode.clone(),
                             vec![
-                                (0, I18n::electric(lang).to_string()),
-                                (1, I18n::acoustic(lang).to_string()),
+                                (0, translate(lang, "bass.electric", "Electric").to_string()),
+                                (1, translate(lang, "bass.acoustic", "Acoustic").to_string()),
                             ],
                             94.0,
                             {
@@ -543,12 +530,12 @@ pub fn create_vizia_bass_editor(
                         );
                         discrete_selector(
                             cx,
-                            I18n::exciter(lang),
+                            translate(lang, "bass.exciter", "Exciter"),
                             discrete.pluck_style.clone(),
                             vec![
-                                (0, I18n::finger(lang).to_string()),
-                                (1, I18n::pick(lang).to_string()),
-                                (2, I18n::slap(lang).to_string()),
+                                (0, translate(lang, "bass.finger", "Finger").to_string()),
+                                (1, translate(lang, "bass.pick", "Pick").to_string()),
+                                (2, translate(lang, "bass.slap", "Slap").to_string()),
                             ],
                             94.0,
                             {
@@ -557,9 +544,9 @@ pub fn create_vizia_bass_editor(
                             },
                         );
                         HStack::new(cx, |cx| {
-                            Label::new(cx, I18n::tuning(lang)).class("param-label");
+                            Label::new(cx, translate(lang, "bass.tuning", "Tuning")).class("param-label");
                             ParamButton::new(cx, &params.five_string)
-                                .with_label(I18n::five_string(lang));
+                                .with_label(translate(lang, "bass.five_string", "Five-string B0"));
                         })
                         .horizontal_gap(Pixels(6.0));
                     })
@@ -567,37 +554,37 @@ pub fn create_vizia_bass_editor(
                     .width(Stretch(1.0));
 
                     VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::string_pickup(lang)).class("rack-title");
+                        Label::new(cx, translate(lang, "bass.string_pickup", "STRING / PICKUP")).class("rack-title");
                         parameter_slider(
                             cx,
-                            I18n::pluck_position(lang),
+                            translate(lang, "bass.pluck_position", "Pluck position"),
                             &params.pluck_position,
                             108.0,
                         );
                         parameter_slider(
                             cx,
-                            I18n::pickup_position(lang),
+                            translate(lang, "bass.pickup_position", "Pickup position"),
                             &params.pickup_position,
                             108.0,
                         );
-                        parameter_slider(cx, I18n::tone(lang), &params.tone, 108.0);
+                        parameter_slider(cx, translate(lang, "bass.tone", "Tone"), &params.tone, 108.0);
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
 
                     VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::contact_body(lang)).class("rack-title");
-                        parameter_slider(cx, I18n::fret_buzz(lang), &params.fret_buzz, 108.0);
-                        parameter_slider(cx, I18n::body_mix(lang), &params.body_mix, 108.0);
-                        Label::new(cx, I18n::slap_note(lang)).class("small-note");
+                        Label::new(cx, translate(lang, "bass.contact_body", "CONTACT / BODY")).class("rack-title");
+                        parameter_slider(cx, translate(lang, "bass.fret_buzz", "Fret buzz"), &params.fret_buzz, 108.0);
+                        parameter_slider(cx, translate(lang, "bass.body_mix", "Body mix"), &params.body_mix, 108.0);
+                        Label::new(cx, translate(lang, "bass.slap_note", "Slap uses the same bounded contact state as the FDTD string")).class("small-note");
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
 
                     VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::output(lang)).class("rack-title");
-                        parameter_slider(cx, I18n::master_gain(lang), &params.master_gain, 108.0);
-                        Label::new(cx, I18n::output_note(lang)).class("small-note");
+                        Label::new(cx, translate(lang, "bass.output", "OUTPUT")).class("rack-title");
+                        parameter_slider(cx, translate(lang, "bass.master_gain", "Master gain"), &params.master_gain, 108.0);
+                        Label::new(cx, translate(lang, "bass.output_note", "Electric: finite-gap pickup · Acoustic: A0 / B1 / bridge hill")).class("small-note");
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
@@ -607,7 +594,7 @@ pub fn create_vizia_bass_editor(
                 .height(Pixels(145.0))
                 .horizontal_gap(Pixels(8.0));
 
-                Label::new(cx, I18n::fretboard_hint(lang)).class("hint-text");
+                Label::new(cx, translate(lang, "bass.fretboard_hint", "Open notes + 24 frets · MIDI pitch bend remains available")).class("hint-text");
                 BassFretboardWidget::new(
                     cx,
                     params,

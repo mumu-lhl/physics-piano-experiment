@@ -5,18 +5,16 @@
 //! custom pad view is kept as a real instrument surface rather than a row of
 //! generic buttons.
 
-mod i18n;
 mod pad_view;
 
 use crate::nice_plugin::{GuiDrumEvent, PhysicsDrumParams};
-use i18n::{I18n, Language};
 use nice_plug::prelude::{Editor, Param};
 use pad_view::DrumPadWidget;
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
-    CancelParamGestureEvent, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
-    add_base_theme, map_param_history_event, parameter_slider, preset_choices, preset_panel,
-    redraw_custom_view, set_param, setup_vizia_fonts,
+    CancelParamGestureEvent, Language, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
+    add_base_theme, map_param_history_event, parameter_slider, preset_choices, preset_display_name,
+    preset_panel, redraw_custom_view, set_param, setup_vizia_fonts, translate,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,7 +30,7 @@ pub const EDITOR_HEIGHT: u32 = 640;
 enum DrumUiEvent {
     PreviousPreset,
     NextPreset,
-    ToggleLanguage,
+    SetLanguage(Language),
     SelectPreset(String),
     SetName(String),
     SaveAs,
@@ -123,7 +121,9 @@ impl Model for DrumUiState {
         event.map(|action: &PresetPanelAction, _| match action {
             PresetPanelAction::Previous => cx.emit(DrumUiEvent::PreviousPreset),
             PresetPanelAction::Next => cx.emit(DrumUiEvent::NextPreset),
-            PresetPanelAction::ToggleLanguage => cx.emit(DrumUiEvent::ToggleLanguage),
+            PresetPanelAction::SelectLanguage(language) => {
+                cx.emit(DrumUiEvent::SetLanguage(*language))
+            }
             PresetPanelAction::Select(id) => cx.emit(DrumUiEvent::SelectPreset(id.clone())),
             PresetPanelAction::SetName(name) => cx.emit(DrumUiEvent::SetName(name.clone())),
             PresetPanelAction::SaveAs => cx.emit(DrumUiEvent::SaveAs),
@@ -178,9 +178,7 @@ impl Model for DrumUiState {
                         self.undo.write().record_batch(&preset.name, changes);
                     }
                     self.selected_id.set(preset.id.clone());
-                    let display_name = preset
-                        .display_name(self.language.get() == Language::SimplifiedChinese)
-                        .to_string();
+                    let display_name = preset_display_name(&preset, self.language.get());
                     self.selected_name.set(display_name.clone());
                     self.name_input.set(display_name);
                     self.is_user_preset
@@ -190,21 +188,13 @@ impl Model for DrumUiState {
                     self.update_history_state();
                 }
             }
-            DrumUiEvent::ToggleLanguage => {
-                let language = if self.language.get() == Language::English {
-                    Language::SimplifiedChinese
-                } else {
-                    Language::English
-                };
+            DrumUiEvent::SetLanguage(language) => {
+                let language = *language;
                 self.language.set(language);
-                self.language_atom.store(
-                    u8::from(language == Language::SimplifiedChinese),
-                    Ordering::Relaxed,
-                );
+                self.language_atom
+                    .store(language.index(), Ordering::Relaxed);
                 if let Some(preset) = self.manager.read().get_preset(&self.selected_id.get()) {
-                    let display_name = preset
-                        .display_name(language == Language::SimplifiedChinese)
-                        .to_string();
+                    let display_name = preset_display_name(preset, language);
                     self.selected_name.set(display_name.clone());
                     self.name_input.set(display_name);
                 }
@@ -216,7 +206,12 @@ impl Model for DrumUiState {
             DrumUiEvent::SaveAs => {
                 let name = self.name_input.get().trim().to_string();
                 let name = if name.is_empty() {
-                    "Custom Drum Kit".to_string()
+                    translate(
+                        self.language.get(),
+                        "drum.preset.default-name",
+                        "Custom Drum Kit",
+                    )
+                    .to_owned()
                 } else {
                     name
                 };
@@ -361,20 +356,12 @@ pub fn create_vizia_drum_editor(
     preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
 ) -> Option<Box<dyn Editor>> {
-    let language_initial = if language_atom.load(Ordering::Relaxed) == 1 {
-        Language::SimplifiedChinese
-    } else {
-        Language::English
-    };
+    let language_initial = Language::from_index(language_atom.load(Ordering::Relaxed));
     let selected_id = "drum_studio_kit".to_string();
     let selected_name = preset_manager
         .read()
         .get_preset(&selected_id)
-        .map(|preset| {
-            preset
-                .display_name(language_initial == Language::SimplifiedChinese)
-                .to_string()
-        })
+        .map(|preset| preset_display_name(preset, language_initial))
         .unwrap_or_else(|| "Studio Kit".to_string());
 
     let editor_state = params.editor_state.clone();
@@ -449,7 +436,7 @@ pub fn create_vizia_drum_editor(
                         can_redo: can_redo_ui.clone(),
                     },
                     PresetPanelLayout {
-                        preset_label: Some(I18n::preset(lang)),
+                        preset_label: Some(translate(lang, "drum.preset", "Preset:")),
                         preset_width: 180.0,
                         name_width: 120.0,
                         save_as_width: 62.0,
@@ -462,23 +449,23 @@ pub fn create_vizia_drum_editor(
 
                 HStack::new(cx, |cx| {
                     VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::snare_membrane(lang)).class("rack-title");
+                        Label::new(cx, translate(lang, "drum.snare_membrane", "SNARE / MEMBRANE")).class("rack-title");
                         parameter_slider(
                             cx,
-                            I18n::snare_tightness(lang),
+                            translate(lang, "drum.snare_tightness", "Snare tightness"),
                             &params.snare_tightness,
                             112.0,
                         );
-                        parameter_slider(cx, I18n::snare_decay(lang), &params.snare_decay, 112.0);
-                        Label::new(cx, I18n::snare_note(lang)).class("small-note");
+                        parameter_slider(cx, translate(lang, "drum.snare_decay", "Snare decay"), &params.snare_decay, 112.0);
+                        Label::new(cx, translate(lang, "drum.snare_note", "Bottom head drives 20 bounded wire contacts")).class("small-note");
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
                     VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::cymbal_output(lang)).class("rack-title");
-                        parameter_slider(cx, I18n::hihat_open(lang), &params.hihat_open, 112.0);
-                        parameter_slider(cx, I18n::cymbal_decay(lang), &params.cymbal_decay, 112.0);
-                        parameter_slider(cx, I18n::master_gain(lang), &params.master_gain, 112.0);
+                        Label::new(cx, translate(lang, "drum.cymbal_output", "CYMBAL / OUTPUT")).class("rack-title");
+                        parameter_slider(cx, translate(lang, "drum.hihat_open", "Hi-hat open"), &params.hihat_open, 112.0);
+                        parameter_slider(cx, translate(lang, "drum.cymbal_decay", "Cymbal decay"), &params.cymbal_decay, 112.0);
+                        parameter_slider(cx, translate(lang, "drum.master_gain", "Master gain"), &params.master_gain, 112.0);
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
@@ -493,7 +480,7 @@ pub fn create_vizia_drum_editor(
                     .width(Stretch(1.0))
                     .height(Pixels(350.0))
                     .overflow(Overflow::Hidden);
-                Label::new(cx, I18n::hint(lang)).class("hint-text");
+                Label::new(cx, translate(lang, "drum.hint", "Closed hat chokes open hat · CC4 controls pedal opening · note-off preserves physical tails")).class("hint-text");
             })
             .class("root")
             .width(Stretch(1.0))

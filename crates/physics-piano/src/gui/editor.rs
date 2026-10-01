@@ -11,17 +11,17 @@ use vizia_plug::widgets::*;
 use vizia_plug::{ViziaState, ViziaTheming, create_vizia_editor};
 
 use crate::engine::EngineEvent;
-use crate::gui::i18n::{I18n, Language, setup_vizia_fonts};
 use crate::gui::keyboard::PianoKeyboardWidget;
 use crate::gui::lid::PianoLidWidget;
 use crate::gui::mics::MicStageWidget;
 use crate::gui::scope::{LissajousScopeWidget, StereoVuMeterWidget};
 use crate::nice_plugin::PhysicsPianoParams;
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
+use physics_ui::Language;
 use physics_ui::{
     CancelParamGestureEvent, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
-    add_base_theme, map_param_history_event, parameter_slider, preset_choices, preset_panel,
-    redraw_custom_view, set_param,
+    add_base_theme, map_param_history_event, parameter_slider, preset_choices, preset_display_name,
+    preset_panel, redraw_custom_view, set_param, setup_vizia_fonts, translate,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -58,7 +58,7 @@ struct PianoUiState {
 enum PianoUiEvent {
     PreviousPreset,
     NextPreset,
-    ToggleLanguage,
+    SetLanguage(Language),
     Undo,
     Redo,
     SelectPreset(String),
@@ -182,7 +182,9 @@ impl Model for PianoUiState {
         event.map(|action: &PresetPanelAction, _| match action {
             PresetPanelAction::Previous => cx.emit(PianoUiEvent::PreviousPreset),
             PresetPanelAction::Next => cx.emit(PianoUiEvent::NextPreset),
-            PresetPanelAction::ToggleLanguage => cx.emit(PianoUiEvent::ToggleLanguage),
+            PresetPanelAction::SelectLanguage(language) => {
+                cx.emit(PianoUiEvent::SetLanguage(*language))
+            }
             PresetPanelAction::Select(id) => cx.emit(PianoUiEvent::SelectPreset(id.clone())),
             PresetPanelAction::SetName(name) => cx.emit(PianoUiEvent::SetName(name.clone())),
             PresetPanelAction::SaveAs => cx.emit(PianoUiEvent::SaveAs),
@@ -240,16 +242,9 @@ impl Model for PianoUiState {
                         self.undo.write().record_batch(&preset.name, changes);
                     }
                     self.selected_id.set(preset.id.clone());
-                    self.selected_name.set(
-                        preset
-                            .display_name(self.language.get() == Language::SimplifiedChinese)
-                            .to_string(),
-                    );
-                    self.name_input.set(
-                        preset
-                            .display_name(self.language.get() == Language::SimplifiedChinese)
-                            .to_string(),
-                    );
+                    let display_name = preset_display_name(&preset, self.language.get());
+                    self.selected_name.set(display_name.clone());
+                    self.name_input.set(display_name);
                     self.is_user_preset
                         .set(self.manager.read().is_user_preset(id));
                     self.preset_choices
@@ -257,31 +252,19 @@ impl Model for PianoUiState {
                     self.set_undo_state();
                 }
             }
-            PianoUiEvent::ToggleLanguage => {
-                let lang = if self.language.get() == Language::English {
-                    Language::SimplifiedChinese
-                } else {
-                    Language::English
-                };
+            PianoUiEvent::SetLanguage(lang) => {
+                let lang = *lang;
                 self.language.set(lang);
-                self.language_atom.store(
-                    u8::from(lang == Language::SimplifiedChinese),
-                    Ordering::Relaxed,
-                );
+                self.language_atom.store(lang.index(), Ordering::Relaxed);
                 if let Some(preset) = self.manager.read().get_preset(&self.selected_id.get()) {
-                    self.selected_name.set(
-                        preset
-                            .display_name(lang == Language::SimplifiedChinese)
-                            .to_string(),
-                    );
-                    self.name_input.set(
-                        preset
-                            .display_name(lang == Language::SimplifiedChinese)
-                            .to_string(),
-                    );
+                    let display_name = preset_display_name(preset, lang);
+                    self.selected_name.set(display_name.clone());
+                    self.name_input.set(display_name);
                 }
                 self.preset_choices
                     .set(preset_choices(&self.manager.read(), lang));
+                redraw_custom_view(cx, "piano-lid-widget");
+                redraw_custom_view(cx, "mic-stage-widget");
             }
             PianoUiEvent::Undo => self.apply_history(cx, false),
             PianoUiEvent::Redo => self.apply_history(cx, true),
@@ -289,7 +272,12 @@ impl Model for PianoUiState {
             PianoUiEvent::SaveAs => {
                 let name = self.name_input.get().trim().to_string();
                 let name = if name.is_empty() {
-                    "Custom Piano".to_string()
+                    translate(
+                        self.language.get(),
+                        "piano.preset.default-name",
+                        "Custom Piano",
+                    )
+                    .to_owned()
                 } else {
                     name
                 };
@@ -558,20 +546,12 @@ pub fn create_vizia_piano_editor(
     undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
     editor_state: Arc<ViziaState>,
 ) -> Option<Box<dyn Editor>> {
-    let lang = if language_atom.load(std::sync::atomic::Ordering::Relaxed) == 1 {
-        Language::SimplifiedChinese
-    } else {
-        Language::English
-    };
+    let lang = Language::from_index(language_atom.load(std::sync::atomic::Ordering::Relaxed));
     let selected_name = preset_manager
         .read()
         .get_preset("steinway_concert_d")
-        .map(|preset| {
-            preset
-                .display_name(lang == Language::SimplifiedChinese)
-                .to_string()
-        })
-        .unwrap_or_else(|| "Steinway Concert D".to_string());
+        .map(|preset| preset_display_name(preset, lang))
+        .unwrap_or_else(|| "Steinway D Concert Grand".to_string());
     let manager = preset_manager;
     let language_initial = lang;
     let initial_id = "steinway_concert_d".to_string();
@@ -709,37 +689,107 @@ pub fn create_vizia_piano_editor(
 
                 HStack::new(cx, |cx| {
                     VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::rack_pedals(lang)).class("rack-title");
-                        slider(cx, I18n::sustain(lang), &params.sustain_pedal);
-                        slider(cx, I18n::key_action(lang), &params.key_noise);
-                        slider(cx, I18n::damper_noise(lang), &params.damper_noise);
-                        slider(cx, I18n::pedal_shock(lang), &params.pedal_noise);
+                        Label::new(
+                            cx,
+                            translate(lang, "piano.rack_pedals", "PEDALS & MECHANICS"),
+                        )
+                        .class("rack-title");
+                        slider(
+                            cx,
+                            translate(lang, "piano.sustain", "Sustain:"),
+                            &params.sustain_pedal,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "piano.key_action", "Key Action:"),
+                            &params.key_noise,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "piano.damper_noise", "Damper Noise:"),
+                            &params.damper_noise,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "piano.pedal_shock", "Pedal Shock:"),
+                            &params.pedal_noise,
+                        );
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
                     VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::rack_string(lang)).class("rack-title");
-                        slider(cx, I18n::inharmonicity(lang), &params.inharmonicity_scale);
-                        slider(cx, I18n::hammer_hardness(lang), &params.hammer_hardness);
-                        slider(cx, I18n::unison_detune(lang), &params.unison_detuning);
-                        slider(cx, I18n::phantom_partials(lang), &params.phantom_gain);
+                        Label::new(cx, translate(lang, "piano.rack_string", "STRING & HAMMER"))
+                            .class("rack-title");
+                        slider(
+                            cx,
+                            translate(lang, "piano.inharmonicity", "Inharmonicity B:"),
+                            &params.inharmonicity_scale,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "piano.hammer_hardness", "Hammer Hardness:"),
+                            &params.hammer_hardness,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "piano.unison_detune", "Unison Detune:"),
+                            &params.unison_detuning,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "piano.phantom_partials", "Phantom Partials:"),
+                            &params.phantom_gain,
+                        );
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
                     VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::rack_spatial(lang)).class("rack-title");
-                        slider(cx, I18n::mic_close(lang), &params.mic_close);
-                        slider(cx, I18n::mic_player(lang), &params.mic_player);
-                        slider(cx, I18n::mic_ambient(lang), &params.mic_ambient);
-                        slider(cx, I18n::lid_angle(lang), &params.lid_angle);
+                        Label::new(
+                            cx,
+                            translate(lang, "piano.rack_spatial", "SPATIAL MICS & LID"),
+                        )
+                        .class("rack-title");
+                        slider(
+                            cx,
+                            translate(lang, "piano.mic_close", "Close Mic:"),
+                            &params.mic_close,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "piano.mic_player", "Player Mic:"),
+                            &params.mic_player,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "piano.mic_ambient", "Ambient Mic:"),
+                            &params.mic_ambient,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "piano.lid_angle", "Lid Angle:"),
+                            &params.lid_angle,
+                        );
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
                     VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::rack_output(lang)).class("rack-title");
-                        slider(cx, I18n::master_gain(lang), &params.master_gain);
-                        slider(cx, I18n::velocity_curve(lang), &params.velocity_curve);
-                        ParamButton::new(cx, &params.una_corda).with_label(I18n::una_corda(lang));
+                        Label::new(cx, translate(lang, "piano.rack_output", "OUTPUT"))
+                            .class("rack-title");
+                        slider(
+                            cx,
+                            translate(lang, "piano.master_gain", "Master Gain:"),
+                            &params.master_gain,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "piano.velocity_curve", "Touch Curve:"),
+                            &params.velocity_curve,
+                        );
+                        ParamButton::new(cx, &params.una_corda).with_label(translate(
+                            lang,
+                            "piano.una_corda",
+                            "Una Corda",
+                        ));
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
@@ -757,7 +807,7 @@ pub fn create_vizia_piano_editor(
                 .focusable(true)
                 .height(Pixels(130.0))
                 .width(Stretch(1.0));
-                Label::new(cx, I18n::keyboard_hint(lang)).class("hint-text");
+                Label::new(cx, translate(lang, "piano.keyboard_hint", "Virtual 88-Key Keyboard (A0-C8) | Play via mouse or QWERTY keys (A-K / W,E,T,Y,U), Z/X to shift octave")).class("hint-text");
             });
         });
     })

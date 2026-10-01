@@ -10,11 +10,12 @@
 
 use super::skia_compat as vg;
 use super::skia_compat::CanvasExt;
+use physics_ui::{translate, translate_format};
 use std::sync::Arc;
 use vizia_plug::vizia::prelude::*;
 
-use crate::gui::i18n::Language;
 use crate::nice_plugin::PhysicsPianoParams;
+use physics_ui::Language;
 
 pub struct MicStageWidget {
     params: Arc<PhysicsPianoParams>,
@@ -218,10 +219,11 @@ impl View for MicStageWidget {
         );
 
         // 4. Labels and Gain Readouts
-        let title_str = match self.language {
-            Language::English => "SPATIAL ACOUSTIC SOUNDSTAGE",
-            Language::SimplifiedChinese => "多麦位空间声场物理布局",
-        };
+        let title_str = translate(
+            self.language,
+            "piano.mics.title",
+            "SPATIAL ACOUSTIC SOUNDSTAGE",
+        );
 
         let mut font_paint = vg::Paint::color(vg::Color::rgb(200, 205, 220));
         font_paint.set_font_size(10.5);
@@ -233,16 +235,15 @@ impl View for MicStageWidget {
         legend_paint.set_font_size(9.5);
         legend_paint.set_text_align(vg::Align::Right);
 
-        let info_str = match self.language {
-            Language::English => format!(
-                "Close: {:.1}dB | Player: {:.1}dB | Hall: {:.1}dB",
-                close_db, player_db, amb_db
-            ),
-            Language::SimplifiedChinese => format!(
-                "近场: {:.1}dB | 演奏者: {:.1}dB | 空间厅堂: {:.1}dB",
-                close_db, player_db, amb_db
-            ),
-        };
+        let close = format!("{close_db:.1}");
+        let player = format!("{player_db:.1}");
+        let hall = format!("{amb_db:.1}");
+        let info_str = translate_format(
+            self.language,
+            "piano.mics.readout",
+            "Close: {close}dB | Player: {player}dB | Hall: {hall}dB",
+            &[("close", &close), ("player", &player), ("hall", &hall)],
+        );
         let _ = canvas.fill_text(
             bounds.x + bounds.w - 8.0,
             bounds.y + 14.0,
@@ -256,20 +257,14 @@ impl View for MicStageWidget {
         let _ = canvas.fill_text(
             player_x,
             player_y + 12.0,
-            match self.language {
-                Language::English => "Player (Binaural)",
-                Language::SimplifiedChinese => "演奏者耳位",
-            },
+            translate(self.language, "piano.mics.player", "Player (Binaural)"),
             &legend_paint,
         );
 
         let _ = canvas.fill_text(
             room_center_x,
             room_center_y + 26.0,
-            match self.language {
-                Language::English => "Decca Tree (Hall)",
-                Language::SimplifiedChinese => "空间厅堂阵列",
-            },
+            translate(self.language, "piano.mics.hall", "Decca Tree (Hall)"),
             &legend_paint,
         );
     }

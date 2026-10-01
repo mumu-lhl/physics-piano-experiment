@@ -10,13 +10,14 @@ use vizia_plug::widgets::*;
 use vizia_plug::{ViziaState, ViziaTheming, create_vizia_editor};
 
 use crate::gui::fretboard_view::GuitarFretboardWidget;
-use crate::gui::i18n::{I18n, Language, setup_vizia_fonts};
 use crate::nice_plugin::{GuiGuitarEvent, PhysicsGuitarParams};
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
+use physics_ui::Language;
 use physics_ui::{
     CancelParamGestureEvent, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
     add_base_theme, discrete_selector as shared_discrete_selector, map_param_history_event,
-    parameter_slider, preset_choices, preset_panel, redraw_custom_view, set_param, ui_text,
+    parameter_slider, preset_choices, preset_display_name, preset_panel, redraw_custom_view,
+    set_param, setup_vizia_fonts, translate,
 };
 use std::collections::HashMap;
 
@@ -94,7 +95,7 @@ struct GuitarUiState {
 enum GuitarUiEvent {
     PreviousPreset,
     NextPreset,
-    ToggleLanguage,
+    SetLanguage(Language),
     SetName(String),
     SelectPreset(String),
     SaveAs,
@@ -205,7 +206,9 @@ impl Model for GuitarUiState {
         event.map(|action: &PresetPanelAction, _| match action {
             PresetPanelAction::Previous => cx.emit(GuitarUiEvent::PreviousPreset),
             PresetPanelAction::Next => cx.emit(GuitarUiEvent::NextPreset),
-            PresetPanelAction::ToggleLanguage => cx.emit(GuitarUiEvent::ToggleLanguage),
+            PresetPanelAction::SelectLanguage(language) => {
+                cx.emit(GuitarUiEvent::SetLanguage(*language))
+            }
             PresetPanelAction::Select(id) => cx.emit(GuitarUiEvent::SelectPreset(id.clone())),
             PresetPanelAction::SetName(name) => cx.emit(GuitarUiEvent::SetName(name.clone())),
             PresetPanelAction::SaveAs => cx.emit(GuitarUiEvent::SaveAs),
@@ -272,16 +275,9 @@ impl Model for GuitarUiState {
                         self.undo.write().record_batch(&preset.name, changes);
                     }
                     self.selected_id.set(preset.id.clone());
-                    self.selected_name.set(
-                        preset
-                            .display_name(self.language.get() == Language::SimplifiedChinese)
-                            .to_string(),
-                    );
-                    self.name_input.set(
-                        preset
-                            .display_name(self.language.get() == Language::SimplifiedChinese)
-                            .to_string(),
-                    );
+                    let display_name = preset_display_name(&preset, self.language.get());
+                    self.selected_name.set(display_name.clone());
+                    self.name_input.set(display_name);
                     self.is_user_preset
                         .set(self.manager.read().is_user_preset(id));
                     self.preset_choices
@@ -289,32 +285,29 @@ impl Model for GuitarUiState {
                     self.update_history_state();
                 }
             }
-            GuitarUiEvent::ToggleLanguage => {
-                let lang = if self.language.get() == Language::English {
-                    Language::SimplifiedChinese
-                } else {
-                    Language::English
-                };
+            GuitarUiEvent::SetLanguage(lang) => {
+                let lang = *lang;
                 self.language.set(lang);
-                self.language_atom.store(
-                    u8::from(lang == Language::SimplifiedChinese),
-                    Ordering::Relaxed,
-                );
+                self.language_atom.store(lang.index(), Ordering::Relaxed);
                 self.preset_choices
                     .set(preset_choices(&self.manager.read(), lang));
                 if let Some(preset) = self.manager.read().get_preset(&self.selected_id.get()) {
-                    let display = preset
-                        .display_name(lang == Language::SimplifiedChinese)
-                        .to_string();
+                    let display = preset_display_name(preset, lang);
                     self.selected_name.set(display.clone());
                     self.name_input.set(display);
                 }
+                redraw_custom_view(cx, "guitar-fretboard-widget");
             }
             GuitarUiEvent::SetName(name) => self.name_input.set(name.clone()),
             GuitarUiEvent::SaveAs => {
                 let name = self.name_input.get().trim().to_string();
                 let name = if name.is_empty() {
-                    "Custom Guitar".to_string()
+                    translate(
+                        self.language.get(),
+                        "guitar.preset.default-name",
+                        "Custom Guitar",
+                    )
+                    .to_owned()
                 } else {
                     name
                 };
@@ -522,19 +515,11 @@ pub fn create_vizia_guitar_editor(
     undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
     editor_state: Arc<ViziaState>,
 ) -> Option<Box<dyn Editor>> {
-    let lang = if language_atom.load(Ordering::Relaxed) == 1 {
-        Language::SimplifiedChinese
-    } else {
-        Language::English
-    };
+    let lang = Language::from_index(language_atom.load(Ordering::Relaxed));
     let selected_name = preset_manager
         .read()
         .get_preset("strat_clean_chime")
-        .map(|preset| {
-            preset
-                .display_name(lang == Language::SimplifiedChinese)
-                .to_string()
-        })
+        .map(|preset| preset_display_name(preset, lang))
         .unwrap_or_else(|| "Strat Clean Chime".to_string());
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
         // Signals must be created while Vizia is building this editor so their
@@ -615,26 +600,70 @@ pub fn create_vizia_guitar_editor(
             let discrete = discrete_controls.clone();
             VStack::new(cx, move |cx| {
                 let mode_options = vec![
-                    (0, I18n::mode_electric(lang).to_string()),
-                    (1, I18n::mode_acoustic(lang).to_string()),
+                    (
+                        0,
+                        translate(lang, "guitar.mode_electric", "Electric").to_string(),
+                    ),
+                    (
+                        1,
+                        translate(lang, "guitar.mode_acoustic", "Acoustic").to_string(),
+                    ),
                 ];
                 let pluck_options = vec![
-                    (0, I18n::pluck_plectrum(lang).to_string()),
-                    (1, I18n::pluck_finger(lang).to_string()),
+                    (
+                        0,
+                        translate(lang, "guitar.pluck_plectrum", "Plectrum").to_string(),
+                    ),
+                    (
+                        1,
+                        translate(lang, "guitar.pluck_finger", "Finger").to_string(),
+                    ),
                 ];
                 let pickup_position_options = vec![
-                    (0, I18n::pickup_bridge(lang).to_string()),
-                    (1, I18n::pickup_mid(lang).to_string()),
-                    (2, I18n::pickup_neck(lang).to_string()),
-                    (3, ui_text(lang, "Bridge + Neck", "琴桥 + 琴颈").to_string()),
-                    (4, ui_text(lang, "Bridge + Mid", "琴桥 + 中间").to_string()),
+                    (
+                        0,
+                        translate(lang, "guitar.pickup_bridge", "Bridge").to_string(),
+                    ),
+                    (1, translate(lang, "guitar.pickup_mid", "Mid").to_string()),
+                    (2, translate(lang, "guitar.pickup_neck", "Neck").to_string()),
+                    (
+                        3,
+                        translate(lang, "guitar.pickup.bridge-neck", "Bridge + Neck").to_string(),
+                    ),
+                    (
+                        4,
+                        translate(lang, "guitar.pickup.bridge-mid", "Bridge + Mid").to_string(),
+                    ),
                 ];
                 let pickup_type_options = vec![
-                    (0, I18n::pickup_single(lang).to_string()),
-                    (1, I18n::pickup_humbucker(lang).to_string()),
+                    (
+                        0,
+                        translate(lang, "guitar.pickup_single", "Single").to_string(),
+                    ),
+                    (
+                        1,
+                        translate(lang, "guitar.pickup_humbucker", "Humbucker").to_string(),
+                    ),
                 ];
                 let groove_options = (0..=4)
-                    .map(|index| (index, I18n::groove_name(index, lang).to_string()))
+                    .map(|index| {
+                        (
+                            index,
+                            match index {
+                                1 => {
+                                    translate(lang, "guitar.groove.1", "Folk 4/4 Basic").to_owned()
+                                }
+                                2 => {
+                                    translate(lang, "guitar.groove.2", "Ballad 6/8 Arp").to_owned()
+                                }
+                                3 => {
+                                    translate(lang, "guitar.groove.3", "Funk 16th Mute").to_owned()
+                                }
+                                4 => translate(lang, "guitar.groove.4", "Rock 8th Chug").to_owned(),
+                                _ => translate(lang, "guitar.groove.0", "Off (Manual)").to_owned(),
+                            },
+                        )
+                    })
                     .collect();
 
                 preset_panel(
@@ -650,7 +679,7 @@ pub fn create_vizia_guitar_editor(
                         can_redo,
                     },
                     PresetPanelLayout {
-                        preset_label: Some(I18n::preset(lang)),
+                        preset_label: Some(translate(lang, "guitar.preset_label", "Preset:")),
                         preset_width: 180.0,
                         name_width: 130.0,
                         save_as_width: 64.0,
@@ -663,10 +692,11 @@ pub fn create_vizia_guitar_editor(
 
                 HStack::new(cx, |cx| {
                     VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::rack_instrument(lang)).class("rack-title");
+                        Label::new(cx, translate(lang, "guitar.rack_instrument", "INSTRUMENT"))
+                            .class("rack-title");
                         discrete_selector(
                             cx,
-                            I18n::mode_param_label(lang),
+                            translate(lang, "guitar.mode_param_label", "Mode:"),
                             discrete.mode.clone(),
                             mode_options.clone(),
                             params.clone(),
@@ -674,7 +704,7 @@ pub fn create_vizia_guitar_editor(
                         );
                         discrete_selector(
                             cx,
-                            I18n::pluck_style_label(lang),
+                            translate(lang, "guitar.pluck_style_label", "Style:"),
                             discrete.pluck_style.clone(),
                             pluck_options.clone(),
                             params.clone(),
@@ -682,7 +712,7 @@ pub fn create_vizia_guitar_editor(
                         );
                         discrete_selector(
                             cx,
-                            I18n::pickup_pos_label(lang),
+                            translate(lang, "guitar.pickup_pos_label", "Pickup:"),
                             discrete.pickup_pos.clone(),
                             pickup_position_options.clone(),
                             params.clone(),
@@ -690,7 +720,7 @@ pub fn create_vizia_guitar_editor(
                         );
                         discrete_selector(
                             cx,
-                            I18n::pickup_type_label(lang),
+                            translate(lang, "guitar.pickup_type_label", "Coil:"),
                             discrete.pickup_type.clone(),
                             pickup_type_options.clone(),
                             params.clone(),
@@ -701,38 +731,80 @@ pub fn create_vizia_guitar_editor(
                     .width(Stretch(1.0));
 
                     VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::rack_pickup(lang)).class("rack-title");
-                        slider(cx, I18n::tone_label(lang), &params.tone);
-                        slider(cx, I18n::palm_mute_label(lang), &params.palm_mute);
-                        slider(cx, I18n::pluck_pos_label(lang), &params.pluck_pos);
-                        ParamButton::new(cx, &params.cab_enabled)
-                            .with_label(I18n::cab_enabled(lang));
+                        Label::new(cx, translate(lang, "guitar.rack_pickup", "PICKUP SELECTOR"))
+                            .class("rack-title");
+                        slider(
+                            cx,
+                            translate(lang, "guitar.tone_label", "Tone:"),
+                            &params.tone,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "guitar.palm_mute_label", "PalmMute:"),
+                            &params.palm_mute,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "guitar.pluck_pos_label", "PluckPos:"),
+                            &params.pluck_pos,
+                        );
+                        ParamButton::new(cx, &params.cab_enabled).with_label(translate(
+                            lang,
+                            "guitar.cab_enabled",
+                            "12\" Celestion Cab",
+                        ));
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
 
                     VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::rack_amp(lang)).class("rack-title");
-                        slider(cx, I18n::amp_drive_label(lang), &params.amp_drive);
-                        slider(cx, I18n::strum_speed_label(lang), &params.strum_speed);
-                        slider(cx, I18n::fret_buzz_label(lang), &params.fret_buzz);
-                        slider(cx, I18n::finger_squeak_label(lang), &params.finger_squeak);
+                        Label::new(cx, translate(lang, "guitar.rack_amp", "AMP & CABINET"))
+                            .class("rack-title");
+                        slider(
+                            cx,
+                            translate(lang, "guitar.amp_drive_label", "Overdrive:"),
+                            &params.amp_drive,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "guitar.strum_speed_label", "Speed:"),
+                            &params.strum_speed,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "guitar.fret_buzz_label", "Buzz:"),
+                            &params.fret_buzz,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "guitar.finger_squeak_label", "Squeak:"),
+                            &params.finger_squeak,
+                        );
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
 
                     VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::rack_master(lang)).class("rack-title");
+                        Label::new(cx, translate(lang, "guitar.rack_master", "GROOVE & MASTER"))
+                            .class("rack-title");
                         discrete_selector(
                             cx,
-                            I18n::groove_pattern_label(lang),
+                            translate(lang, "guitar.groove_pattern_label", "Pattern:"),
                             discrete.groove_pattern.clone(),
                             groove_options,
                             params.clone(),
                             DiscreteParam::GroovePattern,
                         );
-                        slider(cx, I18n::bpm_label(lang), &params.groove_bpm);
-                        slider(cx, I18n::master_gain_label(lang), &params.master_gain);
+                        slider(
+                            cx,
+                            translate(lang, "guitar.bpm_label", "BPM:"),
+                            &params.groove_bpm,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "guitar.master_gain_label", "Volume:"),
+                            &params.master_gain,
+                        );
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
@@ -748,7 +820,15 @@ pub fn create_vizia_guitar_editor(
                 )
                 .height(Pixels(220.0))
                 .width(Stretch(1.0));
-                Label::new(cx, I18n::fretboard_hint(lang)).class("hint-text");
+                Label::new(
+                    cx,
+                    translate(
+                        lang,
+                        "guitar.fretboard_hint",
+                        "Interactive 6-String Fretboard (Click or Drag frets to play):",
+                    ),
+                )
+                .class("hint-text");
             });
         });
     })

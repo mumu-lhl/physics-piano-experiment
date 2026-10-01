@@ -3,7 +3,7 @@
 //! Provides signature acoustic and electric tones modeled after iconic
 //! instruments, amps, and playing styles.
 
-use crate::gui::i18n::Language;
+use physics_ui::{Language, translate};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FactoryPreset {
@@ -59,30 +59,24 @@ impl FactoryPreset {
 
     pub fn name(&self, lang: Language) -> &'static str {
         match self {
-            FactoryPreset::MartinD28Fingerstyle => match lang {
-                Language::English => "Martin D-28 Fingerstyle",
-                Language::SimplifiedChinese => "马丁 D-28 指弹原声",
-            },
-            FactoryPreset::DreadnoughtStrummer => match lang {
-                Language::English => "Dreadnought Strummer",
-                Language::SimplifiedChinese => "D型琴扫弦伴奏",
-            },
-            FactoryPreset::StratCleanChime => match lang {
-                Language::English => "Strat Clean Chime",
-                Language::SimplifiedChinese => "芬达单线圈铃音清音",
-            },
-            FactoryPreset::TexasBluesBreakup => match lang {
-                Language::English => "Texas Blues Breakup",
-                Language::SimplifiedChinese => "德州布鲁斯微过载",
-            },
-            FactoryPreset::LesPaulWarmJazz => match lang {
-                Language::English => "Les Paul Warm Jazz",
-                Language::SimplifiedChinese => "LP 温暖爵士双线圈",
-            },
-            FactoryPreset::HeavyMetalChug => match lang {
-                Language::English => "Heavy Metal Chug",
-                Language::SimplifiedChinese => "重金属紧实闷音切弦",
-            },
+            FactoryPreset::MartinD28Fingerstyle => {
+                translate(lang, "guitar.factory-preset.0", "Martin D-28 Fingerstyle")
+            }
+            FactoryPreset::DreadnoughtStrummer => {
+                translate(lang, "guitar.factory-preset.1", "Dreadnought Strummer")
+            }
+            FactoryPreset::StratCleanChime => {
+                translate(lang, "guitar.factory-preset.2", "Strat Clean Chime")
+            }
+            FactoryPreset::TexasBluesBreakup => {
+                translate(lang, "guitar.factory-preset.3", "Texas Blues Breakup")
+            }
+            FactoryPreset::LesPaulWarmJazz => {
+                translate(lang, "guitar.factory-preset.4", "Les Paul Warm Jazz")
+            }
+            FactoryPreset::HeavyMetalChug => {
+                translate(lang, "guitar.factory-preset.5", "Heavy Metal Chug")
+            }
         }
     }
 

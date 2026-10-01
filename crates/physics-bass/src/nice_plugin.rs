@@ -137,13 +137,7 @@ pub struct PhysicsBass {
 impl Default for PhysicsBass {
     fn default() -> Self {
         let (gui_event_tx, gui_event_rx) = crossbeam_channel::bounded(256);
-        let language = if physics_ui::Language::from_system_locale()
-            == physics_ui::Language::SimplifiedChinese
-        {
-            1
-        } else {
-            0
-        };
+        let language = physics_ui::Language::from_system_locale().index();
         Self {
             params: Arc::new(PhysicsBassParams::default()),
             engine: BassEngine::new(44_100.0, BassMode::Electric, false),

@@ -6,13 +6,14 @@
 
 use super::skia_compat as vg;
 use super::skia_compat::CanvasExt;
+use physics_ui::{translate, translate_format};
 use std::f32::consts::PI;
 use std::sync::Arc;
 use vizia_plug::vizia::prelude::*;
 use vizia_plug::widgets::param_base::ParamWidgetBase;
 
-use crate::gui::i18n::Language;
 use crate::nice_plugin::PhysicsPianoParams;
+use physics_ui::Language;
 
 pub struct PianoLidWidget {
     params: Arc<PhysicsPianoParams>,
@@ -210,33 +211,36 @@ impl View for PianoLidWidget {
         canvas.fill_path(&hinge_circle, &hinge_paint);
 
         // 6. Header Label & Status Readout
-        let title_str = match self.language {
-            Language::English => "LID BAFFLE GEOMETRY",
-            Language::SimplifiedChinese => "琴盖声学开合物理示意",
-        };
-        let status_str = match self.language {
-            Language::English => {
-                if angle_deg < 5.0 {
-                    format!("{angle_deg:.0}° (Fully Closed)")
-                } else if angle_deg < 25.0 {
-                    format!("{angle_deg:.0}° (Short Stick)")
-                } else if angle_deg < 50.0 {
-                    format!("{angle_deg:.0}° (Half Open)")
-                } else {
-                    format!("{angle_deg:.0}° (Concert Grand)")
-                }
-            }
-            Language::SimplifiedChinese => {
-                if angle_deg < 5.0 {
-                    format!("{angle_deg:.0}° (完全闭合)")
-                } else if angle_deg < 25.0 {
-                    format!("{angle_deg:.0}° (短支柱/微开)")
-                } else if angle_deg < 50.0 {
-                    format!("{angle_deg:.0}° (半开支柱)")
-                } else {
-                    format!("{angle_deg:.0}° (音乐会全开)")
-                }
-            }
+        let title_str = translate(self.language, "piano.lid.title", "LID BAFFLE GEOMETRY");
+        let angle = format!("{angle_deg:.0}");
+        let status_str = if angle_deg < 5.0 {
+            translate_format(
+                self.language,
+                "piano.lid.status.closed",
+                "{angle}° (Fully Closed)",
+                &[("angle", &angle)],
+            )
+        } else if angle_deg < 25.0 {
+            translate_format(
+                self.language,
+                "piano.lid.status.short-stick",
+                "{angle}° (Short Stick)",
+                &[("angle", &angle)],
+            )
+        } else if angle_deg < 50.0 {
+            translate_format(
+                self.language,
+                "piano.lid.status.half-open",
+                "{angle}° (Half Open)",
+                &[("angle", &angle)],
+            )
+        } else {
+            translate_format(
+                self.language,
+                "piano.lid.status.concert",
+                "{angle}° (Concert Grand)",
+                &[("angle", &angle)],
+            )
         };
 
         let mut font_paint = vg::Paint::color(vg::Color::rgb(200, 205, 220));

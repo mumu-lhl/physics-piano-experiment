@@ -214,12 +214,7 @@ impl Default for PhysicsGuitar {
             GuitarInstrumentMode::Electric,
         );
 
-        let default_lang = Language::from_system_locale();
-        let lang_code = if default_lang == Language::SimplifiedChinese {
-            1
-        } else {
-            0
-        };
+        let lang_code = Language::from_system_locale().index();
 
         let active_frets_shared = Arc::new([
             AtomicU8::new(255),

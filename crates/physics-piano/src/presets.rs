@@ -3,7 +3,7 @@
 //! Provides signature acoustic grand and upright presets covering classical,
 //! pop/jazz, intimate chamber, vintage upright, and cinematic ambient aesthetics.
 
-use crate::gui::i18n::Language;
+use physics_ui::{Language, translate};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FactoryPreset {
@@ -58,30 +58,24 @@ impl FactoryPreset {
 
     pub fn name(&self, lang: Language) -> &'static str {
         match self {
-            FactoryPreset::SteinwayConcertD => match lang {
-                Language::English => "Steinway D Concert Grand",
-                Language::SimplifiedChinese => "施坦威 D-274 音乐会三角琴",
-            },
-            FactoryPreset::BrightPopGrand => match lang {
-                Language::English => "Bright Pop & Jazz Grand",
-                Language::SimplifiedChinese => "明亮流行爵士三角琴",
-            },
-            FactoryPreset::WarmIntimateChamber => match lang {
-                Language::English => "Warm Intimate Chamber",
-                Language::SimplifiedChinese => "温暖室内乐重奏琴",
-            },
-            FactoryPreset::VintageUpright => match lang {
-                Language::English => "Vintage Honky-Tonk Upright",
-                Language::SimplifiedChinese => "复古立式酒吧钢琴",
-            },
-            FactoryPreset::CinematicDream => match lang {
-                Language::English => "Cinematic Ambient Dream",
-                Language::SimplifiedChinese => "影视氛围梦境长音",
-            },
-            FactoryPreset::ClassicalPureSolo => match lang {
-                Language::English => "Classical Pure Solo",
-                Language::SimplifiedChinese => "纯净独奏古典琴",
-            },
+            FactoryPreset::SteinwayConcertD => {
+                translate(lang, "piano.factory-preset.0", "Steinway D Concert Grand")
+            }
+            FactoryPreset::BrightPopGrand => {
+                translate(lang, "piano.factory-preset.1", "Bright Pop & Jazz Grand")
+            }
+            FactoryPreset::WarmIntimateChamber => {
+                translate(lang, "piano.factory-preset.2", "Warm Intimate Chamber")
+            }
+            FactoryPreset::VintageUpright => {
+                translate(lang, "piano.factory-preset.3", "Vintage Honky-Tonk Upright")
+            }
+            FactoryPreset::CinematicDream => {
+                translate(lang, "piano.factory-preset.4", "Cinematic Ambient Dream")
+            }
+            FactoryPreset::ClassicalPureSolo => {
+                translate(lang, "piano.factory-preset.5", "Classical Pure Solo")
+            }
         }
     }
 

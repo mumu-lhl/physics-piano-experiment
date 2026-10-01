@@ -1,13 +1,13 @@
 use vizia_plug::vizia::prelude::*;
 
 use crate::Language;
-use crate::ui_text;
+use crate::translate;
 
 #[derive(Debug, Clone)]
 pub enum PresetPanelAction {
     Previous,
     Next,
-    ToggleLanguage,
+    SelectLanguage(Language),
     Select(String),
     SetName(String),
     SaveAs,
@@ -116,18 +116,35 @@ pub fn preset_panel(
                 .class("btn-cycle")
                 .on_press(|cx| cx.emit(PresetPanelAction::Next))
                 .width(Pixels(28.0));
-            Button::new(cx, move |cx| {
-                Label::new(
-                    cx,
-                    language.map(|lang| match lang {
-                        Language::English => "中文".to_string(),
-                        Language::SimplifiedChinese => "English".to_string(),
-                    }),
-                )
-            })
-            .class("btn-action")
-            .on_press(|cx| cx.emit(PresetPanelAction::ToggleLanguage))
-            .width(Pixels(60.0));
+            let available_languages: Vec<_> = Language::available().collect();
+            Dropdown::new(
+                cx,
+                move |cx| {
+                    Button::new(cx, move |cx| {
+                        Label::new(cx, language.map(|locale| locale.native_name().to_owned()))
+                    })
+                    .class("btn-action")
+                    .on_press(|cx| cx.emit(PopupEvent::Switch))
+                    .width(Pixels(90.0));
+                },
+                move |cx| {
+                    for locale in available_languages.iter().copied() {
+                        let label = locale.native_name().to_owned();
+                        Button::new(cx, move |cx| {
+                            Label::new(cx, label.clone())
+                                .alignment(Alignment::Left)
+                                .width(Stretch(1.0))
+                        })
+                        .class("preset-item")
+                        .on_press(move |cx| {
+                            cx.emit(PresetPanelAction::SelectLanguage(locale));
+                            cx.emit(PopupEvent::Close);
+                        })
+                        .width(Pixels(90.0));
+                    }
+                },
+            )
+            .width(Pixels(90.0));
 
             right_accessory(cx);
         })
@@ -142,8 +159,8 @@ pub fn preset_panel(
 
     HStack::new(cx, move |cx| {
         let mut name_textbox = Textbox::new(cx, name_input.clone())
-            .name(ui_text(lang, "Preset name", "预设名称"))
-            .placeholder(ui_text(lang, "Preset name", "预设名称"))
+            .name(translate(lang, "shared.preset-name", "Preset name"))
+            .placeholder(translate(lang, "shared.preset-name", "Preset name"))
             .on_edit(|cx, text| cx.emit(PresetPanelAction::SetName(text)));
         let name_textbox_entity = name_textbox.entity();
         name_textbox
@@ -168,21 +185,25 @@ pub fn preset_panel(
         name_textbox
             .width(Pixels(layout.name_width))
             .height(Pixels(26.0));
-        Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Save As", "另存为")))
-            .class("btn-action")
-            .on_press(|cx| cx.emit(PresetPanelAction::SaveAs))
-            .width(Pixels(layout.save_as_width));
-        Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Rename", "重命名")))
-            .class("btn-action")
-            .on_press(|cx| cx.emit(PresetPanelAction::Rename))
-            .disabled(is_user_preset.clone().map(|is_user| !is_user))
-            .toggle_class(
-                "btn-disabled",
-                is_user_preset.clone().map(|is_user| !is_user),
-            )
-            .width(Pixels(layout.rename_width));
         Button::new(cx, |cx| {
-            Label::new(cx, ui_text(lang, "Overwrite", "覆盖保存"))
+            Label::new(cx, translate(lang, "shared.save-as", "Save As"))
+        })
+        .class("btn-action")
+        .on_press(|cx| cx.emit(PresetPanelAction::SaveAs))
+        .width(Pixels(layout.save_as_width));
+        Button::new(cx, |cx| {
+            Label::new(cx, translate(lang, "shared.rename", "Rename"))
+        })
+        .class("btn-action")
+        .on_press(|cx| cx.emit(PresetPanelAction::Rename))
+        .disabled(is_user_preset.clone().map(|is_user| !is_user))
+        .toggle_class(
+            "btn-disabled",
+            is_user_preset.clone().map(|is_user| !is_user),
+        )
+        .width(Pixels(layout.rename_width));
+        Button::new(cx, |cx| {
+            Label::new(cx, translate(lang, "shared.overwrite", "Overwrite"))
         })
         .class("btn-action")
         .on_press(|cx| cx.emit(PresetPanelAction::Overwrite))
@@ -192,27 +213,33 @@ pub fn preset_panel(
             is_user_preset.clone().map(|is_user| !is_user),
         )
         .width(Pixels(layout.overwrite_width));
-        Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Delete", "删除")))
-            .class("btn-action")
-            .on_press(|cx| cx.emit(PresetPanelAction::Delete))
-            .disabled(is_user_preset.clone().map(|is_user| !is_user))
-            .toggle_class(
-                "btn-disabled",
-                is_user_preset.clone().map(|is_user| !is_user),
-            )
-            .width(Pixels(layout.delete_width));
-        Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Undo", "撤销")))
-            .class("btn-action")
-            .on_press(|cx| cx.emit(PresetPanelAction::Undo))
-            .disabled(can_undo.clone().map(|enabled| !enabled))
-            .toggle_class("btn-disabled", can_undo.clone().map(|enabled| !enabled))
-            .width(Pixels(48.0));
-        Button::new(cx, |cx| Label::new(cx, ui_text(lang, "Redo", "重做")))
-            .class("btn-action")
-            .on_press(|cx| cx.emit(PresetPanelAction::Redo))
-            .disabled(can_redo.clone().map(|enabled| !enabled))
-            .toggle_class("btn-disabled", can_redo.clone().map(|enabled| !enabled))
-            .width(Pixels(48.0));
+        Button::new(cx, |cx| {
+            Label::new(cx, translate(lang, "shared.delete", "Delete"))
+        })
+        .class("btn-action")
+        .on_press(|cx| cx.emit(PresetPanelAction::Delete))
+        .disabled(is_user_preset.clone().map(|is_user| !is_user))
+        .toggle_class(
+            "btn-disabled",
+            is_user_preset.clone().map(|is_user| !is_user),
+        )
+        .width(Pixels(layout.delete_width));
+        Button::new(cx, |cx| {
+            Label::new(cx, translate(lang, "shared.undo", "Undo"))
+        })
+        .class("btn-action")
+        .on_press(|cx| cx.emit(PresetPanelAction::Undo))
+        .disabled(can_undo.clone().map(|enabled| !enabled))
+        .toggle_class("btn-disabled", can_undo.clone().map(|enabled| !enabled))
+        .width(Pixels(48.0));
+        Button::new(cx, |cx| {
+            Label::new(cx, translate(lang, "shared.redo", "Redo"))
+        })
+        .class("btn-action")
+        .on_press(|cx| cx.emit(PresetPanelAction::Redo))
+        .disabled(can_redo.clone().map(|enabled| !enabled))
+        .toggle_class("btn-disabled", can_redo.clone().map(|enabled| !enabled))
+        .width(Pixels(48.0));
     })
     .height(Pixels(30.0))
     .horizontal_gap(Pixels(8.0));

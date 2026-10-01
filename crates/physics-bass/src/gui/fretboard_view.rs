@@ -8,6 +8,7 @@
 use crate::nice_plugin::{GuiBassEvent, PhysicsBassParams};
 use physics_ui::skia_compat as vg;
 use physics_ui::skia_compat::CanvasExt;
+use physics_ui::{Language, translate};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use vizia_plug::vizia::prelude::*;
@@ -178,7 +179,7 @@ impl View for BassFretboardWidget {
         let (board_x, nut_width, fret_span, board_width) = Self::board_geometry(&bounds);
         let row_height = bounds.h / STRING_COUNT as f32;
         let five_string = self.params.five_string.value();
-        let chinese = self.language.load(Ordering::Relaxed) == 1;
+        let language = Language::from_index(self.language.load(Ordering::Relaxed));
 
         let mut background = vg::Path::new();
         background.rounded_rect(bounds.x, bounds.y, bounds.w, bounds.h, 8.0);
@@ -229,12 +230,10 @@ impl View for BassFretboardWidget {
         canvas.fill_text(
             bounds.x + 34.0,
             bounds.y + 14.0,
-            if chinese {
-                if five_string { "五弦" } else { "四弦" }
-            } else if five_string {
-                "5-STRING"
+            if five_string {
+                translate(language, "bass.fretboard.five-string", "5-STRING")
             } else {
-                "4-STRING"
+                translate(language, "bass.fretboard.four-string", "4-STRING")
             },
             &hint_paint,
         );
@@ -309,11 +308,11 @@ impl View for BassFretboardWidget {
         canvas.fill_text(
             bounds.x + 8.0,
             bounds.y + bounds.h - 8.0,
-            if chinese {
-                "点击或拖动琴弦演奏 · 空弦 + 24 品"
-            } else {
-                "click or drag strings to play · open notes + 24 frets"
-            },
+            translate(
+                language,
+                "bass.fretboard.hint",
+                "click or drag strings to play · open notes + 24 frets",
+            ),
             &footer,
         );
     }

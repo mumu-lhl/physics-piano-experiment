@@ -6,6 +6,7 @@
 use crate::nice_plugin::GuiDrumEvent;
 use physics_ui::skia_compat as vg;
 use physics_ui::skia_compat::CanvasExt;
+use physics_ui::{Language, translate};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use vizia_plug::vizia::prelude::*;
@@ -210,18 +211,14 @@ impl View for DrumPadWidget {
         background.rounded_rect(bounds.x, bounds.y, bounds.w, bounds.h, 8.0);
         canvas.fill_path(&background, &vg::Paint::color(vg::Color::rgb(13, 16, 22)));
 
-        let chinese = self.language.load(Ordering::Relaxed) == 1;
+        let language = Language::from_index(self.language.load(Ordering::Relaxed));
         let mut title = vg::Paint::color(vg::Color::rgb(136, 149, 172));
         title.set_font_size(10.0);
         title.set_text_align(vg::Align::Left);
         canvas.fill_text(
             bounds.x + 14.0,
             bounds.y + 18.0,
-            if chinese {
-                "通用 MIDI 鼓组"
-            } else {
-                "MIDI DRUM MAP"
-            },
+            translate(language, "drum.pad-map.title", "MIDI DRUM MAP"),
             &title,
         );
 
@@ -267,8 +264,27 @@ impl View for DrumPadWidget {
 
             let (label_r, label_g, label_b) = pad_label_rgb(pressed);
             let mut label = vg::Paint::color(vg::Color::rgb(label_r, label_g, label_b));
-            let (top_line, bottom_line) = pad.label.rsplit_once(' ').unwrap_or((pad.label, ""));
-            label.set_font_size(if top_line.len() > 9 { 10.0 } else { 11.0 });
+            let localized_label = match pad.note {
+                36 => translate(language, "drum.pad.36", "Bass Drum"),
+                38 => translate(language, "drum.pad.38", "Acoustic Snare"),
+                41 => translate(language, "drum.pad.41", "Low Floor Tom"),
+                42 => translate(language, "drum.pad.42", "Closed Hi-Hat"),
+                43 => translate(language, "drum.pad.43", "High Floor Tom"),
+                44 => translate(language, "drum.pad.44", "Pedal Hi-Hat"),
+                45 => translate(language, "drum.pad.45", "Low Tom"),
+                46 => translate(language, "drum.pad.46", "Open Hi-Hat"),
+                49 => translate(language, "drum.pad.49", "Crash Cymbal"),
+                51 => translate(language, "drum.pad.51", "Ride Cymbal"),
+                _ => pad.label,
+            };
+            let (top_line, bottom_line) = localized_label
+                .rsplit_once(' ')
+                .unwrap_or((localized_label, ""));
+            label.set_font_size(if top_line.chars().count() > 9 {
+                10.0
+            } else {
+                11.0
+            });
             label.set_text_align(vg::Align::Center);
             canvas.fill_text(center_x, center_y - 2.0, top_line, &label);
             canvas.fill_text(center_x, center_y + 10.0, bottom_line, &label);
@@ -280,11 +296,11 @@ impl View for DrumPadWidget {
         canvas.fill_text(
             bounds.x + bounds.w - 14.0,
             bounds.y + bounds.h - 10.0,
-            if chinese {
-                "35/36 底鼓 · 38 军鼓 · 41–51 套鼓"
-            } else {
-                "35/36 kick · 38 snare · 41–51 kit"
-            },
+            translate(
+                language,
+                "drum.pad-map.hint",
+                "35/36 kick · 38 snare · 41–51 kit",
+            ),
             &footer,
         );
     }

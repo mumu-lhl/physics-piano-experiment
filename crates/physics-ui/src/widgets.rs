@@ -1,10 +1,10 @@
 use nice_plug::prelude::{Param, ParamPtr};
-use physics_presets::PresetManager;
+use physics_presets::{Preset, PresetManager};
 use std::sync::Arc;
 use vizia_plug::vizia::prelude::*;
 use vizia_plug::widgets::*;
 
-use crate::Language;
+use crate::{Language, translate};
 
 #[derive(Default)]
 struct SliderRestoreState {
@@ -64,14 +64,6 @@ impl SliderRestoreState {
         self.active_start = None;
         self.completed_start = None;
         point
-    }
-}
-
-/// Selects a localized string without allocating.
-pub fn ui_text(lang: Language, english: &'static str, chinese: &'static str) -> &'static str {
-    match lang {
-        Language::English => english,
-        Language::SimplifiedChinese => chinese,
     }
 }
 
@@ -305,15 +297,89 @@ pub fn preset_choices(manager: &PresetManager, lang: Language) -> Vec<(String, S
     manager
         .presets()
         .iter()
-        .map(|preset| {
-            (
-                preset.id.clone(),
-                preset
-                    .display_name(lang == Language::SimplifiedChinese)
-                    .to_string(),
-            )
-        })
+        .map(|preset| (preset.id.clone(), preset_display_name(preset, lang)))
         .collect()
+}
+
+/// Resolves a factory preset through gettext while leaving user-authored names unchanged.
+pub fn preset_display_name(preset: &Preset, lang: Language) -> String {
+    if preset.is_factory {
+        factory_preset_name(&preset.id, lang)
+            .unwrap_or(&preset.name)
+            .to_owned()
+    } else {
+        preset.name.clone()
+    }
+}
+
+fn factory_preset_name(id: &str, lang: Language) -> Option<&'static str> {
+    Some(match id {
+        "steinway_concert_d" => translate(
+            lang,
+            "preset.name.steinway_concert_d",
+            "Steinway D Concert Grand",
+        ),
+        "bright_pop_grand" => translate(
+            lang,
+            "preset.name.bright_pop_grand",
+            "Bright Pop & Jazz Grand",
+        ),
+        "warm_intimate_chamber" => translate(
+            lang,
+            "preset.name.warm_intimate_chamber",
+            "Warm Intimate Chamber",
+        ),
+        "vintage_upright" => translate(
+            lang,
+            "preset.name.vintage_upright",
+            "Vintage Honky-Tonk Upright",
+        ),
+        "cinematic_dream" => translate(
+            lang,
+            "preset.name.cinematic_dream",
+            "Cinematic Ambient Dream",
+        ),
+        "classical_pure_solo" => translate(
+            lang,
+            "preset.name.classical_pure_solo",
+            "Classical Pure Solo",
+        ),
+        "strat_clean_chime" => {
+            translate(lang, "preset.name.strat_clean_chime", "Strat Clean Chime")
+        }
+        "dreadnought_acoustic_fingerstyle" => translate(
+            lang,
+            "preset.name.dreadnought_acoustic_fingerstyle",
+            "Martin D-28 Fingerstyle",
+        ),
+        "blues_overdrive_crunch" => translate(
+            lang,
+            "preset.name.blues_overdrive_crunch",
+            "Texas Blues Breakup",
+        ),
+        "warm_jazz_archtop" => {
+            translate(lang, "preset.name.warm_jazz_archtop", "Les Paul Warm Jazz")
+        }
+        "heavy_palm_mute_metal" => translate(
+            lang,
+            "preset.name.heavy_palm_mute_metal",
+            "Heavy Metal Chug",
+        ),
+        "ambient_dreamy_pluck" => translate(
+            lang,
+            "preset.name.ambient_dreamy_pluck",
+            "Dreadnought Strummer",
+        ),
+        "bass_finger_punch" => translate(lang, "preset.name.bass_finger_punch", "Finger Punch"),
+        "bass_pick_attack" => translate(lang, "preset.name.bass_pick_attack", "Picked Attack"),
+        "bass_slap_five" => translate(lang, "preset.name.bass_slap_five", "Five String Slap"),
+        "bass_upright_body" => translate(lang, "preset.name.bass_upright_body", "Upright Body"),
+        "drum_studio_kit" => translate(lang, "preset.name.drum_studio_kit", "Studio Kit"),
+        "drum_dry_tight" => translate(lang, "preset.name.drum_dry_tight", "Dry Tight"),
+        "drum_big_room" => translate(lang, "preset.name.drum_big_room", "Big Room"),
+        "drum_low_punch" => translate(lang, "preset.name.drum_low_punch", "Low Punch"),
+        _ => return None,
+    })
 }
 
 /// Requests a redraw of a named custom Vizia view, if it exists.

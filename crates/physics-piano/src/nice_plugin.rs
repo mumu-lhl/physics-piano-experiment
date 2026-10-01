@@ -260,12 +260,7 @@ pub struct PhysicsPiano {
 impl Default for PhysicsPiano {
     fn default() -> Self {
         let (tx, rx) = crossbeam_channel::bounded(256);
-        let default_lang = Language::from_system_locale();
-        let lang_code = if default_lang == Language::SimplifiedChinese {
-            1
-        } else {
-            0
-        };
+        let lang_code = Language::from_system_locale().index();
 
         Self {
             params: Arc::new(PhysicsPianoParams::default()),

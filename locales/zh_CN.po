@@ -1,0 +1,754 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: physics-instruments\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-01 15:00+0800\n"
+"PO-Revision-Date: 2026-10-01 00:00+0000\n"
+"Last-Translator: Translation contributors\n"
+"Language-Team: Simplified Chinese\n"
+"Language: zh_CN\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgctxt "meta.language-name"
+msgid "Language name"
+msgstr "简体中文"
+
+msgctxt "shared.preset-name"
+msgid "Preset name"
+msgstr "预设名称"
+
+msgctxt "shared.save-as"
+msgid "Save As"
+msgstr "另存为"
+
+msgctxt "shared.rename"
+msgid "Rename"
+msgstr "重命名"
+
+msgctxt "shared.overwrite"
+msgid "Overwrite"
+msgstr "覆盖保存"
+
+msgctxt "shared.delete"
+msgid "Delete"
+msgstr "删除"
+
+msgctxt "shared.undo"
+msgid "Undo"
+msgstr "撤销"
+
+msgctxt "shared.redo"
+msgid "Redo"
+msgstr "重做"
+
+msgctxt "preset.name.steinway_concert_d"
+msgid "Steinway D Concert Grand"
+msgstr "施坦威 D-274 音乐会三角琴"
+
+msgctxt "preset.name.bright_pop_grand"
+msgid "Bright Pop & Jazz Grand"
+msgstr "明亮流行爵士三角琴"
+
+msgctxt "preset.name.warm_intimate_chamber"
+msgid "Warm Intimate Chamber"
+msgstr "温暖室内乐重奏琴"
+
+msgctxt "preset.name.vintage_upright"
+msgid "Vintage Honky-Tonk Upright"
+msgstr "复古立式酒吧钢琴"
+
+msgctxt "preset.name.cinematic_dream"
+msgid "Cinematic Ambient Dream"
+msgstr "影视氛围梦境长音"
+
+msgctxt "preset.name.classical_pure_solo"
+msgid "Classical Pure Solo"
+msgstr "纯净独奏古典琴"
+
+msgctxt "preset.name.strat_clean_chime"
+msgid "Strat Clean Chime"
+msgstr "芬达单线圈铃音清音"
+
+msgctxt "preset.name.dreadnought_acoustic_fingerstyle"
+msgid "Martin D-28 Fingerstyle"
+msgstr "马丁 D-28 指弹原声"
+
+msgctxt "preset.name.blues_overdrive_crunch"
+msgid "Texas Blues Breakup"
+msgstr "德州布鲁斯微过载"
+
+msgctxt "preset.name.warm_jazz_archtop"
+msgid "Les Paul Warm Jazz"
+msgstr "LP 温暖爵士双线圈"
+
+msgctxt "preset.name.heavy_palm_mute_metal"
+msgid "Heavy Metal Chug"
+msgstr "重金属紧实闷音切弦"
+
+msgctxt "preset.name.ambient_dreamy_pluck"
+msgid "Dreadnought Strummer"
+msgstr "D型琴扫弦伴奏"
+
+msgctxt "preset.name.bass_finger_punch"
+msgid "Finger Punch"
+msgstr "指弹冲击"
+
+msgctxt "preset.name.bass_pick_attack"
+msgid "Picked Attack"
+msgstr "拨片攻击"
+
+msgctxt "preset.name.bass_slap_five"
+msgid "Five String Slap"
+msgstr "五弦击弦"
+
+msgctxt "preset.name.bass_upright_body"
+msgid "Upright Body"
+msgstr "木贝斯共鸣箱"
+
+msgctxt "preset.name.drum_studio_kit"
+msgid "Studio Kit"
+msgstr "录音棚套鼓"
+
+msgctxt "preset.name.drum_dry_tight"
+msgid "Dry Tight"
+msgstr "干脆紧实"
+
+msgctxt "preset.name.drum_big_room"
+msgid "Big Room"
+msgstr "大空间"
+
+msgctxt "preset.name.drum_low_punch"
+msgid "Low Punch"
+msgstr "低频冲击"
+
+msgctxt "piano.preset.default-name"
+msgid "Custom Piano"
+msgstr "自定义钢琴"
+
+msgctxt "piano.rack_pedals"
+msgid "PEDALS & MECHANICS"
+msgstr "踏板与微观机械"
+
+msgctxt "piano.sustain"
+msgid "Sustain:"
+msgstr "延音踏板:"
+
+msgctxt "piano.key_action"
+msgid "Key Action:"
+msgstr "琴键撞击:"
+
+msgctxt "piano.damper_noise"
+msgid "Damper Noise:"
+msgstr "制音器摩擦:"
+
+msgctxt "piano.pedal_shock"
+msgid "Pedal Shock:"
+msgstr "铸铁板冲击:"
+
+msgctxt "piano.rack_string"
+msgid "STRING & HAMMER"
+msgstr "琴弦与琴槌物理"
+
+msgctxt "piano.inharmonicity"
+msgid "Inharmonicity B:"
+msgstr "非谐波度 B:"
+
+msgctxt "piano.hammer_hardness"
+msgid "Hammer Hardness:"
+msgstr "琴槌硬度:"
+
+msgctxt "piano.unison_detune"
+msgid "Unison Detune:"
+msgstr "同音弦微调:"
+
+msgctxt "piano.phantom_partials"
+msgid "Phantom Partials:"
+msgstr "幻象泛音:"
+
+msgctxt "piano.rack_spatial"
+msgid "SPATIAL MICS & LID"
+msgstr "多拾音麦位与琴盖"
+
+msgctxt "piano.mic_close"
+msgid "Close Mic:"
+msgstr "近场麦位:"
+
+msgctxt "piano.mic_player"
+msgid "Player Mic:"
+msgstr "演奏者麦位:"
+
+msgctxt "piano.mic_ambient"
+msgid "Ambient Mic:"
+msgstr "环境空间麦:"
+
+msgctxt "piano.lid_angle"
+msgid "Lid Angle:"
+msgstr "琴盖角度:"
+
+msgctxt "piano.rack_output"
+msgid "OUTPUT"
+msgstr "总输出"
+
+msgctxt "piano.master_gain"
+msgid "Master Gain:"
+msgstr "主输出增益:"
+
+msgctxt "piano.velocity_curve"
+msgid "Touch Curve:"
+msgstr "触键力度曲线:"
+
+msgctxt "piano.una_corda"
+msgid "Una Corda"
+msgstr "柔音踏板"
+
+msgctxt "piano.keyboard_hint"
+msgid "Virtual 88-Key Keyboard (A0-C8) | Play via mouse or QWERTY keys (A-K / W,E,T,Y,U), Z/X to shift octave"
+msgstr "88键虚拟物理键盘 (A0-C8) | 支持鼠标点击或电脑键盘弹奏 (A-K / W,E,T,Y,U)，按 Z/X 切换八度"
+
+msgctxt "piano.lid.title"
+msgid "LID BAFFLE GEOMETRY"
+msgstr "琴盖声学开合物理示意"
+
+#, rust-format
+msgctxt "piano.lid.status.closed"
+msgid "{angle}° (Fully Closed)"
+msgstr "{angle}° (完全闭合)"
+
+#, rust-format
+msgctxt "piano.lid.status.short-stick"
+msgid "{angle}° (Short Stick)"
+msgstr "{angle}° (短支柱/微开)"
+
+#, rust-format
+msgctxt "piano.lid.status.half-open"
+msgid "{angle}° (Half Open)"
+msgstr "{angle}° (半开支柱)"
+
+#, rust-format
+msgctxt "piano.lid.status.concert"
+msgid "{angle}° (Concert Grand)"
+msgstr "{angle}° (音乐会全开)"
+
+msgctxt "piano.mics.title"
+msgid "SPATIAL ACOUSTIC SOUNDSTAGE"
+msgstr "多麦位空间声场物理布局"
+
+#, rust-format
+msgctxt "piano.mics.readout"
+msgid "Close: {close}dB | Player: {player}dB | Hall: {hall}dB"
+msgstr "近场: {close}dB | 演奏者: {player}dB | 空间厅堂: {hall}dB"
+
+msgctxt "piano.mics.player"
+msgid "Player (Binaural)"
+msgstr "演奏者耳位"
+
+msgctxt "piano.mics.hall"
+msgid "Decca Tree (Hall)"
+msgstr "空间厅堂阵列"
+
+msgctxt "piano.factory-preset.0"
+msgid "Steinway D Concert Grand"
+msgstr "施坦威 D-274 音乐会三角琴"
+
+msgctxt "piano.factory-preset.1"
+msgid "Bright Pop & Jazz Grand"
+msgstr "明亮流行爵士三角琴"
+
+msgctxt "piano.factory-preset.2"
+msgid "Warm Intimate Chamber"
+msgstr "温暖室内乐重奏琴"
+
+msgctxt "piano.factory-preset.3"
+msgid "Vintage Honky-Tonk Upright"
+msgstr "复古立式酒吧钢琴"
+
+msgctxt "piano.factory-preset.4"
+msgid "Cinematic Ambient Dream"
+msgstr "影视氛围梦境长音"
+
+msgctxt "piano.factory-preset.5"
+msgid "Classical Pure Solo"
+msgstr "纯净独奏古典琴"
+
+msgctxt "guitar.preset.default-name"
+msgid "Custom Guitar"
+msgstr "自定义吉他"
+
+msgctxt "guitar.mode_electric"
+msgid "Electric"
+msgstr "电吉他"
+
+msgctxt "guitar.mode_acoustic"
+msgid "Acoustic"
+msgstr "木吉他"
+
+msgctxt "guitar.pluck_plectrum"
+msgid "Plectrum"
+msgstr "拨片"
+
+msgctxt "guitar.pluck_finger"
+msgid "Finger"
+msgstr "指弹"
+
+msgctxt "guitar.pickup_bridge"
+msgid "Bridge"
+msgstr "琴桥"
+
+msgctxt "guitar.pickup_mid"
+msgid "Mid"
+msgstr "中间"
+
+msgctxt "guitar.pickup_neck"
+msgid "Neck"
+msgstr "琴颈"
+
+msgctxt "guitar.pickup.bridge-neck"
+msgid "Bridge + Neck"
+msgstr "琴桥 + 琴颈"
+
+msgctxt "guitar.pickup.bridge-mid"
+msgid "Bridge + Mid"
+msgstr "琴桥 + 中间"
+
+msgctxt "guitar.pickup_single"
+msgid "Single"
+msgstr "单线圈"
+
+msgctxt "guitar.pickup_humbucker"
+msgid "Humbucker"
+msgstr "双线圈"
+
+msgctxt "guitar.groove.1"
+msgid "Folk 4/4 Basic"
+msgstr "民谣 4/4 扫弦"
+
+msgctxt "guitar.groove.2"
+msgid "Ballad 6/8 Arp"
+msgstr "慢摇 6/8 分解"
+
+msgctxt "guitar.groove.3"
+msgid "Funk 16th Mute"
+msgstr "放克 16分 切音"
+
+msgctxt "guitar.groove.4"
+msgid "Rock 8th Chug"
+msgstr "摇滚 8分 闷音"
+
+msgctxt "guitar.groove.0"
+msgid "Off (Manual)"
+msgstr "关闭 (自由演奏)"
+
+msgctxt "guitar.preset_label"
+msgid "Preset:"
+msgstr "出厂预设:"
+
+msgctxt "guitar.rack_instrument"
+msgid "INSTRUMENT"
+msgstr "乐器模式"
+
+msgctxt "guitar.mode_param_label"
+msgid "Mode:"
+msgstr "模式:"
+
+msgctxt "guitar.pluck_style_label"
+msgid "Style:"
+msgstr "拨弦方式:"
+
+msgctxt "guitar.pickup_pos_label"
+msgid "Pickup:"
+msgstr "拾音位:"
+
+msgctxt "guitar.pickup_type_label"
+msgid "Coil:"
+msgstr "拾音结构:"
+
+msgctxt "guitar.rack_pickup"
+msgid "PICKUP SELECTOR"
+msgstr "拾音器选择"
+
+msgctxt "guitar.tone_label"
+msgid "Tone:"
+msgstr "音色旋钮:"
+
+msgctxt "guitar.palm_mute_label"
+msgid "PalmMute:"
+msgstr "掌心制音:"
+
+msgctxt "guitar.pluck_pos_label"
+msgid "PluckPos:"
+msgstr "拨弦位置:"
+
+msgctxt "guitar.cab_enabled"
+msgid "12\" Celestion Cab"
+msgstr "12寸箱体模拟"
+
+msgctxt "guitar.rack_amp"
+msgid "AMP & CABINET"
+msgstr "电子管音箱与箱体"
+
+msgctxt "guitar.amp_drive_label"
+msgid "Overdrive:"
+msgstr "前级过载:"
+
+msgctxt "guitar.strum_speed_label"
+msgid "Speed:"
+msgstr "扫弦速度:"
+
+msgctxt "guitar.fret_buzz_label"
+msgid "Buzz:"
+msgstr "打品碰撞:"
+
+msgctxt "guitar.finger_squeak_label"
+msgid "Squeak:"
+msgstr "指擦杂音:"
+
+msgctxt "guitar.rack_master"
+msgid "GROOVE & MASTER"
+msgstr "伴奏律动与主输出"
+
+msgctxt "guitar.groove_pattern_label"
+msgid "Pattern:"
+msgstr "伴奏风格:"
+
+msgctxt "guitar.bpm_label"
+msgid "BPM:"
+msgstr "伴奏速度:"
+
+msgctxt "guitar.master_gain_label"
+msgid "Volume:"
+msgstr "主音量:"
+
+msgctxt "guitar.fretboard_hint"
+msgid "Interactive 6-String Fretboard (Click or Drag frets to play):"
+msgstr "6弦交互式物理指板 (鼠标点击或拖拽品位弹奏):"
+
+msgctxt "guitar.factory-preset.0"
+msgid "Martin D-28 Fingerstyle"
+msgstr "马丁 D-28 指弹原声"
+
+msgctxt "guitar.factory-preset.1"
+msgid "Dreadnought Strummer"
+msgstr "D型琴扫弦伴奏"
+
+msgctxt "guitar.factory-preset.2"
+msgid "Strat Clean Chime"
+msgstr "芬达单线圈铃音清音"
+
+msgctxt "guitar.factory-preset.3"
+msgid "Texas Blues Breakup"
+msgstr "德州布鲁斯微过载"
+
+msgctxt "guitar.factory-preset.4"
+msgid "Les Paul Warm Jazz"
+msgstr "LP 温暖爵士双线圈"
+
+msgctxt "guitar.factory-preset.5"
+msgid "Heavy Metal Chug"
+msgstr "重金属紧实闷音切弦"
+
+msgctxt "bass.preset.default-name"
+msgid "Custom Bass"
+msgstr "自定义贝斯"
+
+msgctxt "bass.title"
+msgid "PHYSICS BASS"
+msgstr "物理建模贝斯"
+
+msgctxt "bass.subtitle"
+msgid "FDTD stiff string · fret contact · finite pickup aperture · body modes"
+msgstr "FDTD 刚性弦 · 品丝接触 · 有限拾音孔径 · 琴体模态"
+
+msgctxt "bass.audition"
+msgid "Click or drag the fretboard below to audition"
+msgstr "点击或拖动下方指板即可试听"
+
+msgctxt "bass.preset"
+msgid "Preset:"
+msgstr "音色预设:"
+
+msgctxt "bass.instrument"
+msgid "INSTRUMENT"
+msgstr "乐器"
+
+msgctxt "bass.model"
+msgid "Model"
+msgstr "模型"
+
+msgctxt "bass.electric"
+msgid "Electric"
+msgstr "电贝斯"
+
+msgctxt "bass.acoustic"
+msgid "Acoustic"
+msgstr "木贝斯"
+
+msgctxt "bass.exciter"
+msgid "Exciter"
+msgstr "激励方式"
+
+msgctxt "bass.finger"
+msgid "Finger"
+msgstr "指弹"
+
+msgctxt "bass.pick"
+msgid "Pick"
+msgstr "拨片"
+
+msgctxt "bass.slap"
+msgid "Slap"
+msgstr "击弦"
+
+msgctxt "bass.tuning"
+msgid "Tuning"
+msgstr "调弦"
+
+msgctxt "bass.five_string"
+msgid "Five-string B0"
+msgstr "五弦低音 B0"
+
+msgctxt "bass.string_pickup"
+msgid "STRING / PICKUP"
+msgstr "琴弦 / 拾音器"
+
+msgctxt "bass.pluck_position"
+msgid "Pluck position"
+msgstr "拨弦位置"
+
+msgctxt "bass.pickup_position"
+msgid "Pickup position"
+msgstr "拾音器位置"
+
+msgctxt "bass.tone"
+msgid "Tone"
+msgstr "音色"
+
+msgctxt "bass.contact_body"
+msgid "CONTACT / BODY"
+msgstr "接触 / 琴体"
+
+msgctxt "bass.fret_buzz"
+msgid "Fret buzz"
+msgstr "品丝杂音"
+
+msgctxt "bass.body_mix"
+msgid "Body mix"
+msgstr "琴体混合"
+
+msgctxt "bass.slap_note"
+msgid "Slap uses the same bounded contact state as the FDTD string"
+msgstr "击弦使用与 FDTD 琴弦相同的有界接触状态"
+
+msgctxt "bass.output"
+msgid "OUTPUT"
+msgstr "输出"
+
+msgctxt "bass.master_gain"
+msgid "Master gain"
+msgstr "总输出增益"
+
+msgctxt "bass.output_note"
+msgid "Electric: finite-gap pickup · Acoustic: A0 / B1 / bridge hill"
+msgstr "电贝斯：有限磁隙拾音 · 木贝斯：A0 / B1 / 琴桥峰"
+
+msgctxt "bass.fretboard_hint"
+msgid "Open notes + 24 frets · MIDI pitch bend remains available"
+msgstr "空弦 + 24 品 · MIDI 仍可控制弯音"
+
+msgctxt "bass.fretboard.five-string"
+msgid "5-STRING"
+msgstr "五弦"
+
+msgctxt "bass.fretboard.four-string"
+msgid "4-STRING"
+msgstr "四弦"
+
+msgctxt "bass.fretboard.hint"
+msgid "click or drag strings to play · open notes + 24 frets"
+msgstr "点击或拖动琴弦演奏 · 空弦 + 24 品"
+
+msgctxt "drum.preset.default-name"
+msgid "Custom Drum Kit"
+msgstr "自定义鼓组"
+
+msgctxt "drum.preset"
+msgid "Preset:"
+msgstr "音色预设:"
+
+msgctxt "drum.snare_membrane"
+msgid "SNARE / MEMBRANE"
+msgstr "军鼓 / 鼓膜"
+
+msgctxt "drum.snare_tightness"
+msgid "Snare tightness"
+msgstr "响弦松紧"
+
+msgctxt "drum.snare_decay"
+msgid "Snare decay"
+msgstr "军鼓衰减"
+
+msgctxt "drum.snare_note"
+msgid "Bottom head drives 20 bounded wire contacts"
+msgstr "底膜驱动 20 个有界响弦接触状态"
+
+msgctxt "drum.cymbal_output"
+msgid "CYMBAL / OUTPUT"
+msgstr "镲片 / 输出"
+
+msgctxt "drum.hihat_open"
+msgid "Hi-hat open"
+msgstr "踩镲开度"
+
+msgctxt "drum.cymbal_decay"
+msgid "Cymbal decay"
+msgstr "镲片衰减"
+
+msgctxt "drum.master_gain"
+msgid "Master gain"
+msgstr "总输出增益"
+
+msgctxt "drum.hint"
+msgid "Closed hat chokes open hat · CC4 controls pedal opening · note-off preserves physical tails"
+msgstr "闭镲会切断开镲 · CC4 控制踏板开度 · Note-Off 保留物理衰减尾音"
+
+msgctxt "drum.pad-map.title"
+msgid "MIDI DRUM MAP"
+msgstr "通用 MIDI 鼓组"
+
+msgctxt "drum.pad.36"
+msgid "Bass Drum"
+msgstr "底鼓"
+
+msgctxt "drum.pad.38"
+msgid "Acoustic Snare"
+msgstr "原声军鼓"
+
+msgctxt "drum.pad.41"
+msgid "Low Floor Tom"
+msgstr "低音落地通鼓"
+
+msgctxt "drum.pad.42"
+msgid "Closed Hi-Hat"
+msgstr "闭镲"
+
+msgctxt "drum.pad.43"
+msgid "High Floor Tom"
+msgstr "高音落地通鼓"
+
+msgctxt "drum.pad.44"
+msgid "Pedal Hi-Hat"
+msgstr "踏板踩镲"
+
+msgctxt "drum.pad.45"
+msgid "Low Tom"
+msgstr "低音通鼓"
+
+msgctxt "drum.pad.46"
+msgid "Open Hi-Hat"
+msgstr "开镲"
+
+msgctxt "drum.pad.49"
+msgid "Crash Cymbal"
+msgstr "碎音镲"
+
+msgctxt "drum.pad.51"
+msgid "Ride Cymbal"
+msgstr "叮叮镲"
+
+msgctxt "drum.pad-map.hint"
+msgid "35/36 kick · 38 snare · 41–51 kit"
+msgstr "35/36 底鼓 · 38 军鼓 · 41–51 套鼓"
+
+#~ msgctxt "guitar.amp_drive"
+#~ msgid "12AX7 Tube Drive:"
+#~ msgstr "12AX7 前级增益:"
+
+#~ msgctxt "guitar.finger_squeak"
+#~ msgid "Finger Squeak:"
+#~ msgstr "指擦副噪声:"
+
+#~ msgctxt "guitar.fret_buzz"
+#~ msgid "Fret Clatter / Buzz:"
+#~ msgstr "品丝碰撞打品度:"
+
+#~ msgctxt "guitar.groove_pattern"
+#~ msgid "Groove Style:"
+#~ msgstr "伴奏切片风格:"
+
+#~ msgctxt "guitar.master_gain"
+#~ msgid "Master Gain:"
+#~ msgstr "主输出增益:"
+
+#~ msgctxt "guitar.palm_mute"
+#~ msgid "Palm Mute:"
+#~ msgstr "手掌弱音 (制音):"
+
+#~ msgctxt "guitar.pickup_bm"
+#~ msgid "B+M"
+#~ msgstr "桥+中"
+
+#~ msgctxt "guitar.pickup_bn"
+#~ msgid "B+N"
+#~ msgstr "桥+颈"
+
+#~ msgctxt "guitar.pickup_pos"
+#~ msgid "Position:"
+#~ msgstr "拾音位置:"
+
+#~ msgctxt "guitar.pickup_type"
+#~ msgid "Type:"
+#~ msgstr "拾音结构:"
+
+#~ msgctxt "guitar.pluck_pos"
+#~ msgid "Pluck Position:"
+#~ msgstr "拨弦位置:"
+
+#~ msgctxt "guitar.pluck_style"
+#~ msgid "Pluck Style:"
+#~ msgstr "拨弦方式:"
+
+#~ msgctxt "guitar.rack_mechanics"
+#~ msgid "MECHANICS & NOISE"
+#~ msgstr "触弦与微观杂音"
+
+#~ msgctxt "guitar.rack_output"
+#~ msgid "MASTER OUTPUT"
+#~ msgstr "总输出"
+
+#~ msgctxt "guitar.rack_pluck"
+#~ msgid "PLUCK & TONE"
+#~ msgstr "拨弦与音色"
+
+#~ msgctxt "guitar.rack_strum"
+#~ msgid "STRUM & ACTION"
+#~ msgstr "智能扫弦与手感"
+
+#~ msgctxt "guitar.strum_speed"
+#~ msgid "Strum Speed:"
+#~ msgstr "扫弦时差 (毫秒):"
+
+#~ msgctxt "guitar.subtitle"
+#~ msgid "FIRST-PRINCIPLES PHYSICAL MODELING VIRTUAL INSTRUMENT"
+#~ msgstr "第一性原理物理声学建模虚拟吉他乐器"
+
+#~ msgctxt "guitar.title"
+#~ msgid "PHYSICS GUITAR"
+#~ msgstr "物理建模吉他"
+
+#~ msgctxt "guitar.tone_knob"
+#~ msgid "Passive Tone:"
+#~ msgstr "被动音色旋钮:"
+
+#~ msgctxt "piano.preset"
+#~ msgid "Preset:"
+#~ msgstr "音色预设:"
+
+#~ msgctxt "piano.subtitle"
+#~ msgid "Acoustic Grand Physical Modeling Synthesizer (Rust Engine)"
+#~ msgstr "三角钢琴原生物理声学合成器 (Rust Engine)"
+
+#~ msgctxt "piano.title"
+#~ msgid "PHYSICS PIANO"
+#~ msgstr "物理建模钢琴"
