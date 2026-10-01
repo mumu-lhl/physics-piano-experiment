@@ -184,23 +184,25 @@ impl DrumEngine {
         let hats = self.hats.step();
         let crash = self.crash.step();
         let ride = self.ride.step();
-        let left = (kick * 0.85
-            + snare * 0.80
+        let left = (kick * 0.90
+            + snare * 0.85
             + tom1 * 0.70
-            + tom2 * 0.70
-            + tom3 * 0.70
-            + hats * 0.65
-            + crash * 0.70
-            + ride * 0.65)
+            + tom2 * 0.72
+            + tom3 * 0.75
+            + hats * 0.38
+            + crash * 0.45
+            + ride * 0.42)
+            * 0.70
             * self.master_gain;
-        let right = (kick * 0.82
-            + snare * 0.80
-            + tom1 * 0.75
-            + tom2 * 0.70
+        let right = (kick * 0.90
+            + snare * 0.83
+            + tom1 * 0.80
+            + tom2 * 0.72
             + tom3 * 0.65
-            + hats * 0.70
-            + crash * 0.75
-            + ride * 0.75)
+            + hats * 0.35
+            + crash * 0.42
+            + ride * 0.48)
+            * 0.70
             * self.master_gain;
         (soft_limit(left), soft_limit(right))
     }

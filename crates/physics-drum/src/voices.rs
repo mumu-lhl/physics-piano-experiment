@@ -14,8 +14,6 @@ use std::f64::consts::{PI, SQRT_2, TAU};
 
 pub const CYMBAL_MODE_COUNT: usize = 256;
 pub const MAX_CYMBAL_NEIGHBORS: usize = 4;
-const SNARE_WIRE_COUNT: usize = 24;
-const SNARE_CONTACT_POINT_COUNT: usize = 3;
 
 /// Resonant 2nd-order bandpass filter for drum shell body resonance.
 #[derive(Debug, Clone, Copy)]
@@ -102,6 +100,8 @@ pub struct DoubleHeadVoice {
     pub tail_gain: f64,
     pub output_gain: f64,
     pub is_kick: bool,
+    dc_state: f64,
+    dc_prev_in: f64,
 }
 
 impl DoubleHeadVoice {
@@ -138,13 +138,28 @@ impl DoubleHeadVoice {
         let contact_patch_fraction = if is_kick { 0.16 } else { 0.12 };
         top.set_strike_contact_radius(head_radius_m * contact_patch_fraction);
 
-        let bottom = MembraneHead::new_with_geometry(
+        let mut bottom = MembraneHead::new_with_geometry(
             sample_rate,
             fundamental_hz * 1.04,
             actual_t60 * 0.85,
             head_radius_m,
             surface_density_kg_m2 * 0.88,
         );
+
+        if is_kick {
+            for mode in &mut top.modes[1..] {
+                let freq = mode.frequency;
+                let kick_t60 = (0.50 / (1.0 + (freq / 110.0).powf(1.8)) + 0.015).max(0.012);
+                mode.set_t60(sample_rate, kick_t60);
+                mode.radiation_shape *= 0.25 / (1.0 + mode.angular_order as f64 * 0.8 + (mode.radial_root / 2.4048) * 0.4);
+            }
+            for mode in &mut bottom.modes[1..] {
+                let freq = mode.frequency;
+                let kick_t60 = (0.40 / (1.0 + (freq / 110.0).powf(1.8)) + 0.012).max(0.010);
+                mode.set_t60(sample_rate, kick_t60);
+                mode.radiation_shape *= 0.20 / (1.0 + mode.angular_order as f64 * 0.8 + (mode.radial_root / 2.4048) * 0.4);
+            }
+        }
 
         let f0 = fundamental_hz.max(20.0);
         let total_mass = surface_density_kg_m2 * PI * head_radius_m * head_radius_m;
@@ -192,6 +207,8 @@ impl DoubleHeadVoice {
             tail_gain: 1.0,
             output_gain,
             is_kick,
+            dc_state: 0.0,
+            dc_prev_in: 0.0,
         }
     }
 
@@ -204,8 +221,13 @@ impl DoubleHeadVoice {
         self.bottom.geometry_nonlinearity = 0.0;
         let mallet_mass = if self.is_kick { 0.065 } else { 0.025 };
         let mallet_stiff = if self.is_kick { 1.2e6 } else { 2.2e6 };
+        let strike_vel = if self.is_kick {
+            1.2 + 4.5 * velocity
+        } else {
+            1.2 + 5.0 * velocity.powf(1.2)
+        };
         self.exciter.trigger(
-            1.2 + 5.0 * velocity.powf(1.2),
+            strike_vel,
             mallet_mass,
             mallet_stiff + 2.0e6 * velocity,
             1.5,
@@ -282,8 +304,14 @@ impl DoubleHeadVoice {
         let shell_input = top_sound + strike_force * 0.0001;
         let shell_sound = self.shell1.step(shell_input) * 0.18 + self.shell2.step(shell_input) * 0.10;
 
-        let output = (top_sound + shell_sound - bot_sound * 0.30) * self.output_gain * self.tail_gain;
+        let raw_output = (top_sound + shell_sound - bot_sound * 0.30) * self.output_gain * self.tail_gain;
         self.tail_gain *= 0.999_999;
+
+        // 1st-order DC blocking filter at ~22 Hz
+        let dc_alpha = (-TAU * 22.0 * dt).exp();
+        let output = dc_alpha * (self.dc_state + raw_output - self.dc_prev_in);
+        self.dc_prev_in = raw_output;
+        self.dc_state = output;
 
         let energy = self.top.energy() + self.bottom.energy();
         if !self.exciter.is_contacting && energy < 1.0e-7 {
@@ -302,6 +330,8 @@ impl DoubleHeadVoice {
         self.u_plus_v = 0.0;
         self.u_minus_q = 0.0;
         self.u_minus_v = 0.0;
+        self.dc_state = 0.0;
+        self.dc_prev_in = 0.0;
         self.active = false;
         self.tail_gain = 1.0;
     }
@@ -310,14 +340,17 @@ impl DoubleHeadVoice {
 pub type KickVoice = DoubleHeadVoice;
 pub type TomVoice = DoubleHeadVoice;
 
+const SNARE_WIRE_COUNT: usize = 16;
+
 #[derive(Debug, Clone, Copy)]
 struct SnareWire {
     displacement: f64,
     velocity: f64,
-    clearance: f64,
+    gap: f64,
     stiffness: f64,
     mass: f64,
     damping: f64,
+    contact_k: f64,
 }
 
 impl Default for SnareWire {
@@ -325,91 +358,132 @@ impl Default for SnareWire {
         Self {
             displacement: 0.0,
             velocity: 0.0,
-            clearance: 0.00001,
+            gap: 0.00003,
             stiffness: 14_000.0,
-            mass: 0.00018,
-            damping: 32.0,
+            mass: 0.00025,
+            damping: 18.0,
+            contact_k: 8.0e5,
         }
     }
 }
 
-/// Snare: Top and resonant bottom heads with 24 discrete unilateral Hertzian wire contacts.
+/// Snare: Top and resonant bottom heads with 16 discrete unilateral Hertzian wire contacts
+/// and analytical (u+, u-) cavity eigenmodes.
 /// ZERO artificial white noise — all high-frequency rattle is produced by physical collisions!
 #[derive(Debug, Clone)]
 pub struct SnareVoice {
+    sample_rate: f64,
     pub top: MembraneHead,
     pub bottom: MembraneHead,
     pub exciter: HuntCrossleyExciter,
+    // Fundamental (0, 1) coupled cavity eigenmodes:
+    pub u_plus_q: f64,
+    pub u_plus_v: f64,
+    pub trans_plus: ModalTransition,
+    pub u_minus_q: f64,
+    pub u_minus_v: f64,
+    pub trans_minus: ModalTransition,
+    pub modal_mass_01: f64,
     pub shell1: ShellResonator,
     pub shell2: ShellResonator,
     wires: [SnareWire; SNARE_WIRE_COUNT],
-    wire_shapes: [[[f64; HEAD_MODE_COUNT]; SNARE_CONTACT_POINT_COUNT]; SNARE_WIRE_COUNT],
-    pub wire_count: usize,
+    wire_shapes: [[f64; HEAD_MODE_COUNT]; SNARE_WIRE_COUNT],
     pub tightness: f64,
     pub decay: f64,
-    pub cavity_pressure: f64,
-    pub cavity_stiffness: f64,
-    pub cavity_damping: f64,
     pub wire_modal_forces: [f64; HEAD_MODE_COUNT],
     pub active: bool,
     wire_filter_lp: f64,
     wire_filter_hp: f64,
     wire_filter_prev: f64,
+    dc_state: f64,
+    dc_prev_in: f64,
 }
 
 impl SnareVoice {
     pub fn new(sample_rate: f64) -> Self {
-        let mut top = MembraneHead::new(sample_rate, 205.0, 0.22);
-        top.set_strike_point(0.35, 0.37);
-        top.set_strike_contact_radius(0.008);
+        let sample_rate = sample_rate.max(1.0);
+        let radius_m = 0.1778; // 14-inch snare
+        let f0_top = 210.0;    // Batter head fundamental ~210 Hz
+        let f0_bottom = 260.0; // Ultra-thin snare side tuned higher ~260 Hz
+        let dt = 1.0 / sample_rate;
 
-        // Snare side head is extremely thin (2-3 mil Mylar)
-        let bottom = MembraneHead::new_with_geometry(sample_rate, 220.0, 0.16, 0.1778, 0.09);
+        // Top head mass: coated head (~0.28 kg/m^2)
+        let mut top = MembraneHead::new_with_geometry(sample_rate, f0_top, 0.35, radius_m, 0.28);
+        top.set_strike_point(0.35, 0.0);
+        top.set_strike_contact_radius(radius_m * 0.08);
+
+        // Calibrate top head higher mode damping
+        for mode in &mut top.modes[1..] {
+            let freq = mode.frequency;
+            let mode_t60 = (0.70 / (1.0 + (freq / 350.0).powf(1.6)) + 0.02).max(0.015);
+            mode.set_t60(sample_rate, mode_t60);
+        }
+
+        // Bottom head mass: ultra-thin snare-side head (~0.09 kg/m^2)
+        let mut bottom = MembraneHead::new_with_geometry(sample_rate, f0_bottom, 0.25, radius_m, 0.09);
+        for mode in &mut bottom.modes[1..] {
+            let freq = mode.frequency;
+            let mode_t60 = (0.50 / (1.0 + (freq / 450.0).powf(1.5)) + 0.015).max(0.010);
+            mode.set_t60(sample_rate, mode_t60);
+        }
+
+        let total_top_mass = 0.28 * PI * radius_m * radius_m;
+        let modal_mass_01 = total_top_mass * 0.25;
+
+        // Coupled cavity eigenmodes for fundamental (0, 1):
+        let omega_plus = TAU * f0_top;
+        let omega_minus = TAU * (f0_top * 1.28);
+        let trans_plus = ModalTransition::new(omega_plus, 1000.0_f64.ln() / 0.55, dt, OverdampedPolicy::ExponentialFallback);
+        let trans_minus = ModalTransition::new(omega_minus, 1000.0_f64.ln() / 0.35, dt, OverdampedPolicy::ExponentialFallback);
 
         let shell1 = ShellResonator::new(sample_rate, 340.0, 6.0);
         let shell2 = ShellResonator::new(sample_rate, 680.0, 8.0);
 
-        let wire_shapes = std::array::from_fn(|index| {
-            let lateral_position = -0.14 + 0.28 * index as f64 / (SNARE_WIRE_COUNT - 1) as f64;
-            std::array::from_fn(|point_index| {
-                let along_wire = [-0.58, 0.0, 0.58][point_index];
-                bottom.shapes_at_xy(along_wire, lateral_position)
-            })
+        // 16 wire contact positions along diameter: x from -0.80 to +0.80, y = 0
+        let wire_shapes = std::array::from_fn(|i| {
+            let pos_x = -0.80 + 1.60 * (i as f64) / 15.0;
+            bottom.shapes_at_xy(pos_x, 0.0)
         });
 
         let wires = std::array::from_fn(|i| {
-            let frac = i as f64 / (SNARE_WIRE_COUNT - 1) as f64;
-            let gap = 0.000020 + 0.000025 * (frac * 3.14).sin();
-            let k = 12_000.0 + 4_000.0 * (i % 3) as f64;
+            let norm_i = (i as f64 - 7.5) / 7.5;
+            let gap = (0.000030 + 0.000040 * norm_i * norm_i) * (1.0 + 0.2 * (i as f64 * 1.7).sin());
             SnareWire {
                 displacement: 0.0,
                 velocity: 0.0,
-                clearance: gap,
-                stiffness: k,
-                mass: 0.00018,
-                damping: 32.0,
+                gap,
+                mass: 0.00025,
+                stiffness: 14_000.0 + 2_000.0 * (i as f64 * 2.3).cos(),
+                damping: 18.0,
+                contact_k: 8.0e5,
             }
         });
 
         Self {
+            sample_rate,
             top,
             bottom,
             exciter: HuntCrossleyExciter::default(),
+            u_plus_q: 0.0,
+            u_plus_v: 0.0,
+            trans_plus,
+            u_minus_q: 0.0,
+            u_minus_v: 0.0,
+            trans_minus,
+            modal_mass_01,
             shell1,
             shell2,
             wires,
             wire_shapes,
-            wire_count: SNARE_WIRE_COUNT,
             tightness: 0.65,
             decay: 0.55,
-            cavity_pressure: 0.0,
-            cavity_stiffness: 90_000.0,
-            cavity_damping: 0.12,
             wire_modal_forces: [0.0; HEAD_MODE_COUNT],
             active: false,
             wire_filter_lp: 0.0,
             wire_filter_hp: 0.0,
             wire_filter_prev: 0.0,
+            dc_state: 0.0,
+            dc_prev_in: 0.0,
         }
     }
 
@@ -418,9 +492,9 @@ impl SnareVoice {
         let base_gap = 0.000015 + (1.0 - self.tightness) * 0.000030;
         let base_k = 10_000.0 + 15_000.0 * self.tightness;
         for (i, wire) in self.wires.iter_mut().enumerate() {
-            let frac = i as f64 / (SNARE_WIRE_COUNT - 1) as f64;
-            wire.clearance = base_gap + 0.000020 * (frac * 3.14).sin();
-            wire.stiffness = base_k + 2_000.0 * (i % 3) as f64;
+            let norm_i = (i as f64 - 7.5) / 7.5;
+            wire.gap = base_gap + 0.000020 * norm_i * norm_i;
+            wire.stiffness = base_k + 2_000.0 * (i as f64 * 2.3).cos();
         }
     }
 
@@ -428,11 +502,13 @@ impl SnareVoice {
         let decay = decay.clamp(0.0, 1.0);
         if (self.decay - decay).abs() > 0.01 {
             self.decay = decay;
-            let t60_top = 0.10 + 0.20 * decay;
-            let t60_bot = 0.08 + 0.16 * decay;
-            self.top.set_t60(t60_top);
-            self.bottom.set_t60(t60_bot);
-            let wire_damp = 24.0 + 40.0 * (1.0 - decay);
+            let t60_p = 0.25 + 0.50 * decay;
+            let t60_m = 0.15 + 0.35 * decay;
+            let dt = 1.0 / self.sample_rate;
+            self.trans_plus = ModalTransition::new(TAU * 210.0, 1000.0_f64.ln() / t60_p, dt, OverdampedPolicy::ExponentialFallback);
+            self.trans_minus = ModalTransition::new(TAU * (210.0 * 1.28), 1000.0_f64.ln() / t60_m, dt, OverdampedPolicy::ExponentialFallback);
+
+            let wire_damp = 12.0 + 24.0 * (1.0 - decay);
             for wire in &mut self.wires {
                 wire.damping = wire_damp;
             }
@@ -442,27 +518,14 @@ impl SnareVoice {
     pub fn trigger(&mut self, velocity: f64) {
         let velocity = velocity.clamp(0.001, 1.0);
         if !self.active {
-            self.top.reset();
-            self.bottom.reset();
-            self.shell1.reset();
-            self.shell2.reset();
-            for wire in &mut self.wires {
-                wire.displacement = 0.0;
-                wire.velocity = 0.0;
-            }
-            self.cavity_pressure = 0.0;
-            self.wire_modal_forces.fill(0.0);
+            self.reset();
         }
         self.top.geometry_nonlinearity = 0.0;
         self.bottom.geometry_nonlinearity = 0.0;
-        let t60_top = 0.10 + 0.20 * self.decay;
-        let t60_bot = 0.08 + 0.16 * self.decay;
-        self.top.set_t60(t60_top);
-        self.bottom.set_t60(t60_bot);
         self.exciter.trigger(
             1.5 + 4.8 * velocity.powf(1.2),
-            0.024,
-            1.2e6 + 2.5e6 * velocity,
+            0.022,
+            1.2e7 + 2.5e6 * velocity,
             1.5,
         );
         self.active = true;
@@ -473,85 +536,121 @@ impl SnareVoice {
         if !self.active {
             return 0.0;
         }
-        let (strike_disp, strike_vel) = self.top.strike_state();
-        let strike_force = self.exciter.step(strike_disp, strike_vel, dt);
 
-        let (top_vol, top_vol_vel) = self.top.area_average_state();
-        let (bot_vol, bot_vol_vel) = self.bottom.area_average_state();
-        let vol_delta = top_vol - bot_vol;
-        let vol_vel = top_vol_vel - bot_vol_vel;
-        let eff_mass = 1.0
-            / (1.0 / self.top.area_average_effective_mass()
-                + 1.0 / self.bottom.area_average_effective_mass());
-        let acoustic_damping =
-            2.0 * self.cavity_damping * (self.cavity_stiffness * eff_mass).sqrt();
-        let head_area = PI * self.top.radius_m().powi(2);
-        self.cavity_pressure =
-            ((self.cavity_stiffness * vol_delta + acoustic_damping * vol_vel) / head_area)
-                .clamp(-1.0e6, 1.0e6);
+        // 1. Top head strike point displacement & velocity
+        let phi_01 = self.top.modes[0].strike_shape;
+        let q_top_01 = (self.u_plus_q + self.u_minus_q) * (1.0 / SQRT_2);
+        let v_top_01 = (self.u_plus_v + self.u_minus_v) * (1.0 / SQRT_2);
 
-        let (_top_disp, top_velocity) =
-            self.top.step_coupled(strike_force, -self.cavity_pressure);
-        let (_bottom_disp, bottom_velocity) =
-            self.bottom
-                .step_with_modal_forces(0.0, self.cavity_pressure, &self.wire_modal_forces);
-        self.wire_modal_forces.fill(0.0);
-
-        // Discrete Hertzian wire contact dynamics with 2x symplectic sub-stepping
-        let n_sub = 2;
-        let dt_sub = dt / n_sub as f64;
-        let mut chatter_force = 0.0;
-        let mut wire_energy = 0.0;
-        let count = self.wire_count.clamp(1, self.wires.len());
-        let contact_stiffness = 6.0e5;
-
-        for _ in 0..n_sub {
-            for (index, wire) in self.wires[..count].iter_mut().enumerate() {
-                let contact_shapes = &self.wire_shapes[index];
-                let mut wire_contact_force = 0.0;
-
-                for shapes in contact_shapes {
-                    let (local_bot, local_bot_vel) = self.bottom.state_with_shapes(shapes);
-                    let gap = local_bot - wire.displacement - wire.clearance;
-                    if gap > 0.0 {
-                        let f_elas = contact_stiffness * gap.powf(1.4);
-                        let rel_vel = local_bot_vel - wire.velocity;
-                        let f_diss = (f_elas * 0.06 * rel_vel).max(0.0);
-                        let force = (f_elas + f_diss).min(30.0);
-                        wire_contact_force += force;
-                        chatter_force += force / (n_sub as f64 * SNARE_CONTACT_POINT_COUNT as f64);
-                        self.bottom
-                            .accumulate_modal_force(shapes, -force / n_sub as f64, &mut self.wire_modal_forces);
-                    }
-                }
-
-                let damp_decay = (-wire.damping / wire.mass * dt_sub).exp();
-                let restoring = -wire.stiffness * wire.displacement;
-                let accel = (wire_contact_force + restoring) / wire.mass;
-                wire.velocity = (wire.velocity + accel * dt_sub) * damp_decay;
-                wire.displacement += wire.velocity * dt_sub;
-                wire.displacement = wire.displacement.clamp(-0.01, 0.01);
-                wire.velocity = wire.velocity.clamp(-30.0, 30.0);
-
-                wire_energy += wire.displacement * wire.displacement * wire.stiffness
-                    + wire.velocity * wire.velocity * wire.mass;
-            }
+        let mut x_surf = q_top_01 * phi_01;
+        let mut v_surf = v_top_01 * phi_01;
+        for mode in &self.top.modes[1..] {
+            x_surf += mode.q * mode.strike_shape;
+            v_surf += mode.v * mode.strike_shape;
         }
 
-        // Pure physical radiation: Top head + Bottom head + Shell resonance + Smooth steel wire rattle
-        let shell_input = top_velocity + strike_force * 0.0001;
-        let shell_sound = self.shell1.step(shell_input) * 0.18 + self.shell2.step(shell_input) * 0.10;
+        let strike_force = self.exciter.step(x_surf, v_surf, dt);
 
-        let wire_raw = chatter_force * 0.00045;
+        // 2. Advance fundamental coupled cavity eigenmodes
+        let f_modal_01 = strike_force * phi_01;
+        let force_plus = f_modal_01 * (1.0 / SQRT_2) / self.modal_mass_01;
+        let force_minus = f_modal_01 * (1.0 / SQRT_2) / self.modal_mass_01;
+
+        let (p11_p, p12_p, p21_p, p22_p) = self.trans_plus.phi;
+        let (g1_p, g2_p) = self.trans_plus.gamma;
+        self.u_plus_q = p11_p * self.u_plus_q + p12_p * self.u_plus_v + g1_p * force_plus;
+        self.u_plus_v = p21_p * self.u_plus_q + p22_p * self.u_plus_v + g2_p * force_plus;
+
+        let (p11_m, p12_m, p21_m, p22_m) = self.trans_minus.phi;
+        let (g1_m, g2_m) = self.trans_minus.gamma;
+        self.u_minus_q = p11_m * self.u_minus_q + p12_m * self.u_minus_v + g1_m * force_minus;
+        self.u_minus_v = p21_m * self.u_minus_q + p22_m * self.u_minus_v + g2_m * force_minus;
+
+        let v_top_fund = (self.u_plus_v + self.u_minus_v) * (1.0 / SQRT_2);
+        let q_bot_fund = (self.u_plus_q - self.u_minus_q) * (1.0 / SQRT_2);
+        let v_bot_fund = (self.u_plus_v - self.u_minus_v) * (1.0 / SQRT_2);
+
+        self.top.modes[0].q = (self.u_plus_q + self.u_minus_q) * (1.0 / SQRT_2);
+        self.top.modes[0].v = v_top_fund;
+        self.bottom.modes[0].q = q_bot_fund;
+        self.bottom.modes[0].v = v_bot_fund;
+
+        // 3. Advance top head higher modes
+        let mut top_sound = v_top_fund * self.top.modes[0].radiation_shape;
+        for mode in &mut self.top.modes[1..] {
+            let (p11, p12, p21, p22) = mode.transition.phi;
+            let (g1, g2) = mode.transition.gamma;
+            let f_m = (strike_force * mode.strike_shape) / mode.modal_mass_kg;
+            let nq = p11 * mode.q + p12 * mode.v + g1 * f_m;
+            let nv = p21 * mode.q + p22 * mode.v + g2 * f_m;
+            mode.q = nq;
+            mode.v = nv;
+            top_sound += mode.v * mode.radiation_shape;
+        }
+
+        // 4. Snare wire contacts at 16 points along bottom head
+        self.wire_modal_forces.fill(0.0);
+        let mut snare_rattle_acoustic = 0.0;
+
+        for (w, wire) in self.wires.iter_mut().enumerate() {
+            let shapes = &self.wire_shapes[w];
+            let (w_bot, v_bot) = self.bottom.state_with_shapes(shapes);
+            let delta = w_bot - wire.displacement - wire.gap;
+
+            let contact_force = if delta > 0.0 {
+                let v_rel = v_bot - wire.velocity;
+                let elastic = wire.contact_k * delta.powf(1.4);
+                let dissipative = 0.08 * elastic * v_rel;
+                (elastic + dissipative).max(0.0).min(30.0)
+            } else {
+                0.0
+            };
+
+            let restoring = -wire.stiffness * wire.displacement - wire.damping * wire.velocity;
+            wire.velocity += (contact_force + restoring) / wire.mass * dt;
+            wire.displacement += wire.velocity * dt;
+            wire.displacement = wire.displacement.clamp(-0.005, 0.005);
+            wire.velocity = wire.velocity.clamp(-20.0, 20.0);
+
+            snare_rattle_acoustic += contact_force * 0.00035;
+
+            // Bilateral back-reaction onto bottom head modes
+            self.bottom.accumulate_modal_force(shapes, -contact_force, &mut self.wire_modal_forces);
+        }
+
+        // 5. Advance bottom head higher modes with wire back-reaction
+        let mut bot_sound = v_bot_fund * self.bottom.modes[0].radiation_shape * 0.40;
+        for (idx, mode) in self.bottom.modes[1..].iter_mut().enumerate() {
+            let (p11, p12, p21, p22) = mode.transition.phi;
+            let (g1, g2) = mode.transition.gamma;
+            let f_m = self.wire_modal_forces[idx + 1] / mode.modal_mass_kg;
+            let nq = p11 * mode.q + p12 * mode.v + g1 * f_m;
+            let nv = p21 * mode.q + p22 * mode.v + g2 * f_m;
+            mode.q = nq;
+            mode.v = nv;
+            bot_sound += mode.v * mode.radiation_shape * 0.35;
+        }
+
+        // 6. Shell resonance
+        let shell_input = top_sound + strike_force * 0.0001;
+        let shell_sound = self.shell1.step(shell_input) * 0.20 + self.shell2.step(shell_input) * 0.12;
+
+        // 7. Wire acoustic radiation filter (800 Hz HP + 7 kHz LP)
+        let wire_raw = snare_rattle_acoustic;
         self.wire_filter_lp += 0.45 * (wire_raw - self.wire_filter_lp);
         self.wire_filter_hp = 0.88 * (self.wire_filter_hp + self.wire_filter_lp - self.wire_filter_prev);
         self.wire_filter_prev = self.wire_filter_lp;
         let rattle_sound = self.wire_filter_hp;
 
-        let output = (top_velocity * 0.75 - bottom_velocity * 0.20 + shell_sound + rattle_sound) * 1.05;
+        let raw_output = (top_sound + shell_sound + bot_sound + rattle_sound) * 1.05;
 
-        let cavity_energy = 0.5 * self.cavity_stiffness * vol_delta * vol_delta;
-        let energy = self.top.energy() + self.bottom.energy() + cavity_energy + wire_energy;
+        // 8. DC Blocker (~20 Hz HP)
+        let dc_alpha = (-TAU * 20.0 * dt).exp();
+        let output = dc_alpha * (self.dc_state + raw_output - self.dc_prev_in);
+        self.dc_prev_in = raw_output;
+        self.dc_state = output;
+
+        let energy = self.top.energy() + self.bottom.energy();
         if !self.exciter.is_contacting && energy < 1e-7 {
             self.active = false;
         }
@@ -564,6 +663,10 @@ impl SnareVoice {
         self.exciter.reset();
         self.shell1.reset();
         self.shell2.reset();
+        self.u_plus_q = 0.0;
+        self.u_plus_v = 0.0;
+        self.u_minus_q = 0.0;
+        self.u_minus_v = 0.0;
         for wire in &mut self.wires {
             wire.displacement = 0.0;
             wire.velocity = 0.0;
@@ -571,9 +674,14 @@ impl SnareVoice {
         self.wire_filter_lp = 0.0;
         self.wire_filter_hp = 0.0;
         self.wire_filter_prev = 0.0;
+        self.dc_state = 0.0;
+        self.dc_prev_in = 0.0;
         self.active = false;
-        self.cavity_pressure = 0.0;
         self.wire_modal_forces.fill(0.0);
+    }
+
+    pub fn energy(&self) -> f64 {
+        self.top.energy() + self.bottom.energy()
     }
 }
 
