@@ -1,6 +1,6 @@
 //! General-MIDI mapped sample-accurate drum-kit engine.
 
-use crate::voices::{CymbalVoice, KickVoice, SnareVoice, TomVoice};
+use crate::voices::{CymbalKind, CymbalVoice, KickVoice, SnareVoice, TomVoice};
 
 /// The drum components implemented by the kit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,9 +84,9 @@ impl DrumEngine {
                 TomVoice::new(sample_rate, 128.0, 0.92, 32_000.0),
                 TomVoice::new(sample_rate, 170.0, 1.05, 25_000.0),
             ],
-            hats: CymbalVoice::new(sample_rate),
-            crash: CymbalVoice::new(sample_rate),
-            ride: CymbalVoice::new(sample_rate),
+            hats: CymbalVoice::new_for_kind(sample_rate, CymbalKind::HiHat),
+            crash: CymbalVoice::new_for_kind(sample_rate, CymbalKind::Crash),
+            ride: CymbalVoice::new_for_kind(sample_rate, CymbalKind::Ride),
             hi_hat_open: 0.85,
             cymbal_decay: 1.0,
             master_gain: 0.78,
@@ -118,7 +118,9 @@ impl DrumEngine {
 
     pub fn set_cymbal_decay(&mut self, amount: f64) {
         let amount = amount.clamp(0.0, 1.0);
-        let scale = 0.25 + 1.75 * amount;
+        // Map the factory preset's 70% setting to a neutral scale; the control
+        // can shorten or extend tails without pushing open hats past the target.
+        let scale = 0.65 + 0.5 * amount;
         if (self.cymbal_decay - amount).abs() > 1e-5 {
             self.cymbal_decay = amount;
             self.hats.set_decay_scale(scale);

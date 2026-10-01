@@ -7,7 +7,7 @@
 use physics_dsp::{ModalTransition, OverdampedPolicy};
 use std::f64::consts::PI;
 
-pub const HEAD_MODE_COUNT: usize = 8;
+pub const HEAD_MODE_COUNT: usize = 32;
 
 /// `(angular order m, radial index n, J_m zero)` for the first useful
 /// circular-membrane modes. Keeping the roots explicit avoids a runtime root
@@ -21,6 +21,30 @@ const MEMBRANE_MODE_SPECS: [(u8, u8, f64); HEAD_MODE_COUNT] = [
     (1, 2, 7.015_586_669_8),
     (4, 1, 7.588_342_434_5),
     (2, 2, 8.417_244_140_4),
+    (0, 3, 8.653_727_912_9),
+    (5, 1, 8.771_483_816_0),
+    (3, 2, 9.761_023_130_0),
+    (6, 1, 9.936_109_524_2),
+    (1, 3, 10.173_468_135_1),
+    (4, 2, 11.064_709_488_5),
+    (7, 1, 11.086_370_019_2),
+    (2, 3, 11.619_841_172_1),
+    (0, 4, 11.791_534_439_0),
+    (8, 1, 12.225_092_264_0),
+    (5, 2, 12.338_604_197_5),
+    (3, 3, 13.015_200_721_7),
+    (1, 4, 13.323_691_936_3),
+    (9, 1, 13.354_300_477_4),
+    (6, 2, 13.589_290_170_5),
+    (4, 3, 14.372_536_671_6),
+    (10, 1, 14.475_500_686_6),
+    (2, 4, 14.795_951_782_4),
+    (7, 2, 14.821_268_727_0),
+    (0, 5, 14.930_917_708_5),
+    (11, 1, 15.589_847_884_5),
+    (5, 3, 15.700_174_079_7),
+    (8, 2, 16.037_774_190_9),
+    (3, 4, 16.223_466_160_3),
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -124,7 +148,7 @@ impl MembraneHead {
             HeadMode::new(
                 sample_rate,
                 frequency,
-                t60 / (1.0 + index as f64 * 0.16),
+                modal_t60(t60, index),
                 gain,
                 angular_order,
                 radial_root,
@@ -157,7 +181,7 @@ impl MembraneHead {
     pub fn set_t60(&mut self, t60: f64) {
         self.t60 = t60.max(0.03);
         for (index, mode) in self.modes.iter_mut().enumerate() {
-            mode.set_t60(self.sample_rate, self.t60 / (1.0 + index as f64 * 0.16));
+            mode.set_t60(self.sample_rate, modal_t60(self.t60, index));
         }
     }
 
@@ -304,6 +328,11 @@ impl MembraneHead {
     pub fn sample_rate(&self) -> f64 {
         self.sample_rate
     }
+}
+
+#[inline]
+fn modal_t60(base_t60: f64, index: usize) -> f64 {
+    (base_t60 / (1.0 + index as f64 * 0.4)).max(0.03)
 }
 
 /// Integer-order Bessel J_m evaluated by its convergent power series. The

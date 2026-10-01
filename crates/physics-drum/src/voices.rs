@@ -5,7 +5,12 @@ use crate::membrane::{HEAD_MODE_COUNT, MembraneHead};
 use physics_dsp::{ModalTransition, OverdampedPolicy, XorShift32};
 use std::f64::consts::TAU;
 
-const CYMBAL_MODE_COUNT: usize = 32;
+const CYMBAL_MODE_COUNT: usize = 96;
+const CYMBAL_REFERENCE_MODE_COUNT: usize = 32;
+const CYMBAL_MODE_RATIOS: [f64; CYMBAL_REFERENCE_MODE_COUNT] = [
+    1.00, 1.73, 2.32, 3.15, 4.21, 5.08, 5.92, 6.77, 7.63, 8.49, 9.34, 10.2, 11.1, 12.0, 13.1, 14.3,
+    15.6, 17.0, 18.5, 20.1, 21.8, 23.7, 25.7, 27.9, 30.2, 32.6, 35.1, 37.8, 40.5, 43.5, 46.6, 49.8,
+];
 
 /// A coupled two-head shell (kick or tom) with an explicit air-cavity spring.
 #[derive(Debug, Clone)]
@@ -124,6 +129,7 @@ pub struct SnareVoice {
     pub active: bool,
     noise: XorShift32,
     noise_state: f64,
+    noise_fast_state: f64,
     noise_envelope: f64,
 }
 
@@ -155,6 +161,7 @@ impl SnareVoice {
             active: false,
             noise: XorShift32::new(0x51_4E_41_52),
             noise_state: 0.0,
+            noise_fast_state: 0.0,
             noise_envelope: 0.0,
         }
     }
@@ -183,6 +190,9 @@ impl SnareVoice {
             }
             self.cavity_pressure = 0.0;
             self.wire_modal_forces.fill(0.0);
+            self.noise_state = 0.0;
+            self.noise_fast_state = 0.0;
+            self.noise_envelope = 0.0;
         }
         self.top.geometry_nonlinearity = 0.025 * velocity * velocity;
         self.bottom.geometry_nonlinearity = 0.01 * velocity * velocity;
@@ -194,7 +204,8 @@ impl SnareVoice {
             1.0e6 + 2.0e6 * velocity,
             1.5,
         );
-        self.noise_envelope = (self.noise_envelope + 0.48 * velocity.powf(0.75)).min(1.0);
+        let noise_gain = 0.20 + 0.08 * self.tightness;
+        self.noise_envelope = (self.noise_envelope + noise_gain * velocity.powf(0.75)).min(1.0);
         self.active = true;
     }
 
@@ -256,8 +267,10 @@ impl SnareVoice {
 
         let white = self.noise.next_f64();
         self.noise_state = self.noise_state * 0.87 + white * 0.13;
-        let bright_noise = white - self.noise_state;
-        self.noise_envelope *= (-(dt / (0.18 + 0.55 * self.decay.max(0.01)))).exp();
+        self.noise_fast_state = self.noise_fast_state * 0.48 + white * 0.52;
+        let bright_noise = self.noise_fast_state - self.noise_state;
+        let noise_t60 = 0.12 + 0.46 * self.decay;
+        self.noise_envelope *= (-(6.907_755_278_982_137 * dt / noise_t60)).exp();
         let output = top_velocity * 0.52 - self.bottom.velocity() * 0.18
             + chatter_force * 0.000055
             + bright_noise * self.noise_envelope;
@@ -281,6 +294,73 @@ impl SnareVoice {
         self.wire_modal_forces.fill(0.0);
         self.noise_envelope = 0.0;
         self.noise_state = 0.0;
+        self.noise_fast_state = 0.0;
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum CymbalKind {
+    HiHat,
+    Crash,
+    Ride,
+}
+
+/// Per-instrument voicings are initial targets from the drum report, not
+/// measured fits; keeping them separate lets each cymbal family be calibrated.
+#[derive(Debug, Clone, Copy)]
+struct CymbalProfile {
+    base_hz: f64,
+    ratio_stretch: f64,
+    impact_rolloff: f64,
+    radiation_gain: f64,
+    noise_gain: f64,
+    high_mode_damping: f64,
+    modal_t60_closed: f64,
+    modal_t60_open: f64,
+    noise_t60_closed: f64,
+    noise_t60_open: f64,
+}
+
+impl CymbalProfile {
+    fn for_kind(kind: CymbalKind) -> Self {
+        match kind {
+            CymbalKind::HiHat => Self {
+                base_hz: 380.0,
+                ratio_stretch: 0.0008,
+                impact_rolloff: 0.025,
+                radiation_gain: 0.00085,
+                noise_gain: 0.14,
+                high_mode_damping: 0.8,
+                modal_t60_closed: 0.035,
+                modal_t60_open: 1.65,
+                noise_t60_closed: 0.02,
+                noise_t60_open: 1.4,
+            },
+            CymbalKind::Crash => Self {
+                base_hz: 340.0,
+                ratio_stretch: 0.0002,
+                impact_rolloff: 0.065,
+                radiation_gain: 0.0010,
+                noise_gain: 0.12,
+                high_mode_damping: 0.8,
+                modal_t60_closed: 3.2,
+                modal_t60_open: 3.2,
+                noise_t60_closed: 1.5,
+                noise_t60_open: 1.5,
+            },
+            CymbalKind::Ride => Self {
+                base_hz: 330.0,
+                ratio_stretch: -0.00025,
+                impact_rolloff: 0.09,
+                radiation_gain: 0.0012,
+                noise_gain: 0.07,
+                high_mode_damping: 0.8,
+                modal_t60_closed: 2.7,
+                modal_t60_open: 2.7,
+                noise_t60_closed: 0.65,
+                noise_t60_open: 0.65,
+            },
+        }
     }
 }
 
@@ -296,7 +376,7 @@ struct CymbalMode {
 }
 
 impl CymbalMode {
-    fn new(sample_rate: f64, frequency: f64, index: usize) -> Self {
+    fn new(sample_rate: f64, frequency: f64, index: usize, radiation_gain: f64) -> Self {
         let frequency = frequency.min(sample_rate * 0.45);
         let omega = TAU * frequency;
         Self {
@@ -315,7 +395,7 @@ impl CymbalMode {
             // Keep the explicit reduced-order strain term a bounded perturbation.
             // Larger coefficients pump modal energy at high normalized frequencies.
             beta: omega * omega * 0.35,
-            radiation_gain: 0.0008 / (1.0 + index as f64 * 0.025),
+            radiation_gain: radiation_gain / (1.0 + index as f64 * 0.025),
         }
     }
 
@@ -356,6 +436,7 @@ impl CymbalMode {
 #[derive(Debug, Clone)]
 pub struct CymbalVoice {
     sample_rate: f64,
+    profile: CymbalProfile,
     modes: [CymbalMode; CYMBAL_MODE_COUNT],
     modal_couplings: [f64; CYMBAL_MODE_COUNT - 1],
     pub open_amount: f64,
@@ -369,26 +450,53 @@ pub struct CymbalVoice {
 
 impl CymbalVoice {
     pub fn new(sample_rate: f64) -> Self {
+        Self::new_for_kind(sample_rate, CymbalKind::HiHat)
+    }
+
+    pub(crate) fn new_for_kind(sample_rate: f64, kind: CymbalKind) -> Self {
         let sample_rate = sample_rate.max(1.0);
-        let ratios = [
-            1.00, 1.73, 2.32, 3.15, 4.21, 5.08, 5.92, 6.77, 7.63, 8.49, 9.34, 10.2, 11.1, 12.0,
-            13.1, 14.3, 15.6, 17.0, 18.5, 20.1, 21.8, 23.7, 25.7, 27.9, 30.2, 32.6, 35.1, 37.8,
-            40.5, 43.5, 46.6, 49.8,
-        ];
-        let modes =
-            std::array::from_fn(|index| CymbalMode::new(sample_rate, 330.0 * ratios[index], index));
+        let profile = CymbalProfile::for_kind(kind);
+        let seed = match kind {
+            CymbalKind::HiHat => 0xC1_7A_2B_1E,
+            CymbalKind::Crash => 0xC2_A5_51_09,
+            CymbalKind::Ride => 0xA1_D3_70_5B,
+        };
+        let max_ratio = (sample_rate * 0.45
+            / profile.base_hz
+            / (1.0 + profile.ratio_stretch * (CYMBAL_REFERENCE_MODE_COUNT - 1) as f64))
+            .min(CYMBAL_MODE_RATIOS[CYMBAL_REFERENCE_MODE_COUNT - 1])
+            .max(CYMBAL_MODE_RATIOS[0]);
+        let max_anchor_position = cymbal_ratio_anchor_position(max_ratio);
+        let modes = std::array::from_fn(|index| {
+            let mode_position = index as f64 / (CYMBAL_MODE_COUNT - 1) as f64;
+            let ratio = cymbal_ratio_at_anchor_position(mode_position * max_anchor_position);
+            let frequency = profile.base_hz
+                * ratio
+                * (1.0
+                    + profile.ratio_stretch
+                        * (CYMBAL_REFERENCE_MODE_COUNT - 1) as f64
+                        * mode_position);
+            let density_compensation =
+                (CYMBAL_REFERENCE_MODE_COUNT as f64 / CYMBAL_MODE_COUNT as f64).sqrt();
+            CymbalMode::new(
+                sample_rate,
+                frequency,
+                index,
+                profile.radiation_gain * density_compensation,
+            )
+        });
         let modal_couplings =
             std::array::from_fn(|index| 0.18 * (modes[index].beta * modes[index + 1].beta).sqrt());
-        let noise_decay_coefficient = (-(1.0 / sample_rate) / 1.95).exp();
         Self {
             sample_rate,
+            profile,
             modes,
             modal_couplings,
             open_amount: 1.0,
             decay_scale: 1.0,
-            noise_decay_coefficient,
+            noise_decay_coefficient: 0.0,
             active: false,
-            noise: XorShift32::new(0xC1_7A_2B_1E),
+            noise: XorShift32::new(seed),
             noise_state: 0.0,
             noise_envelope: 0.0,
         }
@@ -420,12 +528,14 @@ impl CymbalVoice {
                 mode.v = 0.0;
             }
             self.noise_state = 0.0;
+            self.noise_envelope = 0.0;
         }
         for (index, mode) in self.modes.iter_mut().enumerate() {
-            let impact_shape = 1.0 / (1.0 + index as f64 * 0.055);
+            let impact_shape = 1.0 / (1.0 + index as f64 * self.profile.impact_rolloff);
             mode.v += velocity.powf(0.7) * mode.omega * 0.012 * impact_shape;
         }
-        self.noise_envelope = (self.noise_envelope + 0.22 * velocity.powf(0.55)).min(1.0);
+        self.noise_envelope =
+            (self.noise_envelope + self.profile.noise_gain * velocity.powf(0.55)).min(1.0);
         self.active = true;
     }
 
@@ -433,11 +543,16 @@ impl CymbalVoice {
     /// audible chick/splash mechanical collision.
     pub fn choke(&mut self, amount: f64) {
         let factor = amount.clamp(0.0, 1.0);
+        // Keep the state continuous to avoid a sample discontinuity, then let
+        // the closed-pedal damping shorten the remaining metallic tail.
+        let soft_gain = 1.0 - 0.02 * (1.0 - factor);
         for mode in &mut self.modes {
-            mode.q *= factor;
-            mode.v *= factor;
+            mode.q *= soft_gain;
+            mode.v *= soft_gain;
         }
-        self.noise_envelope *= factor;
+        self.noise_envelope *= soft_gain;
+        self.open_amount *= factor;
+        self.update_decay();
     }
 
     #[inline]
@@ -493,13 +608,44 @@ impl CymbalVoice {
     }
 
     fn update_decay(&mut self) {
+        let open_amount = self.open_amount * self.open_amount;
+        let t60 = (self.profile.modal_t60_closed
+            + (self.profile.modal_t60_open - self.profile.modal_t60_closed) * open_amount)
+            * self.decay_scale;
+        let noise_t60 = (self.profile.noise_t60_closed
+            + (self.profile.noise_t60_open - self.profile.noise_t60_closed) * open_amount)
+            * self.decay_scale;
         self.noise_decay_coefficient =
-            (-(1.0 / self.sample_rate) / (0.45 + 1.5 * self.open_amount * self.open_amount)).exp();
-        let t60 = (0.04 + 3.0 * self.open_amount * self.open_amount) * self.decay_scale;
+            (-6.907_755_278_982_137 / (self.sample_rate * noise_t60.max(0.02))).exp();
         for (index, mode) in self.modes.iter_mut().enumerate() {
-            mode.set_decay(self.sample_rate, t60 / (1.0 + index as f64 * 0.08));
+            let mode_position = index as f64 / (CYMBAL_MODE_COUNT - 1) as f64;
+            mode.set_decay(
+                self.sample_rate,
+                t60 / (1.0 + self.profile.high_mode_damping * mode_position),
+            );
         }
     }
+}
+
+/// Converts an in-band frequency ratio to a continuous position in the report's
+/// sparse cymbal spectrum anchors. Called only while the voice is constructed.
+fn cymbal_ratio_anchor_position(max_ratio: f64) -> f64 {
+    for index in 0..CYMBAL_REFERENCE_MODE_COUNT - 1 {
+        let lower = CYMBAL_MODE_RATIOS[index];
+        let upper = CYMBAL_MODE_RATIOS[index + 1];
+        if max_ratio <= upper {
+            return index as f64 + (max_ratio - lower) / (upper - lower);
+        }
+    }
+    (CYMBAL_REFERENCE_MODE_COUNT - 1) as f64
+}
+
+fn cymbal_ratio_at_anchor_position(position: f64) -> f64 {
+    let lower_index = (position.floor() as usize).min(CYMBAL_REFERENCE_MODE_COUNT - 2);
+    let fraction = (position - lower_index as f64).clamp(0.0, 1.0);
+    let lower = CYMBAL_MODE_RATIOS[lower_index];
+    let upper = CYMBAL_MODE_RATIOS[lower_index + 1];
+    lower + (upper - lower) * fraction
 }
 
 #[cfg(test)]
@@ -541,7 +687,7 @@ mod tests {
     #[test]
     fn cymbal_modes_are_dense_but_remain_below_nyquist() {
         let cymbal = CymbalVoice::new(32_000.0);
-        assert_eq!(cymbal.modes.len(), 32);
+        assert_eq!(cymbal.modes.len(), 96);
         assert!(
             cymbal
                 .modes
