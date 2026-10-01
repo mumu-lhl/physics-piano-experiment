@@ -77,12 +77,12 @@ impl DrumEngine {
         Self {
             sample_rate,
             dt: 1.0 / sample_rate,
-            kick: KickVoice::new_with_geometry(sample_rate, 58.0, 0.62, 90_000.0, 0.2794, 0.30),
+            kick: KickVoice::new_with_geometry(sample_rate, 48.0, 1.2, 90_000.0, 0.2794, 0.30),
             snare: SnareVoice::new(sample_rate),
             toms: [
-                TomVoice::new_with_geometry(sample_rate, 92.0, 0.82, 42_000.0, 0.127, 0.30),
-                TomVoice::new_with_geometry(sample_rate, 128.0, 0.92, 32_000.0, 0.1524, 0.30),
-                TomVoice::new_with_geometry(sample_rate, 170.0, 1.05, 25_000.0, 0.2032, 0.30),
+                TomVoice::new_with_geometry(sample_rate, 92.0, 2.4, 42_000.0, 0.127, 0.30),
+                TomVoice::new_with_geometry(sample_rate, 128.0, 2.8, 32_000.0, 0.1524, 0.30),
+                TomVoice::new_with_geometry(sample_rate, 170.0, 3.4, 25_000.0, 0.2032, 0.30),
             ],
             hats: CymbalVoice::new_for_kind(sample_rate, CymbalKind::HiHat),
             crash: CymbalVoice::new_for_kind(sample_rate, CymbalKind::Crash),

@@ -56,7 +56,11 @@ impl DoubleHeadVoice {
             surface_density_kg_m2,
         );
         top.set_strike_point(strike_radius, 0.0);
-        top.set_strike_contact_radius(head_radius_m * 0.07);
+        // A beater or stick head contacts a finite patch. The previous 7% patch
+        // injected too much energy into upper membrane modes, making kicks and
+        // toms sound papery compared with recorded kits.
+        let contact_patch_fraction = if head_radius_m > 0.22 { 0.16 } else { 0.14 };
+        top.set_strike_contact_radius(head_radius_m * contact_patch_fraction);
         Self {
             top,
             bottom: MembraneHead::new_with_geometry(
@@ -226,8 +230,8 @@ impl SnareVoice {
         let decay = decay.clamp(0.0, 1.0);
         if (self.decay - decay).abs() > 0.01 {
             self.decay = decay;
-            self.top.set_t60(0.12 + 0.38 * decay);
-            self.bottom.set_t60(0.16 + 0.58 * decay);
+            self.top.set_t60(0.20 + 0.60 * decay);
+            self.bottom.set_t60(0.30 + 0.90 * decay);
         }
     }
 
@@ -249,8 +253,8 @@ impl SnareVoice {
         }
         self.top.geometry_nonlinearity = 0.025 * velocity * velocity;
         self.bottom.geometry_nonlinearity = 0.01 * velocity * velocity;
-        self.top.set_t60(0.12 + 0.38 * self.decay);
-        self.bottom.set_t60(0.16 + 0.58 * self.decay);
+        self.top.set_t60(0.20 + 0.60 * self.decay);
+        self.bottom.set_t60(0.30 + 0.90 * self.decay);
         self.exciter.trigger(
             1.4 + 4.0 * velocity.powf(1.3),
             0.022,
@@ -325,7 +329,7 @@ impl SnareVoice {
         self.noise_state = self.noise_state * 0.87 + white * 0.13;
         self.noise_fast_state = self.noise_fast_state * 0.48 + white * 0.52;
         let bright_noise = self.noise_fast_state - self.noise_state;
-        let noise_t60 = 0.12 + 0.46 * self.decay;
+        let noise_t60 = 0.30 + 1.00 * self.decay;
         let noise_release = (-(6.907_755_278_982_137 * dt / noise_t60)).exp();
         let collision_noise =
             ((0.009 + 0.0045 * self.tightness) * chatter_force.sqrt() * self.noise_velocity_gain)
@@ -382,6 +386,11 @@ struct CymbalProfile {
     radiation_gain: f64,
     noise_gain: f64,
     high_mode_damping: f64,
+    // A compact radiation rolloff keeps the finite modal bank from exposing
+    // an artificially flat, over-bright top octave.
+    radiation_cutoff_closed_hz: f64,
+    radiation_cutoff_open_hz: f64,
+    radiation_filter_stages: usize,
     modal_t60_closed: f64,
     modal_t60_open: f64,
     noise_t60_closed: f64,
@@ -398,10 +407,13 @@ impl CymbalProfile {
                 radiation_gain: 0.00085,
                 noise_gain: 0.14,
                 high_mode_damping: 0.8,
-                modal_t60_closed: 0.035,
-                modal_t60_open: 1.65,
-                noise_t60_closed: 0.02,
-                noise_t60_open: 1.4,
+                radiation_cutoff_closed_hz: 20_000.0,
+                radiation_cutoff_open_hz: 5_500.0,
+                radiation_filter_stages: 1,
+                modal_t60_closed: 0.82,
+                modal_t60_open: 4.5,
+                noise_t60_closed: 0.82,
+                noise_t60_open: 3.4,
             },
             CymbalKind::Crash => Self {
                 base_hz: 340.0,
@@ -410,22 +422,28 @@ impl CymbalProfile {
                 radiation_gain: 0.0010,
                 noise_gain: 0.12,
                 high_mode_damping: 0.8,
-                modal_t60_closed: 3.2,
-                modal_t60_open: 3.2,
-                noise_t60_closed: 1.5,
-                noise_t60_open: 1.5,
+                radiation_cutoff_closed_hz: 7_000.0,
+                radiation_cutoff_open_hz: 7_000.0,
+                radiation_filter_stages: 2,
+                modal_t60_closed: 6.0,
+                modal_t60_open: 6.0,
+                noise_t60_closed: 2.5,
+                noise_t60_open: 2.5,
             },
             CymbalKind::Ride => Self {
                 base_hz: 330.0,
                 ratio_stretch: -0.00025,
                 impact_rolloff: 0.09,
                 radiation_gain: 0.0012,
-                noise_gain: 0.07,
+                noise_gain: 0.14,
                 high_mode_damping: 0.8,
-                modal_t60_closed: 2.7,
-                modal_t60_open: 2.7,
-                noise_t60_closed: 0.65,
-                noise_t60_open: 0.65,
+                radiation_cutoff_closed_hz: 22_000.0,
+                radiation_cutoff_open_hz: 22_000.0,
+                radiation_filter_stages: 1,
+                modal_t60_closed: 3.8,
+                modal_t60_open: 3.8,
+                noise_t60_closed: 1.0,
+                noise_t60_open: 1.0,
             },
         }
     }
@@ -509,6 +527,8 @@ pub struct CymbalVoice {
     pub open_amount: f64,
     pub decay_scale: f64,
     noise_decay_coefficient: f64,
+    radiation_filter_coefficients: [f64; 2],
+    radiation_filter_state: [f64; 2],
     pub active: bool,
     noise: XorShift32,
     noise_state: f64,
@@ -562,6 +582,8 @@ impl CymbalVoice {
             open_amount: 1.0,
             decay_scale: 1.0,
             noise_decay_coefficient: 0.0,
+            radiation_filter_coefficients: [0.0; 2],
+            radiation_filter_state: [0.0; 2],
             active: false,
             noise: XorShift32::new(seed),
             noise_state: 0.0,
@@ -596,6 +618,7 @@ impl CymbalVoice {
             }
             self.noise_state = 0.0;
             self.noise_envelope = 0.0;
+            self.radiation_filter_state = [0.0; 2];
         }
         for (index, mode) in self.modes.iter_mut().enumerate() {
             let impact_shape = 1.0 / (1.0 + index as f64 * self.profile.impact_rolloff);
@@ -648,8 +671,16 @@ impl CymbalVoice {
         self.noise_state = self.noise_state * 0.91 + white * 0.09;
         self.noise_envelope *= self.noise_decay_coefficient;
         output += (white - self.noise_state) * self.noise_envelope;
-        if self.energy() < 1e-8 {
+        // Keep the tail alive through the configured T60 instead of cutting
+        // quiet cymbal partials at an audible energy-dependent point.
+        if self.energy() < 1e-12 {
             self.active = false;
+        }
+        for stage in 0..self.profile.radiation_filter_stages {
+            let coefficient = self.radiation_filter_coefficients[stage];
+            self.radiation_filter_state[stage] +=
+                (output - self.radiation_filter_state[stage]) * coefficient;
+            output = self.radiation_filter_state[stage];
         }
         output.clamp(-1.0, 1.0)
     }
@@ -671,6 +702,7 @@ impl CymbalVoice {
         }
         self.noise_envelope = 0.0;
         self.noise_state = 0.0;
+        self.radiation_filter_state = [0.0; 2];
         self.active = false;
     }
 
@@ -684,6 +716,11 @@ impl CymbalVoice {
             * self.decay_scale;
         self.noise_decay_coefficient =
             (-6.907_755_278_982_137 / (self.sample_rate * noise_t60.max(0.02))).exp();
+        let cutoff = self.profile.radiation_cutoff_closed_hz
+            + (self.profile.radiation_cutoff_open_hz - self.profile.radiation_cutoff_closed_hz)
+                * open_amount;
+        let filter_coefficient = 1.0 - (-TAU * cutoff / self.sample_rate).exp();
+        self.radiation_filter_coefficients = [filter_coefficient; 2];
         for (index, mode) in self.modes.iter_mut().enumerate() {
             let mode_position = index as f64 / (CYMBAL_MODE_COUNT - 1) as f64;
             mode.set_decay(
