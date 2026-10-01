@@ -1,0 +1,48 @@
+--- a/src/wrapper/standalone/wrapper.rs
++++ b/src/wrapper/standalone/wrapper.rs
+@@ -120,0 +121,4 @@
++    /// The plugin editor receives standalone window resizes so its embedded view can track the
++    /// parent window.
++    editor: Arc<Mutex<Box<dyn Editor>>>,
++
+@@ -153 +157,35 @@
+-    fn on_event(&mut self, _window: &mut Window, _event: baseview::Event) -> EventStatus {
++    fn on_event(&mut self, window: &mut Window, event: baseview::Event) -> EventStatus {
++        if let baseview::Event::Window(baseview::WindowEvent::Resized(window_info)) = event {
++            let hint = self.editor.lock().resize_hint();
++            if hint.can_resize {
++                let logical_size = window_info.logical_size();
++                let requested_width = logical_size.width.round().max(1.0) as u32;
++                let requested_height = logical_size.height.round().max(1.0) as u32;
++
++                let (target_width, target_height) = if hint.preserve_aspect_ratio {
++                    let aspect_width = hint.aspect_ratio_width.max(1) as f64;
++                    let aspect_height = hint.aspect_ratio_height.max(1) as f64;
++                    let scale = (requested_width as f64 / aspect_width)
++                        .min(requested_height as f64 / aspect_height);
++                    (
++                        (aspect_width * scale).round().max(1.0) as u32,
++                        (aspect_height * scale).round().max(1.0) as u32,
++                    )
++                } else {
++                    (requested_width, requested_height)
++                };
++
++                if self.editor.lock().set_size(target_width, target_height) {
++                    let (applied_width, applied_height) = self.editor.lock().size();
++                    if requested_width.abs_diff(applied_width) > 2
++                        || requested_height.abs_diff(applied_height) > 2
++                    {
++                        window.resize(baseview::Size {
++                            width: applied_width as f64,
++                            height: applied_height as f64,
++                        });
++                    }
++                }
++            }
++        }
++
+@@ -346,0 +385 @@
++                let editor_for_resize = editor.clone();
+@@ -382,0 +422 @@
++                            editor: editor_for_resize,

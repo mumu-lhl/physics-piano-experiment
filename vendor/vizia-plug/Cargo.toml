@@ -1,0 +1,38 @@
+[package]
+name = "vizia_plug"
+version = "0.1.0"
+edition = "2024"
+authors = ["George Atkinson <geom3trik@vizia.dev>"]
+license = "MIT"
+description = "An adapter to use VIZIA GUIs with nice-plug"
+
+[workspace]
+members = ["xtask", "examples/gain_gui"]
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+nice-plug-core = "0.1.4"
+vizia = { git = "https://github.com/vizia/vizia", rev = "bbf98e643333d2533983f5866296036c34284018", default-features = false, features = ["baseview", "clipboard", "x11"] }
+vizia_reactive = { git = "https://github.com/vizia/vizia", rev = "bbf98e643333d2533983f5866296036c34284018" }
+# vizia = { path = "../vizia", default_features = false, features = ["baseview", "clipboard", "x11"] }
+
+crossbeam = "0.8"
+# Used by `ParamRegistry` for its signal map — flushing happens from the host /
+# audio thread, and `parking_lot::Mutex` avoids the priority-inversion and
+# poisoning overhead of `std::sync::Mutex` if the UI thread happens to hold the
+# lock during widget construction when a parameter change arrives.
+parking_lot = "0.12"
+# To make the state persistable
+serde = { version = "1.0", features = ["derive"] }
+
+
+# [profile.release]
+# lto = "thin"
+# strip = "symbols"
+
+# [profile.profiling]
+# inherits = "release"
+# debug = true
+# strip = "none"

@@ -2075,8 +2075,6 @@ dependencies = [
 [[package]]
 name = "nice-plug"
 version = "0.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5158967c27b26738f339bfd912cf386a3d88241a4111e8a79a8e42aa055c8b5"
 dependencies = [
  "anyhow",
  "anymap3",
@@ -2106,7 +2104,7 @@ dependencies = [
  "serde_json",
  "vst3",
  "widestring",
- "windows 0.62.2",
+ "windows 0.61.3",
 ]
 
 [[package]]
@@ -3977,7 +3975,6 @@ dependencies = [
 [[package]]
 name = "vizia_plug"
 version = "0.1.0"
-source = "git+https://github.com/vizia/vizia-plug.git?rev=34812c0ba14c5df39621bab956c74e660220636b#34812c0ba14c5df39621bab956c74e660220636b"
 dependencies = [
  "crossbeam",
  "nice-plug-core",

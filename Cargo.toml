@@ -11,6 +11,13 @@ members = [
 ]
 resolver = "3"
 
+[patch.crates-io]
+# Local build copies for these changes; their minimal upstream deltas live in patches/upstream-resize/.
+nice-plug = { path = "vendor/nice-plug" }
+
+[patch."https://github.com/vizia/vizia-plug.git"]
+vizia_plug = { path = "vendor/vizia-plug" }
+
 [workspace.package]
 version = "0.4.0"
 
