@@ -212,7 +212,7 @@ These checks verify rendered physical relationships; comparison against measured
 
 The project includes an automated matrix CI/CD pipeline (`.github/workflows/ci.yml`):
 - **Cross-Platform Matrix**: Automated compile and test passes on Linux (`ubuntu-latest`), macOS (`macos-latest`), and Windows (`windows-latest`) on every push and PR.
-- **CLAP Plugin Bundles**: Cross-compiles and packages native `.clap` virtual instruments across all platforms.
+- **CLAP & VST3 Plugin Bundles**: Builds and packages Piano, Guitar, Bass, and Drum plugins plus standalone apps across Linux, macOS, and Windows.
 - **Automated Releases**: Pushing a version tag (`git tag v0.1.0 && git push origin v0.1.0`) triggers a GitHub Release with multi-platform `.clap` archive downloads.
 
 ---

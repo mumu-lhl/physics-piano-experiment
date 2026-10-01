@@ -78,27 +78,51 @@ jobs:
       - name: Bundle guitar CLAP & VST3 plugins
         run: cargo xtask bundle physics-guitar --release
 
+      - name: Bundle bass CLAP & VST3 plugins
+        run: cargo xtask bundle physics-bass --release
+
+      - name: Bundle drum CLAP & VST3 plugins
+        run: cargo xtask bundle physics-drum --release
+
       - name: Build piano standalone executable
         run: cargo build --release -p physics-piano --bin physics-piano-standalone
 
       - name: Build guitar standalone executable
         run: cargo build --release -p physics-guitar --bin physics-guitar-standalone
 
-      - name: Stage piano and guitar formats separately
+      - name: Build bass standalone executable
+        run: cargo build --release -p physics-bass --bin physics-bass-standalone
+
+      - name: Build drum standalone executable
+        run: cargo build --release -p physics-drum --bin physics-drum-standalone
+
+      - name: Stage instrument formats separately
         shell: bash
         run: |
-          mkdir -p release-bundle/physics-piano release-bundle/physics-guitar
+          mkdir -p \
+            release-bundle/physics-piano \
+            release-bundle/physics-guitar \
+            release-bundle/physics-bass \
+            release-bundle/physics-drum
           cp -R target/bundled/physics-piano.clap release-bundle/physics-piano/
           cp -R target/bundled/physics-piano.vst3 release-bundle/physics-piano/
           cp -R target/bundled/physics-guitar.clap release-bundle/physics-guitar/
           cp -R target/bundled/physics-guitar.vst3 release-bundle/physics-guitar/
+          cp -R target/bundled/physics-bass.clap release-bundle/physics-bass/
+          cp -R target/bundled/physics-bass.vst3 release-bundle/physics-bass/
+          cp -R target/bundled/physics-drum.clap release-bundle/physics-drum/
+          cp -R target/bundled/physics-drum.vst3 release-bundle/physics-drum/
 
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             cp target/release/physics-piano-standalone.exe release-bundle/physics-piano/
             cp target/release/physics-guitar-standalone.exe release-bundle/physics-guitar/
+            cp target/release/physics-bass-standalone.exe release-bundle/physics-bass/
+            cp target/release/physics-drum-standalone.exe release-bundle/physics-drum/
           else
             cp target/release/physics-piano-standalone release-bundle/physics-piano/
             cp target/release/physics-guitar-standalone release-bundle/physics-guitar/
+            cp target/release/physics-bass-standalone release-bundle/physics-bass/
+            cp target/release/physics-drum-standalone release-bundle/physics-drum/
           fi
 
       - name: Archive Windows bundle
@@ -107,15 +131,17 @@ jobs:
         run: |
           Compress-Archive -Path release-bundle/physics-piano -DestinationPath release-physics-piano-${{ runner.os }}-${{ runner.arch }}.zip
           Compress-Archive -Path release-bundle/physics-guitar -DestinationPath release-physics-guitar-${{ runner.os }}-${{ runner.arch }}.zip
+          Compress-Archive -Path release-bundle/physics-bass -DestinationPath release-physics-bass-${{ runner.os }}-${{ runner.arch }}.zip
+          Compress-Archive -Path release-bundle/physics-drum -DestinationPath release-physics-drum-${{ runner.os }}-${{ runner.arch }}.zip
 
       - name: Archive Linux and macOS bundle
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          chmod +x release-bundle/physics-piano/physics-piano-standalone
-          chmod +x release-bundle/physics-guitar/physics-guitar-standalone
-          tar -czf "release-physics-piano-${RUNNER_OS}-${RUNNER_ARCH}.tar.gz" -C release-bundle physics-piano
-          tar -czf "release-physics-guitar-${RUNNER_OS}-${RUNNER_ARCH}.tar.gz" -C release-bundle physics-guitar
+          for instrument in physics-piano physics-guitar physics-bass physics-drum; do
+            chmod +x "release-bundle/$instrument/$instrument-standalone"
+            tar -czf "release-${instrument}-${RUNNER_OS}-${RUNNER_ARCH}.tar.gz" -C release-bundle "$instrument"
+          done
 
       - name: Show sccache statistics
         run: sccache --show-stats
