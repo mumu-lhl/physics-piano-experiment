@@ -198,6 +198,14 @@ cargo test -p physics-piano --test test_acoustic
 
 These tests validate physical relationships without licensed reference recordings. MAPS/VSL comparison remains an optional listening-reference audit.
 
+The bass engine has a matching no-reference acoustic regression suite for open-string pitch, stiff-string inharmonicity, dynamic level, pickup-position response, acoustic-body resonance, and note release. The bass pickup's passive tone-resonance shift also has a unit regression test:
+
+```bash
+cargo test -p physics-bass
+```
+
+These checks verify rendered physical relationships; comparison against measured bass recordings remains a separate calibration step.
+
 ---
 
 ## Continuous Integration & Release (GitHub Actions)

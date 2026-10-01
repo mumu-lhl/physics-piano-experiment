@@ -2808,6 +2808,7 @@ dependencies = [
  "physics-dsp",
  "physics-presets",
  "physics-ui",
+ "realfft",
  "vizia_plug",
 ]
 
