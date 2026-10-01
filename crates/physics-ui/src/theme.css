@@ -10,7 +10,7 @@ label {
 }
 
 .root {
-    child-space: 14px;
+    padding: 14px;
     row-between: 8px;
 }
 
@@ -48,7 +48,7 @@ label {
     border-color: #292d3c;
     border-width: 1px;
     border-radius: 5px;
-    child-space: 8px;
+    padding: 8px;
     row-between: 4px;
 }
 
