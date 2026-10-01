@@ -462,16 +462,6 @@ pub fn create_vizia_drum_editor(
 
                 HStack::new(cx, |cx| {
                     VStack::new(cx, |cx| {
-                        Label::new(cx, I18n::title(lang)).class("title");
-                        Label::new(cx, I18n::subtitle(lang)).class("subtitle");
-                    })
-                    .width(Stretch(1.0));
-                })
-                .class("header")
-                .width(Stretch(1.0));
-
-                HStack::new(cx, |cx| {
-                    VStack::new(cx, |cx| {
                         Label::new(cx, I18n::snare_membrane(lang)).class("rack-title");
                         parameter_slider(
                             cx,

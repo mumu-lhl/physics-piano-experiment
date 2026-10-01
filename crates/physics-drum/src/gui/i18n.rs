@@ -5,24 +5,6 @@ pub use physics_ui::Language;
 pub struct I18n;
 
 impl I18n {
-    pub fn title(lang: Language) -> &'static str {
-        match lang {
-            Language::English => "PHYSICS DRUM",
-            Language::SimplifiedChinese => "物理建模架子鼓",
-        }
-    }
-
-    pub fn subtitle(lang: Language) -> &'static str {
-        match lang {
-            Language::English => {
-                "Bessel membrane modes · Hunt-Crossley impact · coupled heads · nonlinear cymbals"
-            }
-            Language::SimplifiedChinese => {
-                "Bessel 膜模态 · Hunt-Crossley 冲击 · 双膜耦合 · 非线性镲片"
-            }
-        }
-    }
-
     pub fn preset(lang: Language) -> &'static str {
         match lang {
             Language::English => "Preset:",
