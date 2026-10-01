@@ -1,4 +1,5 @@
 pub mod lid;
+pub(crate) mod simd;
 pub mod upols;
 
 pub use lid::{LidBaffle, LidPosition};

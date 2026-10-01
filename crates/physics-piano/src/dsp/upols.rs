@@ -6,6 +6,7 @@
 //! - Zero-allocation sample-by-sample and block-by-block streaming
 //! - Orthotropic spruce soundboard analytical multi-perspective IR generator
 
+use crate::dsp::simd::{complex_mac_accumulate, initialize_backend};
 use num_complex::Complex;
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 use std::f64::consts::PI;
@@ -188,6 +189,7 @@ pub struct MultiPerspectiveUPOLS {
 
 impl MultiPerspectiveUPOLS {
     pub fn new(close: &StereoIR, player: &StereoIR, ambient: &StereoIR, block_size: usize) -> Self {
+        initialize_backend();
         let b = block_size;
         let fft_size = 2 * b;
         let rfft_bins = fft_size / 2 + 1;
@@ -304,7 +306,6 @@ impl MultiPerspectiveUPOLS {
             self.y_freq_right[m].fill(Complex::new(0.0, 0.0));
         }
 
-        let num_bins = self.fft_size / 2 + 1;
         for p in 0..self.num_parts {
             let idx = (self.history_idx + self.num_parts - p) % self.num_parts;
             let x_p = &self.x_history[idx];
@@ -315,10 +316,8 @@ impl MultiPerspectiveUPOLS {
                 let yl = &mut self.y_freq_left[m];
                 let yr = &mut self.y_freq_right[m];
 
-                for k in 0..num_bins {
-                    yl[k] += x_p[k] * hl[k];
-                    yr[k] += x_p[k] * hr[k];
-                }
+                complex_mac_accumulate(yl, x_p, hl);
+                complex_mac_accumulate(yr, x_p, hr);
             }
         }
 
@@ -379,7 +378,6 @@ impl MultiPerspectiveUPOLS {
                 self.y_freq_right[m].fill(Complex::new(0.0, 0.0));
             }
 
-            let num_bins = self.fft_size / 2 + 1;
             for p in 0..self.num_parts {
                 let idx = (self.history_idx + self.num_parts - p) % self.num_parts;
                 let x_p = &self.x_history[idx];
@@ -390,10 +388,8 @@ impl MultiPerspectiveUPOLS {
                     let yl = &mut self.y_freq_left[m];
                     let yr = &mut self.y_freq_right[m];
 
-                    for k in 0..num_bins {
-                        yl[k] += x_p[k] * hl[k];
-                        yr[k] += x_p[k] * hr[k];
-                    }
+                    complex_mac_accumulate(yl, x_p, hl);
+                    complex_mac_accumulate(yr, x_p, hr);
                 }
             }
 
@@ -475,6 +471,7 @@ pub struct UPOLSConvolver {
 
 impl UPOLSConvolver {
     pub fn new(ir_left: &[f64], ir_right: &[f64], block_size: usize) -> Self {
+        initialize_backend();
         let b = block_size;
         let fft_size = 2 * b;
         let rfft_bins = fft_size / 2 + 1;
@@ -552,17 +549,14 @@ impl UPOLSConvolver {
         self.y_freq_left.fill(Complex::new(0.0, 0.0));
         self.y_freq_right.fill(Complex::new(0.0, 0.0));
 
-        let num_bins = self.fft_size / 2 + 1;
         for p in 0..self.num_parts {
             let idx = (self.history_idx + self.num_parts - p) % self.num_parts;
             let x_p = &self.x_history[idx];
             let hl = &self.h_left[p];
             let hr = &self.h_right[p];
 
-            for k in 0..num_bins {
-                self.y_freq_left[k] += x_p[k] * hl[k];
-                self.y_freq_right[k] += x_p[k] * hr[k];
-            }
+            complex_mac_accumulate(&mut self.y_freq_left, x_p, hl);
+            complex_mac_accumulate(&mut self.y_freq_right, x_p, hr);
         }
 
         self.history_idx = (self.history_idx + 1) % self.num_parts;
@@ -605,17 +599,14 @@ impl UPOLSConvolver {
             self.y_freq_left.fill(Complex::new(0.0, 0.0));
             self.y_freq_right.fill(Complex::new(0.0, 0.0));
 
-            let num_bins = self.fft_size / 2 + 1;
             for p in 0..self.num_parts {
                 let idx = (self.history_idx + self.num_parts - p) % self.num_parts;
                 let x_p = &self.x_history[idx];
                 let hl = &self.h_left[p];
                 let hr = &self.h_right[p];
 
-                for k in 0..num_bins {
-                    self.y_freq_left[k] += x_p[k] * hl[k];
-                    self.y_freq_right[k] += x_p[k] * hr[k];
-                }
+                complex_mac_accumulate(&mut self.y_freq_left, x_p, hl);
+                complex_mac_accumulate(&mut self.y_freq_right, x_p, hr);
             }
 
             self.history_idx = (self.history_idx + 1) % self.num_parts;

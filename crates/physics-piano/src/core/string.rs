@@ -1,5 +1,8 @@
 //! Euler-Bernoulli Damped Stiff String Engine with Dual Polarization in Rust.
 
+use crate::dsp::simd::{
+    F32TransitionSoA, HammerProjection, SoaF32, initialize_backend, update_modal_state,
+};
 use crate::params::StringPhysicalParams;
 use physics_dsp::{ModalTransition, OverdampedPolicy};
 use std::f64::consts::PI;
@@ -9,6 +12,42 @@ use std::f64::consts::PI;
 pub struct ModalState {
     pub q: f64,
     pub v: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModalStateSoA {
+    q: SoaF32,
+    v: SoaF32,
+}
+
+impl ModalStateSoA {
+    fn zeros(num_modes: usize) -> Self {
+        Self {
+            q: SoaF32::zeros(num_modes),
+            v: SoaF32::zeros(num_modes),
+        }
+    }
+
+    pub fn get(&self, index: usize) -> ModalState {
+        ModalState {
+            q: self.q.get(index) as f64,
+            v: self.v.get(index) as f64,
+        }
+    }
+
+    pub fn set(&mut self, index: usize, q: f64, v: f64) {
+        self.q.set(index, q as f32);
+        self.v.set(index, v as f32);
+    }
+
+    fn clear(&mut self) {
+        for block in &mut self.q.blocks {
+            block.0.fill(0.0);
+        }
+        for block in &mut self.v.blocks {
+            block.0.fill(0.0);
+        }
+    }
 }
 
 #[repr(C, align(64))]
@@ -50,9 +89,15 @@ pub struct StiffStringModal {
     pub gamma_p: Vec<(f64, f64)>,
     pub omega_p: Vec<f64>,
 
+    // Aligned single-precision coefficient planes feed AVX2/FMA and NEON kernels.
+    transition_t_f32: F32TransitionSoA,
+    transition_p_f32: F32TransitionSoA,
+    phi_h_f32: SoaF32,
+    damper_modal_rates_f32: SoaF32,
+
     // Dynamic states
-    pub state_t: Vec<ModalState>,
-    pub state_p: Vec<ModalState>,
+    pub state_t: ModalStateSoA,
+    pub state_p: ModalStateSoA,
     pub current_delta_t: f64,
 
     // Damper
@@ -75,6 +120,7 @@ pub struct StiffStringModal {
 
 impl StiffStringModal {
     pub fn new(params: StringPhysicalParams, sample_rate: f64) -> Self {
+        initialize_backend();
         let dt = 1.0 / sample_rate;
         let length = params.length;
         let radius = params.radius;
@@ -148,6 +194,12 @@ impl StiffStringModal {
         let damper_lift_rate = 1.0 - (-dt / 0.006).exp();
 
         let n_modes_sq = n_modes.iter().map(|&n| n * n).collect();
+        let mut phi_h_f32 = SoaF32::zeros(m);
+        let mut damper_modal_rates_f32 = SoaF32::zeros(m);
+        for i in 0..m {
+            phi_h_f32.set(i, phi_h[i] as f32);
+            damper_modal_rates_f32.set(i, damper_modal_rates[i] as f32);
+        }
 
         let mut string = Self {
             params,
@@ -177,8 +229,12 @@ impl StiffStringModal {
             phi_p: Vec::new(),
             gamma_p: Vec::new(),
             omega_p: Vec::new(),
-            state_t: vec![ModalState { q: 0.0, v: 0.0 }; m],
-            state_p: vec![ModalState { q: 0.0, v: 0.0 }; m],
+            transition_t_f32: F32TransitionSoA::zeros(m),
+            transition_p_f32: F32TransitionSoA::zeros(m),
+            phi_h_f32,
+            damper_modal_rates_f32,
+            state_t: ModalStateSoA::zeros(m),
+            state_p: ModalStateSoA::zeros(m),
             current_delta_t: 0.0,
             damper_active: true,
             damper_decay_mult: 1.0,
@@ -227,7 +283,7 @@ impl StiffStringModal {
         self.gamma_p.clear();
         self.omega_p.clear();
 
-        for &n in &self.n_modes {
+        for (i, &n) in self.n_modes.iter().enumerate() {
             let omega_t = n * eff_omega_0 * (1.0 + eff_b * n.powi(2)).sqrt();
             let gamma_t = self.sigma0 + self.sigma1 * (n * PI / self.length).powi(2);
 
@@ -250,10 +306,14 @@ impl StiffStringModal {
             self.omega_t.push(omega_t);
             self.gamma_t.push(transition_t.gamma);
             self.phi_t.push(transition_t.phi);
+            self.transition_t_f32
+                .set(i, transition_t.phi, transition_t.gamma);
 
             self.omega_p.push(omega_p);
             self.gamma_p.push(transition_p.gamma);
             self.phi_p.push(transition_p.phi);
+            self.transition_p_f32
+                .set(i, transition_p.phi, transition_p.gamma);
         }
     }
 
@@ -280,21 +340,16 @@ impl StiffStringModal {
         let mut u_h = 0.0;
         let mut v_h = 0.0;
         for i in 0..self.num_modes {
-            u_h += self.state_t[i].q * self.phi_h[i];
-            v_h += self.state_t[i].v * self.phi_h[i];
+            let state = self.state_t.get(i);
+            u_h += state.q * self.phi_h[i];
+            v_h += state.v * self.phi_h[i];
         }
         (u_h, v_h)
     }
 
     pub fn reset(&mut self) {
-        for state in &mut self.state_t {
-            state.q = 0.0;
-            state.v = 0.0;
-        }
-        for state in &mut self.state_p {
-            state.q = 0.0;
-            state.v = 0.0;
-        }
+        self.state_t.clear();
+        self.state_p.clear();
         self.current_delta_t = 0.0;
         if self.has_damper {
             self.current_damper_depth = 1.0;
@@ -312,10 +367,10 @@ impl StiffStringModal {
         let mut energy = 0.0;
         let factor = 0.5 * self.mu * self.length;
         for i in 0..self.num_modes {
-            energy += factor
-                * (self.state_t[i].v.powi(2) + self.omega_t[i].powi(2) * self.state_t[i].q.powi(2));
-            energy += factor
-                * (self.state_p[i].v.powi(2) + self.omega_p[i].powi(2) * self.state_p[i].q.powi(2));
+            let state_t = self.state_t.get(i);
+            let state_p = self.state_p.get(i);
+            energy += factor * (state_t.v.powi(2) + self.omega_t[i].powi(2) * state_t.q.powi(2));
+            energy += factor * (state_p.v.powi(2) + self.omega_p[i].powi(2) * state_p.q.powi(2));
         }
         energy
     }
@@ -325,8 +380,8 @@ impl StiffStringModal {
         let mut fb_t = 0.0;
         let mut fb_p = 0.0;
         for i in 0..self.num_modes {
-            fb_t += self.state_t[i].q * self.bridge_coeff[i];
-            fb_p += self.state_p[i].q * self.bridge_coeff[i];
+            fb_t += self.state_t.get(i).q * self.bridge_coeff[i];
+            fb_p += self.state_p.get(i).q * self.bridge_coeff[i];
         }
         (fb_t, fb_p, self.current_delta_t)
     }
@@ -358,92 +413,39 @@ impl StiffStringModal {
         let is_damping = self.current_damper_depth > 1e-4;
         let damper_depth_dt = self.current_damper_depth * self.dt;
 
-        let has_hammer = f_hammer_scaled > 0.0;
+        let hammer = (f_hammer_scaled > 0.0).then_some(HammerProjection {
+            force: f_hammer_scaled as f32,
+            shape: &self.phi_h_f32,
+        });
+        let damper_depth_dt_f32 = damper_depth_dt as f32;
+        update_modal_state(
+            &mut self.state_t.q,
+            &mut self.state_t.v,
+            &self.transition_t_f32,
+            f_ext_t as f32,
+            hammer,
+            &self.damper_modal_rates_f32,
+            damper_depth_dt_f32,
+            is_damping,
+        );
+        update_modal_state(
+            &mut self.state_p.q,
+            &mut self.state_p.v,
+            &self.transition_p_f32,
+            f_ext_p as f32,
+            None,
+            &self.damper_modal_rates_f32,
+            damper_depth_dt_f32,
+            is_damping,
+        );
 
-        if is_damping {
-            for i in 0..self.num_modes {
-                let f_t = if has_hammer {
-                    f_hammer_scaled * self.phi_h[i] + f_ext_t
-                } else {
-                    f_ext_t
-                };
-                let f_p = f_ext_p;
-
-                let (p11_t, p12_t, p21_t, p22_t) = self.phi_t[i];
-                let (g1_t, g2_t) = self.gamma_t[i];
-
-                let q_t = self.state_t[i].q;
-                let v_t = self.state_t[i].v;
-
-                let mut new_q_t = p11_t * q_t + p12_t * v_t + g1_t * f_t;
-                let mut new_v_t = p21_t * q_t + p22_t * v_t + g2_t * f_t;
-
-                let (p11_p, p12_p, p21_p, p22_p) = self.phi_p[i];
-                let (g1_p, g2_p) = self.gamma_p[i];
-
-                let q_p = self.state_p[i].q;
-                let v_p = self.state_p[i].v;
-
-                let mut new_q_p = p11_p * q_p + p12_p * v_p + g1_p * f_p;
-                let mut new_v_p = p21_p * q_p + p22_p * v_p + g2_p * f_p;
-
-                let rate = self.damper_modal_rates[i];
-                let x = rate * damper_depth_dt;
-                let mode_damper_factor = (1.0 - x + 0.5 * x * x).max(0.0);
-                new_q_t *= mode_damper_factor;
-                new_v_t *= mode_damper_factor;
-                new_q_p *= mode_damper_factor;
-                new_v_p *= mode_damper_factor;
-
-                self.state_t[i].q = new_q_t;
-                self.state_t[i].v = new_v_t;
-                self.state_p[i].q = new_q_p;
-                self.state_p[i].v = new_v_p;
-
-                let bc = self.bridge_coeff[i];
-                fb_t += new_q_t * bc;
-                fb_p += new_q_p * bc;
-
-                modal_strain_sum += self.n_modes_sq[i] * (new_q_t * new_q_t + new_q_p * new_q_p);
-            }
-        } else {
-            for i in 0..self.num_modes {
-                let f_t = if has_hammer {
-                    f_hammer_scaled * self.phi_h[i] + f_ext_t
-                } else {
-                    f_ext_t
-                };
-                let f_p = f_ext_p;
-
-                let (p11_t, p12_t, p21_t, p22_t) = self.phi_t[i];
-                let (g1_t, g2_t) = self.gamma_t[i];
-
-                let q_t = self.state_t[i].q;
-                let v_t = self.state_t[i].v;
-
-                let new_q_t = p11_t * q_t + p12_t * v_t + g1_t * f_t;
-                let new_v_t = p21_t * q_t + p22_t * v_t + g2_t * f_t;
-
-                let (p11_p, p12_p, p21_p, p22_p) = self.phi_p[i];
-                let (g1_p, g2_p) = self.gamma_p[i];
-
-                let q_p = self.state_p[i].q;
-                let v_p = self.state_p[i].v;
-
-                let new_q_p = p11_p * q_p + p12_p * v_p + g1_p * f_p;
-                let new_v_p = p21_p * q_p + p22_p * v_p + g2_p * f_p;
-
-                self.state_t[i].q = new_q_t;
-                self.state_t[i].v = new_v_t;
-                self.state_p[i].q = new_q_p;
-                self.state_p[i].v = new_v_p;
-
-                let bc = self.bridge_coeff[i];
-                fb_t += new_q_t * bc;
-                fb_p += new_q_p * bc;
-
-                modal_strain_sum += self.n_modes_sq[i] * (new_q_t * new_q_t + new_q_p * new_q_p);
-            }
+        // Keep geometric strain and bridge reaction reductions in f64.
+        for i in 0..self.num_modes {
+            let q_t = self.state_t.q.get(i) as f64;
+            let q_p = self.state_p.q.get(i) as f64;
+            fb_t += q_t * self.bridge_coeff[i];
+            fb_p += q_p * self.bridge_coeff[i];
+            modal_strain_sum += self.n_modes_sq[i] * (q_t * q_t + q_p * q_p);
         }
 
         self.current_delta_t = self.geom_tension_coeff * modal_strain_sum;

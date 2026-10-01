@@ -3,6 +3,7 @@ use crate::core::bridge::BridgeSoundboard;
 use crate::core::pedal::{DamperWhoosh, PlateShock, RestrikeBuzz};
 use crate::core::voice::PianoVoice;
 use crate::dsp::lid::LidBaffle;
+use crate::dsp::simd::initialize_backend;
 use crate::dsp::upols::{
     MultiPerspectiveUPOLS, UPOLSConvolver, generate_multi_perspective_soundboard_irs,
 };
@@ -78,6 +79,7 @@ pub const MAX_ACTIVE_VOICES: usize = 32;
 
 impl PianoEngine {
     pub fn new(sample_rate: f64, num_modes: usize, stretch_tuning: bool) -> Self {
+        initialize_backend();
         let dt = 1.0 / sample_rate;
         let all_params = generate_grand_piano_parameters(num_modes, stretch_tuning);
         let mut key_params = HashMap::with_capacity(88);

@@ -64,7 +64,7 @@ fn test_string_energy_and_decay() {
     assert!(init_energy < 1e-12);
 
     // Apply an impulse to mode 0
-    string.state_t[0].q = 1e-4;
+    string.state_t.set(0, 1e-4, 0.0);
     let excited_energy = string.get_energy();
     assert!(excited_energy > 0.0);
 

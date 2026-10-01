@@ -339,17 +339,18 @@ The project includes an automated matrix CI/CD pipeline (`.github/workflows/ci.y
 - [x] **Lock-Free Thread Safety & MIDI CC Isolation - [COMPLETED]**:
   - Lock-free `AtomicU64` bitset for active key state query from GUI, eliminating thread lock contention between audio real-time thread and GUI rendering loop.
   - Edge-triggered MIDI CC vs GUI slider disambiguation, preventing race conditions on sustain / soft pedals.
-- [ ] **Explicit SIMD Vectorization & Structure-of-Arrays (SoA) Layout**:
-  - Transform modal state storage from Array-of-Structures (AoS: `Vec<ModalState>`) to 32-byte aligned Structure-of-Arrays (SoA: `[f64; 32]`, `[f32; 32]`).
-  - Implement explicit AVX2 / AVX-512 FMA (`_mm256_fmadd_pd`) and ARM NEON (`vfma_f64`) inner modal kernels.
-- [ ] **Mixed-Precision Computing (`f32` Modal Oscillators + `f64` Geometric Tension Accumulation)**:
-  - Transition modal state updates ($q, v, \Phi, \Gamma$) to 32-bit single precision (`f32`), halving memory bandwidth and doubling vector lane throughput.
-  - Preserve 64-bit double precision (`f64`) strictly for geometric non-linear string tension accumulation $\Delta T(t)$ and bridge reaction feedback to eliminate long-term DC drift.
-- [ ] **Multi-Core Voice Parallelism (Host Collaborative Thread Pool & Rayon Work-Stealing)**:
-  - Decouple inter-string bridge reaction force across active voices with 1-sample delay.
-  - Scale seamless real-time polyphony to 64+ concurrent voices for extreme virtuoso piano literature.
-- [ ] **Vectorized UPOLS Partitioned FFT Convolver**:
-  - Accelerate zero-latency partitioned impulse soundboard convolution using explicit AVX2/NEON complex vector multiply-accumulate and optimized FFT backends.
+- [x] **Explicit SIMD Vectorization & Structure-of-Arrays (SoA) Layout - [COMPLETED]**:
+  - Store modal positions, velocities, and transition coefficients in 32-byte aligned, eight-lane SoA blocks.
+  - Use runtime-dispatched AVX2/FMA or ARM NEON kernels for modal updates, with scalar fallback.
+- [x] **Mixed-Precision Computing (`f32` Modal Oscillators + `f64` Geometric Tension Accumulation) - [COMPLETED]**:
+  - Update modal positions, velocities, transition coefficients, and damper rates in `f32`.
+  - Accumulate bridge reaction and geometric non-linear string tension $\Delta T(t)$ in `f64`.
+- [ ] **Host-Cooperative Multi-Core Voice Parallelism (Rayon Work-Stealing)**:
+  - Preserve sample-accurate one-sample bridge feedback while distributing active voices across host worker threads.
+  - Keep worker scheduling and synchronization outside unsafe real-time callback paths. Current plugin wrappers expose no shared host worker executor.
+  - Raise the 32-voice limit only after the host-cooperative executor is available and real-time load is measured.
+- [x] **Vectorized UPOLS Partitioned FFT Convolver - [COMPLETED]**:
+  - Use runtime-dispatched AVX2/FMA or ARM NEON complex multiply-accumulate kernels across mono and multi-perspective UPOLS paths, with scalar fallback.
 
 ---
 
