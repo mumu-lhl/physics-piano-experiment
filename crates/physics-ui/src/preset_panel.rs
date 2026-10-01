@@ -58,7 +58,9 @@ pub fn preset_panel(
     let language = signals.language;
 
     HStack::new(cx, move |cx| {
-        Element::new(cx).width(Stretch(1.0));
+        Element::new(cx)
+            .width(Stretch(1.0))
+            .pointer_events(PointerEvents::None);
         HStack::new(cx, move |cx| {
             if let Some(label) = layout.preset_label {
                 Label::new(cx, label).class("param-label");
@@ -131,7 +133,9 @@ pub fn preset_panel(
         })
         .height(Pixels(38.0))
         .horizontal_gap(Pixels(8.0));
-        Element::new(cx).width(Stretch(1.0));
+        Element::new(cx)
+            .width(Stretch(1.0))
+            .pointer_events(PointerEvents::None);
     })
     .height(Pixels(38.0))
     .width(Stretch(1.0));
