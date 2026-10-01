@@ -1,6 +1,6 @@
-# Physics Piano & Guitar Synthesizer
+# Physics Piano, Guitar & Bass Synthesizers
 
-A high-performance, first-principles physical modeling acoustic piano and guitar virtual instrument in **Rust** (with native CLAP / VST3 plugin bundles and standalone desktop applications), accompanied by an offline Python validation, calibration, and differentiable physics harness.
+A collection of piano, guitar, and bass virtual instruments built in **Rust**, with native CLAP / VST3 plugin bundles and standalone desktop applications. The repository also includes an offline Python validation, calibration, and differentiable physics harness. The experimental physical-modeling drum instrument is archived and is not part of releases.
 
 This project implements complete continuous mechanical simulations of acoustic and electric instruments, translating Euler-Bernoulli wave mechanics, Hunt-Crossley felt impact dynamics, Kirchhoff-Carrier geometric tension modulation, anisotropic bridge admittance, and soundboard/body radiation into high-performance discrete state-space synthesis engines with hard real-time execution guarantees.
 
@@ -32,7 +32,7 @@ physics-piano-experiment/
 │   │   ├── src/string.rs         # CFL-bounded stiff-string grid, fret contact, slap
 │   │   ├── src/acoustic.rs       # Finite pickup aperture and bass-body modes
 │   │   └── src/nice_plugin.rs    # CLAP / VST3 / standalone adapter
-│   └── physics-drum/             # Hybrid modal physical-modeling drum kit
+│   └── physics-drum/             # Archived physical-modeling drum experiment
 │       ├── src/membrane.rs       # Bessel-ratio circular membrane modes
 │       ├── src/voices.rs         # Double-head, snare-wire and cymbal models
 │       └── src/nice_plugin.rs    # General-MIDI CLAP / VST3 adapter
@@ -81,10 +81,12 @@ physics-piano-experiment/
 * **Electric and acoustic paths**: finite magnetic pickup aperture, tone filtering, and A0/B1/Bridge-Hill body modes.
 * **Playable Vizia editor**: interactive 5-string/24-fret fretboard, atomic vibration display, MIDI audition events, and physical parameter racks.
 
-### 4. Physical Drum Engine (`crates/physics-drum`)
-* **Reduced-order circular membrane model** using Bessel frequency ratios, double-head cavity coupling, and Hunt-Crossley impact.
-* **Snare and cymbal mechanics**: unilateral wire chatter, deterministic noise, loopback-FM cymbal cascade, and hi-hat choke groups.
-* **Playable Vizia editor**: interactive kick/snare/tom/hat/crash/ride pads, decaying voice glow, and MIDI/CC4 control.
+### 4. Archived Drum Experiment (`crates/physics-drum`)
+The physical-modeling drum instrument is archived because its timbres did not
+match recorded and sampled drum kits well enough. Its source and reference-based
+evaluation remain available for research, but GitHub Actions does not test or
+release it. The planned replacement is a sample-based engine; see the
+[drum roadmap](crates/physics-drum/ROADMAP.md).
 
 ---
 
@@ -142,16 +144,21 @@ cargo run --release -p physics-guitar --bin physics-guitar-cli -- render E2 3.0 
 
 # Bass: render low E1 (electric; use "acoustic" as the final argument for body radiation)
 cargo run --release -p physics-bass --bin physics-bass-rs -- E1 3.0 bass_e1.wav 0.85
-
-# Drums: render a General-MIDI kick/snare/hat demonstration
-cargo run --release -p physics-drum --bin physics-drum-rs -- 3.0 drums.wav
 ```
 
 ### 4. Running Workspace Test Suite
-Verify physical invariants, numerical stability, and audio DSP integration across all crates:
+Verify the active piano, guitar, and bass crates:
 
 ```bash
-cargo test --workspace
+cargo test --workspace --exclude physics-drum
+```
+
+The archived drum timbre evaluation is separate and needs downloaded reference
+audio (stored under the ignored `target/` directory):
+
+```bash
+python3 tools/download_drum_references.py
+cargo nextest run -p physics-drum --test timbre_eval -- --nocapture
 ```
 
 ---
@@ -211,8 +218,8 @@ These checks verify rendered physical relationships; comparison against measured
 ## Continuous Integration & Release (GitHub Actions)
 
 The project includes an automated matrix CI/CD pipeline (`.github/workflows/ci.yml`):
-- **Cross-Platform Matrix**: Automated compile and test passes on Linux (`ubuntu-latest`), macOS (`macos-latest`), and Windows (`windows-latest`) on every push and PR.
-- **CLAP & VST3 Plugin Bundles**: Builds and packages Piano, Guitar, Bass, and Drum plugins plus standalone apps across Linux, macOS, and Windows.
+- **Cross-Platform Matrix**: Automated compile and test passes for Piano, Guitar, and Bass on Linux (`ubuntu-latest`), macOS (`macos-latest`), and Windows (`windows-latest`) on every push and PR. The archived drum crate is excluded.
+- **CLAP & VST3 Plugin Bundles**: Builds and packages Piano, Guitar, and Bass plugins plus standalone apps across Linux, macOS, and Windows. Drum releases are paused while the sample-based replacement is developed.
 - **Automated Releases**: Pushing a version tag (`git tag v0.1.0 && git push origin v0.1.0`) triggers a GitHub Release with multi-platform `.clap` archive downloads.
 
 ---
