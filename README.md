@@ -18,10 +18,10 @@ physics-piano-experiment/
 │   │   ├── src/bin/              # Standalone playable app & headless CLI
 │   │   ├── src/core/             # Stiff string, SAV hammer, bridge, action noise, pedals
 │   │   ├── src/dsp/              # Multi-perspective UPOLS convolution & lid opening baffle
-│   │   ├── src/gui/              # Hardware-accelerated egui interface & 88-key keyboard
+│   │   ├── src/gui/              # Vizia interface & 88-key keyboard
 │   │   ├── src/params/           # 88-key grand piano physical parameter generator
 │   │   ├── src/clap_plugin.rs    # Low-level CLAP C-ABI bindings
-│   │   └── src/nih_plugin.rs     # NIH-plug wrapper (CLAP, VST3, Standalone)
+│   │   └── src/nice_plugin.rs    # nice-plug adapter (CLAP, VST3, Standalone)
 │   └── physics-guitar/           # Acoustic & Electric Guitar physical modeling engine
 │       ├── src/bin/              # Guitar standalone playable app & CLI
 │       ├── src/core/             # Guitar string, tension modulation, body radiation, pluck
@@ -74,7 +74,7 @@ physics-piano-experiment/
 * **Stereo Acoustic Radiation & Body Modes**: Christensen soundhole center radiation, upper/lower bout binaural radiation, and dual allpass wood dispersion.
 * **Factory Presets & Real-Time GUI**:
   - 6 Built-in Factory Presets: *Martin D-28 Fingerstyle*, *Dreadnought Strummer*, *Strat Clean Chime*, *Texas Blues Breakup*, *Les Paul Warm Jazz*, and *Flamenco Con Brio*.
-  - Hardware-accelerated egui interface featuring real-time fretboard tracking, active fret indicators, string energy meters, and parameter racks.
+  - Vizia interface featuring real-time fretboard tracking, active fret indicators, string energy meters, and parameter racks.
 
 ### 3. Physical Bass Engine (`crates/physics-bass`)
 * **CFL-bounded stiff-string FDTD** with geometric tension, bounded fret contact, and finger/pick/slap excitation.
@@ -288,9 +288,9 @@ The project includes an automated matrix CI/CD pipeline (`.github/workflows/ci.y
 
 ---
 
-### Tier 8: Native Hardware-Accelerated GUI & Standalone App - [COMPLETED]
-- [x] **Native CLAP GUI (`clap_plugin_gui`)**:
-  - Hardware-accelerated 2D interface implemented in Rust (`nih-plug` + `egui 0.31`) with zero runtime GC pauses.
+### Tier 8: Native Vizia GUI & Standalone App - [COMPLETED]
+- [x] **Native Vizia Editor (CLAP/VST3)**:
+  - Native 2D interface implemented in Rust (`nice-plug` + `vizia`) with zero runtime GC pauses.
   - Real-time visualization of bridge dual-polarization orbital motion ($u_T$ vs $u_P$ Lissajous curves) and peak VU meters.
   - Interactive 88-key piano keyboard with velocity-sensitive clicking/dragging and active key illumination.
 - [x] **Standalone Playable Desktop App (`physics-piano-standalone`)**:
@@ -359,7 +359,7 @@ The project includes an automated matrix CI/CD pipeline (`.github/workflows/ci.y
 - [x] **P2 Nonlinear Tension Modulation (Kirchhoff-Carrier Strain)**: Transverse stretch restoring force delivering attack twang and dynamic pitch settling (Pitch Glide).
 - [x] **P3 Adaptive Pluck & Tactile Snap**: String fundamental-dependent release impedance and celluloid pick tactile snap impulse.
 - [x] **P4 Stereo Acoustic Radiation & Body Cavity**: Christensen soundhole center radiation, upper/lower bout binaural radiation, and dual allpass wood dispersion.
-- [x] **P5 6 Factory Presets & egui Real-Time Fretboard Interface**: Martin D-28, Dreadnought Strummer, Strat Clean Chime, Texas Blues Breakup, Les Paul Warm Jazz, Flamenco Con Brio.
+- [x] **P5 6 Factory Presets & Vizia Real-Time Fretboard Interface**: Martin D-28, Dreadnought Strummer, Strat Clean Chime, Texas Blues Breakup, Les Paul Warm Jazz, Flamenco Con Brio.
 
 ---
 

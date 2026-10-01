@@ -10,6 +10,7 @@ use crate::Language;
 struct SliderRestoreState {
     active_start: Option<f32>,
     completed_start: Option<f32>,
+    scrolled_lines: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -73,6 +74,7 @@ pub fn parameter_slider<P: Param + 'static>(
     HStack::new(cx, move |cx| {
         Label::new(cx, label).width(Pixels(label_width));
         let mut slider = ParamSlider::new(cx, param)
+            .disable_scroll_wheel()
             .width(Stretch(1.0))
             .height(Pixels(20.0));
         let restore_state = Arc::new(parking_lot::Mutex::new(SliderRestoreState::default()));
@@ -96,6 +98,43 @@ pub fn parameter_slider<P: Param + 'static>(
                         }
                         WindowEvent::MouseUp(MouseButton::Left) => {
                             restore_state.lock().finish();
+                        }
+                        WindowEvent::MouseScroll(_, scroll_y) => {
+                            let bounds = cx.bounds();
+                            let mouse = cx.mouse();
+                            let inside = mouse.cursor_x >= bounds.x
+                                && mouse.cursor_x <= bounds.x + bounds.w
+                                && mouse.cursor_y >= bounds.y
+                                && mouse.cursor_y <= bounds.y + bounds.h;
+                            if !inside {
+                                return;
+                            }
+
+                            let finer_steps = cx.modifiers().shift();
+                            let mut state = restore_state.lock();
+                            state.scrolled_lines += scroll_y;
+
+                            let mut normalized =
+                                unsafe { param_ptr.unmodulated_normalized_value() };
+
+                            while state.scrolled_lines >= 1.0 {
+                                let next =
+                                    unsafe { param_ptr.next_normalized_step(normalized, finer_steps) };
+                                state.scrolled_lines -= 1.0;
+                                emit_wheel_step(cx, param_ptr, &mut normalized, next);
+                            }
+
+                            while state.scrolled_lines <= -1.0 {
+                                let next = unsafe {
+                                    param_ptr.previous_normalized_step(normalized, finer_steps)
+                                };
+                                state.scrolled_lines += 1.0;
+                                emit_wheel_step(cx, param_ptr, &mut normalized, next);
+                            }
+
+                            // A hovered parameter slider owns the wheel, including fractional
+                            // trackpad deltas that have not produced a parameter step yet.
+                            meta.consume();
                         }
                         WindowEvent::MouseDown(MouseButton::Right) => {
                             if let Some(point) = restore_state.lock().take_restore_value() {
@@ -135,6 +174,30 @@ pub fn parameter_slider<P: Param + 'static>(
     })
     .height(Pixels(23.0))
     .horizontal_gap(Pixels(6.0));
+}
+
+fn emit_wheel_step(
+    cx: &mut EventContext,
+    param_ptr: ParamPtr,
+    current_normalized: &mut f32,
+    requested_normalized: f32,
+) {
+    let next_normalized = unsafe {
+        let plain_value = param_ptr.preview_plain(requested_normalized);
+        param_ptr.preview_normalized(plain_value)
+    };
+
+    if (next_normalized - *current_normalized).abs() <= f32::EPSILON {
+        return;
+    }
+
+    cx.emit(RawParamEvent::BeginSetParameter(param_ptr));
+    cx.emit(RawParamEvent::SetParameterNormalized(
+        param_ptr,
+        next_normalized,
+    ));
+    cx.emit(RawParamEvent::EndSetParameter(param_ptr));
+    *current_normalized = next_normalized;
 }
 
 /// Builds a discrete selector and delegates its parameter update to the caller.
