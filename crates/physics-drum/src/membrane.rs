@@ -100,8 +100,7 @@ impl HeadMode {
         // Axisymmetric modes (m=0) generate net volume displacement (monopole).
         // Non-axisymmetric modes (m>0) cancel out in far field (dipole/multipole).
         let alpha0 = MEMBRANE_MODE_SPECS[0].2;
-        let base_rad = 0.038;
-        let radiation_shape = base_rad * if angular_order == 0 {
+        let radiation_shape = if angular_order == 0 {
             1.0 / (1.0 + (radial_root / alpha0 - 1.0) * 0.4)
         } else {
             0.22 / (1.0 + angular_order as f64 * 0.7 + (radial_root / alpha0) * 0.25)

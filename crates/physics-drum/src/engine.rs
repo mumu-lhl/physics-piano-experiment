@@ -77,19 +77,22 @@ impl DrumEngine {
         Self {
             sample_rate,
             dt: 1.0 / sample_rate,
-            kick: KickVoice::new_with_geometry(sample_rate, 48.0, 1.2, 90_000.0, 0.2794, 0.30),
+            kick: KickVoice::new_with_geometry(sample_rate, 48.0, 1.2, 90_000.0, 0.2794, 0.35),
             snare: SnareVoice::new(sample_rate),
             toms: [
-                TomVoice::new_with_geometry(sample_rate, 92.0, 2.4, 42_000.0, 0.127, 0.30),
-                TomVoice::new_with_geometry(sample_rate, 128.0, 2.8, 32_000.0, 0.1524, 0.30),
-                TomVoice::new_with_geometry(sample_rate, 170.0, 3.4, 25_000.0, 0.2032, 0.30),
+                // toms[0]: Low Floor Tom (note 41), 16" (radius 0.2032 m), f0 = 78.0 Hz
+                TomVoice::new_with_geometry(sample_rate, 78.0, 2.2, 30_000.0, 0.2032, 0.28),
+                // toms[1]: Mid Tom (notes 43, 45), 12" (radius 0.1524 m), f0 = 110.0 Hz
+                TomVoice::new_with_geometry(sample_rate, 110.0, 2.0, 36_000.0, 0.1524, 0.28),
+                // toms[2]: Hi Tom (notes 47, 48, 50), 10" (radius 0.1270 m), f0 = 145.0 Hz
+                TomVoice::new_with_geometry(sample_rate, 145.0, 1.8, 42_000.0, 0.1270, 0.28),
             ],
             hats: CymbalVoice::new_for_kind(sample_rate, CymbalKind::HiHat),
             crash: CymbalVoice::new_for_kind(sample_rate, CymbalKind::Crash),
             ride: CymbalVoice::new_for_kind(sample_rate, CymbalKind::Ride),
             hi_hat_open: 0.85,
             cymbal_decay: 1.0,
-            master_gain: 0.78,
+            master_gain: 0.85,
             snare_tightness: 0.62,
             snare_decay: 0.58,
         }
@@ -181,23 +184,23 @@ impl DrumEngine {
         let hats = self.hats.step();
         let crash = self.crash.step();
         let ride = self.ride.step();
-        let left = (kick * 1.00
-            + snare * 0.94
-            + tom1 * 0.82
-            + tom2 * 0.88
-            + tom3 * 0.94
-            + hats * 0.76
-            + crash * 0.82
-            + ride * 0.70)
+        let left = (kick * 0.85
+            + snare * 0.80
+            + tom1 * 0.70
+            + tom2 * 0.70
+            + tom3 * 0.70
+            + hats * 0.65
+            + crash * 0.70
+            + ride * 0.65)
             * self.master_gain;
-        let right = (kick * 0.98
-            + snare * 1.00
-            + tom1 * 0.92
-            + tom2 * 0.88
-            + tom3 * 0.82
-            + hats * 0.88
-            + crash * 0.92
-            + ride * 1.00)
+        let right = (kick * 0.82
+            + snare * 0.80
+            + tom1 * 0.75
+            + tom2 * 0.70
+            + tom3 * 0.65
+            + hats * 0.70
+            + crash * 0.75
+            + ride * 0.75)
             * self.master_gain;
         (soft_limit(left), soft_limit(right))
     }

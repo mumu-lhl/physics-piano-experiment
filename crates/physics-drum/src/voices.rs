@@ -10,7 +10,7 @@
 use crate::contact::HuntCrossleyExciter;
 use crate::membrane::{HEAD_MODE_COUNT, MembraneHead};
 use physics_dsp::{ModalTransition, OverdampedPolicy};
-use std::f64::consts::{PI, TAU};
+use std::f64::consts::{PI, SQRT_2, TAU};
 
 pub const CYMBAL_MODE_COUNT: usize = 128;
 const SNARE_WIRE_COUNT: usize = 24;
@@ -80,18 +80,27 @@ impl ShellResonator {
     }
 }
 
-/// A coupled two-head shell (kick or tom) using coupled membrane heads and wood shell resonance.
+/// A coupled two-head shell (kick or tom) using coupled fundamental eigenmodes (in-phase & anti-phase)
+/// and dual wood shell resonators.
 #[derive(Debug, Clone)]
 pub struct DoubleHeadVoice {
     pub top: MembraneHead,
     pub bottom: MembraneHead,
     pub exciter: HuntCrossleyExciter,
-    pub cavity_pressure: f64,
-    pub cavity_stiffness: f64,
-    pub cavity_damping: f64,
-    pub shell: ShellResonator,
+    // Fundamental (0, 1) coupled cavity eigenmodes:
+    pub u_plus_q: f64,
+    pub u_plus_v: f64,
+    pub trans_plus: ModalTransition,
+    pub u_minus_q: f64,
+    pub u_minus_v: f64,
+    pub trans_minus: ModalTransition,
+    pub modal_mass_01: f64,
+    pub shell1: ShellResonator,
+    pub shell2: ShellResonator,
     pub active: bool,
     pub tail_gain: f64,
+    pub output_gain: f64,
+    pub is_kick: bool,
 }
 
 impl DoubleHeadVoice {
@@ -110,13 +119,13 @@ impl DoubleHeadVoice {
         sample_rate: f64,
         fundamental_hz: f64,
         t60: f64,
-        cavity_stiffness: f64,
+        _cavity_stiffness: f64,
         head_radius_m: f64,
         surface_density_kg_m2: f64,
     ) -> Self {
         let is_kick = head_radius_m > 0.22;
-        let strike_radius = if is_kick { 0.20 } else { 0.35 };
-        let actual_t60 = if is_kick { t60.min(0.42) } else { t60 };
+        let strike_radius = if is_kick { 0.20 } else { 0.30 };
+        let actual_t60 = if is_kick { t60.min(0.75) } else { t60 };
         let mut top = MembraneHead::new_with_geometry(
             sample_rate,
             fundamental_hz,
@@ -136,36 +145,68 @@ impl DoubleHeadVoice {
             surface_density_kg_m2 * 0.88,
         );
 
-        let shell_center = if is_kick { 68.0 } else { fundamental_hz * 1.8 };
-        let shell = ShellResonator::new(sample_rate, shell_center, 3.5);
+        let f0 = fundamental_hz.max(20.0);
+        let total_mass = surface_density_kg_m2 * PI * head_radius_m * head_radius_m;
+        let modal_mass_01 = total_mass * 0.25;
+
+        // Mode splitting: anti-phase mode is higher (acoustic air spring in cavity)
+        let split = if is_kick { 1.25 } else { 1.18 };
+        let omega_plus = TAU * f0;
+        let omega_minus = TAU * (f0 * split);
+        let t60_plus = if is_kick { 0.75 } else { actual_t60.min(1.6) };
+        let t60_minus = if is_kick { 0.45 } else { (actual_t60 * 0.65).min(1.0) };
+        let dt = 1.0 / sample_rate;
+
+        let trans_plus = ModalTransition::new(omega_plus, 1000.0_f64.ln() / t60_plus, dt, OverdampedPolicy::ExponentialFallback);
+        let trans_minus = ModalTransition::new(omega_minus, 1000.0_f64.ln() / t60_minus, dt, OverdampedPolicy::ExponentialFallback);
+
+        let (shell1, shell2) = if is_kick {
+            (
+                ShellResonator::new(sample_rate, 68.0, 4.0),
+                ShellResonator::new(sample_rate, 130.0, 6.0),
+            )
+        } else {
+            (
+                ShellResonator::new(sample_rate, f0 * 1.6, 5.0),
+                ShellResonator::new(sample_rate, f0 * 2.8, 7.0),
+            )
+        };
+
+        let output_gain = if is_kick { 1.10 } else { 0.95 };
 
         Self {
             top,
             bottom,
             exciter: HuntCrossleyExciter::default(),
-            cavity_pressure: 0.0,
-            cavity_stiffness,
-            cavity_damping: 0.12,
-            shell,
+            u_plus_q: 0.0,
+            u_plus_v: 0.0,
+            trans_plus,
+            u_minus_q: 0.0,
+            u_minus_v: 0.0,
+            trans_minus,
+            modal_mass_01,
+            shell1,
+            shell2,
             active: false,
             tail_gain: 1.0,
+            output_gain,
+            is_kick,
         }
     }
 
     pub fn trigger(&mut self, velocity: f64) {
         let velocity = velocity.clamp(0.001, 1.0);
         if !self.active {
-            self.top.reset();
-            self.bottom.reset();
-            self.shell.reset();
-            self.cavity_pressure = 0.0;
+            self.reset();
         }
         self.top.geometry_nonlinearity = 0.02 * velocity * velocity;
         self.bottom.geometry_nonlinearity = 0.01 * velocity * velocity;
+        let mallet_mass = if self.is_kick { 0.065 } else { 0.025 };
+        let mallet_stiff = if self.is_kick { 1.2e6 } else { 2.2e6 };
         self.exciter.trigger(
-            1.2 + 5.2 * velocity.powf(1.2),
-            0.025,
-            1.8e6 + 3.0e6 * velocity,
+            1.2 + 5.0 * velocity.powf(1.2),
+            mallet_mass,
+            mallet_stiff + 2.0e6 * velocity,
             1.5,
         );
         self.active = true;
@@ -177,36 +218,73 @@ impl DoubleHeadVoice {
         if !self.active {
             return 0.0;
         }
-        let (top_before, top_velocity_before) = self.top.strike_state();
-        let contact_force = self.exciter.step(top_before, top_velocity_before, dt);
 
-        let (top_volume, top_volume_velocity) = self.top.area_average_state();
-        let (bottom_volume, bottom_volume_velocity) = self.bottom.area_average_state();
-        let volume_delta = top_volume - bottom_volume;
-        let volume_velocity = top_volume_velocity - bottom_volume_velocity;
-        let effective_mass = 1.0
-            / (1.0 / self.top.area_average_effective_mass()
-                + 1.0 / self.bottom.area_average_effective_mass());
-        let acoustic_damping =
-            2.0 * self.cavity_damping * (self.cavity_stiffness * effective_mass).sqrt();
-        let head_area = PI * self.top.radius_m().powi(2);
-        self.cavity_pressure = ((self.cavity_stiffness * volume_delta
-            + acoustic_damping * volume_velocity)
-            / head_area)
-            .clamp(-1.0e6, 1.0e6);
+        // Strike shape of fundamental (0, 1) mode at r_hit
+        let phi_01 = self.top.modes[0].strike_shape;
 
-        let (_top_displacement, top_velocity) =
-            self.top.step_coupled(contact_force, -self.cavity_pressure);
-        let (_bottom_displacement, bottom_velocity) =
-            self.bottom.step_coupled(0.0, self.cavity_pressure);
+        let q_top_01 = (self.u_plus_q + self.u_minus_q) * (1.0 / SQRT_2);
+        let v_top_01 = (self.u_plus_v + self.u_minus_v) * (1.0 / SQRT_2);
 
-        let shell_sound = self.shell.step(top_velocity * 0.12);
-        let output = (top_velocity * 0.85 - bottom_velocity * 0.20 + shell_sound + contact_force * 0.0008)
-            * self.tail_gain;
+        let mut x_surf = q_top_01 * phi_01;
+        let mut v_surf = v_top_01 * phi_01;
+        for mode in &self.top.modes[1..] {
+            x_surf += mode.q * mode.strike_shape;
+            v_surf += mode.v * mode.strike_shape;
+        }
+
+        let strike_force = self.exciter.step(x_surf, v_surf, dt);
+
+        let f_modal_01 = strike_force * phi_01;
+        let force_plus = f_modal_01 * (1.0 / SQRT_2) / self.modal_mass_01;
+        let force_minus = f_modal_01 * (1.0 / SQRT_2) / self.modal_mass_01;
+
+        let (p11_p, p12_p, p21_p, p22_p) = self.trans_plus.phi;
+        let (g1_p, g2_p) = self.trans_plus.gamma;
+        self.u_plus_q = p11_p * self.u_plus_q + p12_p * self.u_plus_v + g1_p * force_plus;
+        self.u_plus_v = p21_p * self.u_plus_q + p22_p * self.u_plus_v + g2_p * force_plus;
+
+        let (p11_m, p12_m, p21_m, p22_m) = self.trans_minus.phi;
+        let (g1_m, g2_m) = self.trans_minus.gamma;
+        self.u_minus_q = p11_m * self.u_minus_q + p12_m * self.u_minus_v + g1_m * force_minus;
+        self.u_minus_v = p21_m * self.u_minus_q + p22_m * self.u_minus_v + g2_m * force_minus;
+
+        let v_top_fund = (self.u_plus_v + self.u_minus_v) * (1.0 / SQRT_2);
+        let v_bot_fund = (self.u_plus_v - self.u_minus_v) * (1.0 / SQRT_2);
+
+        self.top.modes[0].q = (self.u_plus_q + self.u_minus_q) * (1.0 / SQRT_2);
+        self.top.modes[0].v = v_top_fund;
+        self.bottom.modes[0].q = (self.u_plus_q - self.u_minus_q) * (1.0 / SQRT_2);
+        self.bottom.modes[0].v = v_bot_fund;
+
+        let mut top_sound = v_top_fund * self.top.modes[0].radiation_shape;
+        for mode in &mut self.top.modes[1..] {
+            let (p11, p12, p21, p22) = mode.transition.phi;
+            let (g1, g2) = mode.transition.gamma;
+            let f_m = (strike_force * mode.strike_shape) / mode.modal_mass_kg;
+            let nq = p11 * mode.q + p12 * mode.v + g1 * f_m;
+            let nv = p21 * mode.q + p22 * mode.v + g2 * f_m;
+            mode.q = nq;
+            mode.v = nv;
+            top_sound += mode.v * mode.radiation_shape;
+        }
+
+        let mut bot_sound = v_bot_fund * self.bottom.modes[0].radiation_shape * 0.40;
+        for mode in &mut self.bottom.modes[1..] {
+            let (p11, p12, p21, p22) = mode.transition.phi;
+            let nq = p11 * mode.q + p12 * mode.v;
+            let nv = p21 * mode.q + p22 * mode.v;
+            mode.q = nq;
+            mode.v = nv;
+            bot_sound += mode.v * mode.radiation_shape * 0.35;
+        }
+
+        let shell_input = top_sound + strike_force * 0.0002;
+        let shell_sound = self.shell1.step(shell_input) * 0.18 + self.shell2.step(shell_input) * 0.10;
+
+        let output = (top_sound + shell_sound - bot_sound * 0.30) * self.output_gain * self.tail_gain;
         self.tail_gain *= 0.999_999;
 
-        let cavity_energy = 0.5 * self.cavity_stiffness * volume_delta * volume_delta;
-        let energy = self.top.energy() + self.bottom.energy() + cavity_energy;
+        let energy = self.top.energy() + self.bottom.energy();
         if !self.exciter.is_contacting && energy < 1.0e-7 {
             self.active = false;
         }
@@ -217,8 +295,12 @@ impl DoubleHeadVoice {
         self.top.reset();
         self.bottom.reset();
         self.exciter.reset();
-        self.shell.reset();
-        self.cavity_pressure = 0.0;
+        self.shell1.reset();
+        self.shell2.reset();
+        self.u_plus_q = 0.0;
+        self.u_plus_v = 0.0;
+        self.u_minus_q = 0.0;
+        self.u_minus_v = 0.0;
         self.active = false;
         self.tail_gain = 1.0;
     }
@@ -257,6 +339,8 @@ pub struct SnareVoice {
     pub top: MembraneHead,
     pub bottom: MembraneHead,
     pub exciter: HuntCrossleyExciter,
+    pub shell1: ShellResonator,
+    pub shell2: ShellResonator,
     wires: [SnareWire; SNARE_WIRE_COUNT],
     wire_shapes: [[[f64; HEAD_MODE_COUNT]; SNARE_CONTACT_POINT_COUNT]; SNARE_WIRE_COUNT],
     pub wire_count: usize,
@@ -277,6 +361,9 @@ impl SnareVoice {
 
         // Snare side head is extremely thin (2-3 mil Mylar)
         let bottom = MembraneHead::new_with_geometry(sample_rate, 220.0, 0.16, 0.1778, 0.09);
+
+        let shell1 = ShellResonator::new(sample_rate, 340.0, 6.0);
+        let shell2 = ShellResonator::new(sample_rate, 680.0, 8.0);
 
         let wire_shapes = std::array::from_fn(|index| {
             let lateral_position = -0.14 + 0.28 * index as f64 / (SNARE_WIRE_COUNT - 1) as f64;
@@ -304,6 +391,8 @@ impl SnareVoice {
             top,
             bottom,
             exciter: HuntCrossleyExciter::default(),
+            shell1,
+            shell2,
             wires,
             wire_shapes,
             wire_count: SNARE_WIRE_COUNT,
@@ -348,6 +437,8 @@ impl SnareVoice {
         if !self.active {
             self.top.reset();
             self.bottom.reset();
+            self.shell1.reset();
+            self.shell2.reset();
             for wire in &mut self.wires {
                 wire.displacement = 0.0;
                 wire.velocity = 0.0;
@@ -440,9 +531,11 @@ impl SnareVoice {
             }
         }
 
-        // Pure physical radiation: Top head + Bottom head + Steel wire impact clicks
-        let rattle_sound = chatter_force * 0.006;
-        let output = top_velocity * 0.70 - bottom_velocity * 0.20 + rattle_sound + strike_force * 0.0008;
+        // Pure physical radiation: Top head + Bottom head + Shell resonance + Steel wire rattle
+        let shell_input = top_velocity + strike_force * 0.0002;
+        let shell_sound = self.shell1.step(shell_input) * 0.18 + self.shell2.step(shell_input) * 0.10;
+        let rattle_sound = chatter_force * 0.003;
+        let output = (top_velocity * 0.75 - bottom_velocity * 0.20 + shell_sound + rattle_sound) * 1.05;
 
         let cavity_energy = 0.5 * self.cavity_stiffness * vol_delta * vol_delta;
         let energy = self.top.energy() + self.bottom.energy() + cavity_energy + wire_energy;
@@ -456,6 +549,8 @@ impl SnareVoice {
         self.top.reset();
         self.bottom.reset();
         self.exciter.reset();
+        self.shell1.reset();
+        self.shell2.reset();
         for wire in &mut self.wires {
             wire.displacement = 0.0;
             wire.velocity = 0.0;
@@ -671,6 +766,11 @@ impl CymbalVoice {
         }
 
         let base_w = self.modes[0].omega;
+        let scale = match self.kind {
+            CymbalKind::Crash => 0.0028,
+            CymbalKind::Ride => 0.0015,
+            CymbalKind::HiHat => 0.0018,
+        };
         for (i, mode) in self.modes.iter_mut().enumerate() {
             let frac = i as f64 / (CYMBAL_MODE_COUNT - 1) as f64;
             let impact_gain = match self.kind {
@@ -683,7 +783,7 @@ impl CymbalVoice {
                 CymbalKind::Ride => (mode.omega / base_w).powf(0.32),
                 CymbalKind::HiHat => (mode.omega / base_w).powf(0.26),
             };
-            mode.v += velocity.powf(0.8) * base_w * 0.035 * freq_tilt * impact_gain;
+            mode.v += velocity.powf(0.8) * base_w * scale * freq_tilt * impact_gain;
         }
 
         self.active = true;
