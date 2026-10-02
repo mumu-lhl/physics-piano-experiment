@@ -212,9 +212,9 @@ impl AllpassDispersion {
 /// 1. Christensen 3-DOF low-frequency physical state space (A0, T1, T2)
 /// 2. 4th-order Linkwitz-Riley phase-aligned crossover at 450 Hz
 /// 3. High-frequency orthotropic wood diffusion bank with authentic spruce loss
-/// 4. Multi-tap all-pass dispersion network for dense statistical wood reverberation
+/// 4. Multi-tap all-pass dispersion network for dense statistical wood reverberation & cavity bounce
 /// 5. Binaural acoustic spatial radiation (soundhole center, lower bout warm body, upper bout crisp air)
-/// 6. Second-order warm acoustic air absorption filter (5.5 kHz)
+/// 6. Studio-grade acoustic air transmission damping filter (10.5 kHz gentle roll-off)
 #[derive(Debug, Clone)]
 pub struct AcousticGuitarBody {
     pub crossover: LinkwitzRiley4thOrder,
@@ -222,6 +222,7 @@ pub struct AcousticGuitarBody {
     pub wood_high: WoodDiffusionBank,
     pub dispersion1: AllpassDispersion,
     pub dispersion2: AllpassDispersion,
+    pub dispersion3: AllpassDispersion,
     pub air_damping_l: BiquadFilter,
     pub air_damping_r: BiquadFilter,
     pub resonance_gain: f64,
@@ -235,8 +236,9 @@ impl AcousticGuitarBody {
             wood_high: WoodDiffusionBank::new(sample_rate),
             dispersion1: AllpassDispersion::new(11, 0.35),
             dispersion2: AllpassDispersion::new(23, 0.30),
-            air_damping_l: BiquadFilter::lowpass(sample_rate, 5500.0, std::f64::consts::FRAC_1_SQRT_2),
-            air_damping_r: BiquadFilter::lowpass(sample_rate, 5500.0, std::f64::consts::FRAC_1_SQRT_2),
+            dispersion3: AllpassDispersion::new(47, 0.22),
+            air_damping_l: BiquadFilter::lowpass(sample_rate, 10500.0, std::f64::consts::FRAC_1_SQRT_2),
+            air_damping_r: BiquadFilter::lowpass(sample_rate, 10500.0, std::f64::consts::FRAC_1_SQRT_2),
             resonance_gain: 1.0,
         }
     }
@@ -269,15 +271,17 @@ impl AcousticGuitarBody {
 
         // High frequency wood grain diffusion with authentic spruce plate loss
         let high_raw = self.wood_high.step(high_in);
-        let high_diffused = self.dispersion2.process(self.dispersion1.process(high_raw));
+        let high_diffused = self
+            .dispersion3
+            .process(self.dispersion2.process(self.dispersion1.process(high_raw)));
 
         // Binaural spatial radiation:
         // Left channel: soundhole + upper bout reflections (crisp transient sheen)
         // Right channel: soundhole + lower bout warm wood resonance
-        let left_rad =
-            (low_a0 * 1.5 + (low_t1 + low_t2) * 1.35 + high_raw * 1.05) * self.resonance_gain;
+        let left_rad = (low_a0 * 1.45 + (low_t1 + low_t2) * 1.30 + high_raw * 0.95 + high_diffused * 0.15)
+            * self.resonance_gain;
         let right_rad =
-            (low_a0 * 1.5 + (low_t1 + low_t2) * 1.65 + high_diffused * 1.15) * self.resonance_gain;
+            (low_a0 * 1.45 + (low_t1 + low_t2) * 1.55 + high_diffused * 1.10) * self.resonance_gain;
 
         (
             self.air_damping_l.process(left_rad),
@@ -292,3 +296,4 @@ impl AcousticGuitarBody {
         0.5 * (l + r)
     }
 }
+

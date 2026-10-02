@@ -172,6 +172,128 @@ impl BassStringParams {
             },
         ]
     }
+
+    /// Four-string acoustic upright bass (Double Bass 3/4) tuning: E1 A1 D2 G2.
+    /// Features 1.05m scale length, warm gut/flatwound low Young's modulus,
+    /// heavier string mass, and higher internal loss.
+    pub const fn acoustic_four() -> [Self; 4] {
+        [
+            Self {
+                open_midi: 28,
+                open_f0: 41.203_444,
+                scale_length: 1.05,
+                tension: 230.0,
+                linear_density: 0.03111691,
+                youngs_modulus: 1.1e11,
+                radius: 0.00140,
+                sigma0: 1.25,
+                sigma1: 0.0035,
+                bending_stiffness: 0.85,
+            },
+            Self {
+                open_midi: 33,
+                open_f0: 55.0,
+                scale_length: 1.05,
+                tension: 240.0,
+                linear_density: 0.01811088,
+                youngs_modulus: 1.1e11,
+                radius: 0.00120,
+                sigma0: 1.30,
+                sigma1: 0.0033,
+                bending_stiffness: 0.82,
+            },
+            Self {
+                open_midi: 38,
+                open_f0: 73.416_19,
+                scale_length: 1.05,
+                tension: 250.0,
+                linear_density: 0.01055016,
+                youngs_modulus: 1.1e11,
+                radius: 0.00100,
+                sigma0: 1.35,
+                sigma1: 0.0030,
+                bending_stiffness: 0.80,
+            },
+            Self {
+                open_midi: 43,
+                open_f0: 97.998_86,
+                scale_length: 1.05,
+                tension: 260.0,
+                linear_density: 0.00614641,
+                youngs_modulus: 1.1e11,
+                radius: 0.00080,
+                sigma0: 1.40,
+                sigma1: 0.0028,
+                bending_stiffness: 0.78,
+            },
+        ]
+    }
+
+    /// Five-string acoustic upright bass (Double Bass 3/4) tuning: B0 E1 A1 D2 G2.
+    pub const fn acoustic_five() -> [Self; 5] {
+        [
+            Self {
+                open_midi: 23,
+                open_f0: 30.867_706,
+                scale_length: 1.05,
+                tension: 220.0,
+                linear_density: 0.05372132,
+                youngs_modulus: 1.1e11,
+                radius: 0.00165,
+                sigma0: 1.20,
+                sigma1: 0.0038,
+                bending_stiffness: 0.88,
+            },
+            Self {
+                open_midi: 28,
+                open_f0: 41.203_444,
+                scale_length: 1.05,
+                tension: 230.0,
+                linear_density: 0.03111691,
+                youngs_modulus: 1.1e11,
+                radius: 0.00140,
+                sigma0: 1.25,
+                sigma1: 0.0035,
+                bending_stiffness: 0.85,
+            },
+            Self {
+                open_midi: 33,
+                open_f0: 55.0,
+                scale_length: 1.05,
+                tension: 240.0,
+                linear_density: 0.01811088,
+                youngs_modulus: 1.1e11,
+                radius: 0.00120,
+                sigma0: 1.30,
+                sigma1: 0.0033,
+                bending_stiffness: 0.82,
+            },
+            Self {
+                open_midi: 38,
+                open_f0: 73.416_19,
+                scale_length: 1.05,
+                tension: 250.0,
+                linear_density: 0.01055016,
+                youngs_modulus: 1.1e11,
+                radius: 0.00100,
+                sigma0: 1.35,
+                sigma1: 0.0030,
+                bending_stiffness: 0.80,
+            },
+            Self {
+                open_midi: 43,
+                open_f0: 97.998_86,
+                scale_length: 1.05,
+                tension: 260.0,
+                linear_density: 0.00614641,
+                youngs_modulus: 1.1e11,
+                radius: 0.00080,
+                sigma0: 1.40,
+                sigma1: 0.0028,
+                bending_stiffness: 0.78,
+            },
+        ]
+    }
 }
 
 #[cfg(test)]
@@ -184,6 +306,8 @@ mod tests {
         let strings: Vec<_> = BassStringParams::electric_four()
             .into_iter()
             .chain(BassStringParams::electric_five())
+            .chain(BassStringParams::acoustic_four())
+            .chain(BassStringParams::acoustic_five())
             .collect();
         for string in strings {
             let wave_number = PI / string.scale_length;
@@ -195,3 +319,4 @@ mod tests {
         }
     }
 }
+

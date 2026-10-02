@@ -88,6 +88,13 @@ impl BassStringVoice {
         self.current_note = None;
         self.current_fret = 0;
     }
+
+    pub fn reconfigure_params(&mut self, params: BassStringParams) {
+        self.open_midi = params.open_midi;
+        self.string.reconfigure_params(params);
+        self.current_note = None;
+        self.current_fret = 0;
+    }
 }
 
 /// Four- or five-string physical bass engine.
@@ -115,7 +122,10 @@ pub struct BassEngine {
 impl BassEngine {
     pub fn new(sample_rate: f64, mode: BassMode, five_string: bool) -> Self {
         let sample_rate = sample_rate.max(1.0);
-        let params = BassStringParams::electric_five();
+        let params = match mode {
+            BassMode::Electric => BassStringParams::electric_five(),
+            BassMode::Acoustic => BassStringParams::acoustic_five(),
+        };
         let strings = std::array::from_fn(|index| BassStringVoice::new(params[index], sample_rate));
         Self {
             sample_rate,
@@ -201,7 +211,18 @@ impl BassEngine {
     }
 
     pub fn set_mode(&mut self, mode: BassMode) {
+        if self.mode == mode {
+            return;
+        }
         self.mode = mode;
+        let params = match mode {
+            BassMode::Electric => BassStringParams::electric_five(),
+            BassMode::Acoustic => BassStringParams::acoustic_five(),
+        };
+        for (index, p) in params.iter().enumerate() {
+            self.strings[index].reconfigure_params(*p);
+            self.strings[index].string.fret_buzz = self.fret_buzz;
+        }
     }
 
     pub fn set_five_string(&mut self, enabled: bool) {
@@ -289,7 +310,10 @@ impl BassEngine {
             BassMode::Acoustic => body_signal * (0.55 + 0.45 * self.body_mix),
         } * self.master_gain;
         let signal = soft_limit(signal);
-        let pan = (bridge_force * 0.00001).tanh() * 0.035;
+        let pan = match self.mode {
+            BassMode::Electric => (bridge_force * 0.00001).tanh() * 0.035,
+            BassMode::Acoustic => (bridge_force * 0.00002).tanh() * 0.065,
+        };
         let _ = total_energy; // Kept in the local for branch-friendly diagnostics.
         (signal * (1.0 - pan), signal * (1.0 + pan))
     }

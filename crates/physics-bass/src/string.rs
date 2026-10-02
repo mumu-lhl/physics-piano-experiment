@@ -228,6 +228,16 @@ impl FdtdString {
         self.reset();
     }
 
+    /// Reconfigures physical string parameters (e.g. switching between Electric and Acoustic upright bass).
+    pub fn reconfigure_params(&mut self, params: BassStringParams) {
+        self.params = params;
+        self.configure_length(
+            params.length_at_fret(self.current_fret),
+            params.frequency_at_fret(self.current_fret),
+        );
+        self.reset();
+    }
+
     /// Plucks the string with a normalized MIDI velocity in `[0, 1]`.
     pub fn trigger(&mut self, velocity: f64, style: PluckStyle, position: f64) {
         self.reset();

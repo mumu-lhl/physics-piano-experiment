@@ -250,3 +250,24 @@ fn test_gui_dynamic_velocity_and_midi_routing() {
     engine.note_off(28);
     assert!(engine.strings[1].string.is_releasing);
 }
+
+#[test]
+fn test_acoustic_bass_mode_switching_and_tuning() {
+    let mut engine = BassEngine::new(SAMPLE_RATE, BassMode::Electric, true);
+    assert_eq!(engine.mode, BassMode::Electric);
+
+    // Switch to Acoustic Upright Bass
+    engine.set_mode(BassMode::Acoustic);
+    assert_eq!(engine.mode, BassMode::Acoustic);
+
+    // Strings should be reconfigured to 1.05m Double Bass scale
+    assert!((engine.strings[1].string.params.scale_length - 1.05).abs() < 1e-6);
+
+    // Trigger note and verify finite stable sound rendering
+    engine.note_on(28, 0.8);
+    for _ in 0..1000 {
+        let (l, r) = engine.process_sample();
+        assert!(!l.is_nan() && !r.is_nan());
+    }
+}
+

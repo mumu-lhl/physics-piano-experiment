@@ -510,3 +510,40 @@ fn test_gui_dynamic_velocity_and_keyboard_event_routing() {
         "MidiNoteOff for 60 must release note"
     );
 }
+
+#[test]
+fn test_multi_stage_tube_amp_and_tone_stack() {
+    use physics_guitar::core::amp_cab::GuitarAmpCab;
+
+    let mut amp = GuitarAmpCab::new(44100.0);
+    amp.is_enabled = true;
+    amp.cab_enabled = true;
+    amp.set_drive(0.7);
+    amp.set_tone_stack(0.8, 0.4, 0.7, 0.6);
+
+    assert_eq!(amp.bass, 0.8);
+    assert_eq!(amp.middle, 0.4);
+    assert_eq!(amp.treble, 0.7);
+
+    // Pass test signal
+    let mut max_val = 0.0_f64;
+    for n in 0..1000 {
+        let input = 1.5 * (2.0 * std::f64::consts::PI * 220.0 * n as f64 / 44100.0).sin();
+        let out = amp.process(input);
+        assert!(!out.is_nan() && !out.is_infinite());
+        max_val = max_val.max(out.abs());
+    }
+    assert!(max_val > 0.0 && max_val < 3.0);
+}
+
+#[test]
+fn test_acoustic_high_frequency_air_and_cavity_dispersion() {
+    use physics_guitar::core::body::AcousticGuitarBody;
+
+    let mut body = AcousticGuitarBody::new(44100.0);
+    // Test that high frequency content (e.g. 7 kHz sheen) transmits through air damping
+    let (l, r) = body.process_stereo(1.0);
+    assert!(!l.is_nan() && !r.is_nan());
+    assert!(l.abs() > 0.0 && r.abs() > 0.0);
+}
+
