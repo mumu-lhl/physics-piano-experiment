@@ -9,18 +9,19 @@ mod pad_view;
 
 use crate::nice_plugin::{GuiDrumEvent, PhysicsDrumParams};
 use nice_plug::prelude::{Editor, Param};
-use pad_view::DrumPadWidget;
+use pad_view::{DrumPadWidget, voice_index};
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
     CancelParamGestureEvent, Language, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
     add_base_theme, map_param_history_event, parameter_slider, preset_choices, preset_display_name,
     preset_panel, redraw_custom_view, set_param, setup_vizia_fonts, translate,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, Ordering};
 use vizia_plug::vizia::prelude::*;
 use vizia_plug::widgets::RawParamEvent;
+use vizia_plug::widgets::util::ModifiersExt;
 use vizia_plug::{ViziaTheming, create_vizia_editor};
 
 pub const EDITOR_WIDTH: u32 = 900;
@@ -91,6 +92,9 @@ struct DrumUiState {
     can_undo: Signal<bool>,
     can_redo: Signal<bool>,
     suppress_undo: Arc<AtomicU32>,
+    gui_tx: crossbeam_channel::Sender<GuiDrumEvent>,
+    pad_mask: Arc<AtomicU16>,
+    held_keys: HashSet<Code>,
 }
 
 impl DrumUiState {
@@ -345,6 +349,86 @@ impl Model for DrumUiState {
                 }
             }
         });
+
+        event.map(|window: &WindowEvent, meta| match window {
+            WindowEvent::KeyDown(code, _) => {
+                if cx.modifiers().command() {
+                    if *code == Code::KeyZ && !cx.modifiers().shift() {
+                        cx.emit(DrumUiEvent::Undo);
+                    } else if *code == Code::KeyY || (*code == Code::KeyZ && cx.modifiers().shift())
+                    {
+                        cx.emit(DrumUiEvent::Redo);
+                    }
+                    meta.consume();
+                    return;
+                }
+                const KEY_MAP: &[(Code, u8)] = &[
+                    (Code::Space, 36),
+                    (Code::KeyB, 36),
+                    (Code::KeyD, 38),
+                    (Code::KeyS, 38),
+                    (Code::KeyF, 42),
+                    (Code::KeyG, 46),
+                    (Code::KeyC, 44),
+                    (Code::KeyJ, 50),
+                    (Code::KeyK, 45),
+                    (Code::KeyL, 41),
+                    (Code::KeyE, 49),
+                    (Code::KeyR, 49),
+                    (Code::KeyU, 51),
+                    (Code::KeyI, 51),
+                ];
+                if let Some((_, note)) = KEY_MAP.iter().find(|(key, _)| key == code) {
+                    if self.held_keys.insert(*code) {
+                        let _ = self.gui_tx.try_send(GuiDrumEvent::Hit {
+                            note: *note,
+                            velocity: 0.88,
+                        });
+                        self.pad_mask
+                            .fetch_or(1 << voice_index(*note), Ordering::Relaxed);
+                        redraw_custom_view(cx, "drum-pad-widget");
+                        meta.consume();
+                    }
+                }
+            }
+            WindowEvent::KeyUp(code, _) => {
+                if self.held_keys.remove(code) {
+                    const KEY_MAP: &[(Code, u8)] = &[
+                        (Code::Space, 36),
+                        (Code::KeyB, 36),
+                        (Code::KeyD, 38),
+                        (Code::KeyS, 38),
+                        (Code::KeyF, 42),
+                        (Code::KeyG, 46),
+                        (Code::KeyC, 44),
+                        (Code::KeyJ, 50),
+                        (Code::KeyK, 45),
+                        (Code::KeyL, 41),
+                        (Code::KeyE, 49),
+                        (Code::KeyR, 49),
+                        (Code::KeyU, 51),
+                        (Code::KeyI, 51),
+                    ];
+                    if let Some((_, note)) = KEY_MAP.iter().find(|(key, _)| key == code) {
+                        let still_held = self.held_keys.iter().any(|k| {
+                            KEY_MAP.iter().any(|(mk, mn)| mk == k && mn == note)
+                        });
+                        if !still_held {
+                            self.pad_mask
+                                .fetch_and(!(1 << voice_index(*note)), Ordering::Relaxed);
+                        }
+                    }
+                    redraw_custom_view(cx, "drum-pad-widget");
+                    meta.consume();
+                }
+            }
+            WindowEvent::FocusOut => {
+                self.held_keys.clear();
+                self.pad_mask.store(0, Ordering::Relaxed);
+                redraw_custom_view(cx, "drum-pad-widget");
+            }
+            _ => {}
+        });
     }
 }
 
@@ -364,6 +448,7 @@ pub fn create_vizia_drum_editor(
         .map(|preset| preset_display_name(preset, language_initial))
         .unwrap_or_else(|| "Studio Kit".to_string());
 
+    let pad_mask = Arc::new(AtomicU16::new(0));
     let editor_state = params.editor_state.clone();
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
         setup_vizia_fonts(cx);
@@ -394,6 +479,9 @@ pub fn create_vizia_drum_editor(
             can_undo: can_undo.clone(),
             can_redo: can_redo.clone(),
             suppress_undo: Arc::new(AtomicU32::new(0)),
+            gui_tx: gui_tx.clone(),
+            pad_mask: pad_mask.clone(),
+            held_keys: HashSet::new(),
         }
         .build(cx);
 
@@ -407,6 +495,7 @@ pub fn create_vizia_drum_editor(
         let language_view = language.clone();
         let voice_energies_ui = voice_energies.clone();
         let gui_tx_ui = gui_tx.clone();
+        let pad_mask_ui = pad_mask.clone();
         let selected_name_ui = selected_name_signal;
         let preset_choices_ui = preset_choices_signal;
         let name_input_ui = name_input;
@@ -421,6 +510,7 @@ pub fn create_vizia_drum_editor(
             let language_view = language_view.clone();
             let voice_energies = voice_energies_ui.clone();
             let gui_tx = gui_tx_ui.clone();
+            let pad_mask = pad_mask_ui.clone();
             let language_atom = language_atom_ui.clone();
             VStack::new(cx, move |cx| {
                 preset_panel(
@@ -475,7 +565,7 @@ pub fn create_vizia_drum_editor(
                 .height(Pixels(100.0))
                 .horizontal_gap(Pixels(8.0));
 
-                DrumPadWidget::new(cx, voice_energies, gui_tx, language_atom)
+                DrumPadWidget::new(cx, voice_energies, gui_tx, language_atom, pad_mask.clone())
                     .class("instrument-view")
                     .width(Stretch(1.0))
                     .height(Pixels(350.0))

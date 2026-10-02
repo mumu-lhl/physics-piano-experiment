@@ -6,32 +6,31 @@ use physics_ui::skia_compat as vg;
 use physics_ui::skia_compat::CanvasExt;
 use physics_ui::{Language, translate};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, Ordering};
 use vizia_plug::vizia::prelude::*;
-use vizia_plug::widgets::util::ModifiersExt;
 
-const VOICE_COUNT: usize = 10;
+pub(crate) const VOICE_COUNT: usize = 10;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum PadKind {
+pub enum PadKind {
     Drum,
     Cymbal,
     Pedal,
 }
 
 #[derive(Clone, Copy)]
-struct Pad {
-    note: u8,
-    label: &'static str,
-    hotkey: &'static str,
-    x: f32,
-    y: f32,
-    radius: f32,
-    kind: PadKind,
-    color: (u8, u8, u8),
+pub struct Pad {
+    pub note: u8,
+    pub label: &'static str,
+    pub hotkey: &'static str,
+    pub x: f32,
+    pub y: f32,
+    pub radius: f32,
+    pub kind: PadKind,
+    pub color: (u8, u8, u8),
 }
 
-const PADS: [Pad; VOICE_COUNT] = [
+pub(crate) const PADS: [Pad; VOICE_COUNT] = [
     // 0: Crash Cymbal (Note 49)
     Pad {
         note: 49,
@@ -144,7 +143,7 @@ const PADS: [Pad; VOICE_COUNT] = [
     },
 ];
 
-fn voice_index(note: u8) -> usize {
+pub(crate) fn voice_index(note: u8) -> usize {
     PADS.iter().position(|pad| pad.note == note).unwrap_or(0)
 }
 
@@ -152,7 +151,8 @@ pub struct DrumPadWidget {
     voice_energies: Arc<[AtomicU32; VOICE_COUNT]>,
     gui_tx: crossbeam_channel::Sender<GuiDrumEvent>,
     language: Arc<AtomicU8>,
-    held_note: Option<u8>,
+    pad_mask: Arc<AtomicU16>,
+    held_mouse_note: Option<u8>,
 }
 
 impl DrumPadWidget {
@@ -161,12 +161,14 @@ impl DrumPadWidget {
         voice_energies: Arc<[AtomicU32; VOICE_COUNT]>,
         gui_tx: crossbeam_channel::Sender<GuiDrumEvent>,
         language: Arc<AtomicU8>,
+        pad_mask: Arc<AtomicU16>,
     ) -> Handle<'_, Self> {
         Self {
             voice_energies,
             gui_tx,
             language,
-            held_note: None,
+            pad_mask,
+            held_mouse_note: None,
         }
         .build(cx, |_| {})
     }
@@ -208,84 +210,51 @@ impl View for DrumPadWidget {
                     // Radial sweet-spot velocity: center = 1.0 (accent strike), edge = 0.35 (ghost note/rim tap)
                     let velocity = (1.0 - 0.65 * norm_dist).clamp(0.35, 1.0);
                     self.hit(pad, velocity);
-                    self.held_note = Some(pad.note);
+                    self.held_mouse_note = Some(pad.note);
+                    self.pad_mask
+                        .fetch_or(1 << voice_index(pad.note), Ordering::Relaxed);
                     cx.capture();
                     cx.needs_redraw();
                     meta.consume();
                 }
             }
-            WindowEvent::MouseMove(x, y) if self.held_note.is_some() => {
+            WindowEvent::MouseMove(x, y) if self.held_mouse_note.is_some() => {
                 let bounds = cx.bounds();
                 let next = self.pad_at(&bounds, *x, *y).map(|(pad, _)| pad.note);
-                if next != self.held_note {
+                if next != self.held_mouse_note {
+                    if let Some(prev) = self.held_mouse_note {
+                        self.pad_mask
+                            .fetch_and(!(1 << voice_index(prev)), Ordering::Relaxed);
+                    }
                     if let Some(note) = next {
                         let pad = PADS[voice_index(note)];
                         self.hit(pad, 0.85);
-                    }
-                    self.held_note = next;
-                    if next.is_none() {
+                        self.pad_mask
+                            .fetch_or(1 << voice_index(note), Ordering::Relaxed);
+                    } else {
                         cx.release();
                     }
+                    self.held_mouse_note = next;
                     cx.needs_redraw();
                 }
                 meta.consume();
             }
             WindowEvent::MouseUp(MouseButton::Left) => {
-                if self.held_note.take().is_some() {
+                if let Some(note) = self.held_mouse_note.take() {
+                    self.pad_mask
+                        .fetch_and(!(1 << voice_index(note)), Ordering::Relaxed);
                     cx.release();
                     cx.needs_redraw();
                     meta.consume();
                 }
             }
-            WindowEvent::FocusOut if self.held_note.take().is_some() => {
+            WindowEvent::FocusOut if self.held_mouse_note.is_some() => {
+                if let Some(note) = self.held_mouse_note.take() {
+                    self.pad_mask
+                        .fetch_and(!(1 << voice_index(note)), Ordering::Relaxed);
+                }
                 cx.release();
                 cx.needs_redraw();
-            }
-            WindowEvent::KeyDown(code, _) => {
-                if !cx.modifiers().command() && !cx.modifiers().alt() {
-                    let note_opt = match code {
-                        Code::KeyB | Code::Space => Some(36), // Kick
-                        Code::KeyD | Code::KeyS => Some(38),  // Snare
-                        Code::KeyF => Some(42),               // Closed Hat
-                        Code::KeyG => Some(46),               // Open Hat
-                        Code::KeyC => Some(44),               // Pedal Hat
-                        Code::KeyJ => Some(50),               // High Tom
-                        Code::KeyK => Some(45),               // Mid Tom
-                        Code::KeyL => Some(41),               // Floor Tom
-                        Code::KeyE | Code::KeyR => Some(49),  // Crash
-                        Code::KeyU | Code::KeyI => Some(51),  // Ride
-                        _ => None,
-                    };
-                    if let Some(note) = note_opt {
-                        let pad = PADS[voice_index(note)];
-                        self.hit(pad, 0.88);
-                        self.held_note = Some(note);
-                        cx.needs_redraw();
-                        meta.consume();
-                    }
-                }
-            }
-            WindowEvent::KeyUp(code, _) => {
-                let note_opt = match code {
-                    Code::KeyB | Code::Space => Some(36),
-                    Code::KeyD | Code::KeyS => Some(38),
-                    Code::KeyF => Some(42),
-                    Code::KeyG => Some(46),
-                    Code::KeyC => Some(44),
-                    Code::KeyJ => Some(50),
-                    Code::KeyK => Some(45),
-                    Code::KeyL => Some(41),
-                    Code::KeyE | Code::KeyR => Some(49),
-                    Code::KeyU | Code::KeyI => Some(51),
-                    _ => None,
-                };
-                if let Some(note) = note_opt {
-                    if self.held_note == Some(note) {
-                        self.held_note = None;
-                        cx.needs_redraw();
-                        meta.consume();
-                    }
-                }
             }
             _ => {}
         });
@@ -318,7 +287,7 @@ impl View for DrumPadWidget {
             let energy =
                 f32::from_bits(self.voice_energies[voice_index(pad.note)].load(Ordering::Relaxed))
                     .clamp(0.0, 1.0);
-            let pressed = self.held_note == Some(pad.note);
+            let pressed = (self.pad_mask.load(Ordering::Relaxed) & (1 << voice_index(pad.note))) != 0;
             let glow_radius = radius + (if pressed { 10.0 } else { energy * 12.0 });
 
             if energy > 0.02 || pressed {
@@ -515,11 +484,19 @@ pub fn pad_label_rgb(pressed: bool) -> (u8, u8, u8) {
 
 #[cfg(test)]
 mod tests {
-    use super::pad_label_rgb;
+    use super::{PADS, VOICE_COUNT, pad_label_rgb, voice_index};
 
     #[test]
     fn pressed_pad_uses_dark_text_on_the_gold_highlight() {
         assert_eq!(pad_label_rgb(true), (16, 19, 25));
         assert_eq!(pad_label_rgb(false), (245, 247, 250));
+    }
+
+    #[test]
+    fn all_pads_have_unique_voice_indices_within_voice_count() {
+        assert_eq!(PADS.len(), VOICE_COUNT);
+        for (i, pad) in PADS.iter().enumerate() {
+            assert_eq!(voice_index(pad.note), i);
+        }
     }
 }
