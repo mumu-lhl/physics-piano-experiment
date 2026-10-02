@@ -590,8 +590,8 @@ msgid "Snare decay"
 msgstr "军鼓衰减"
 
 msgctxt "drum.snare_note"
-msgid "Bottom head drives 20 bounded wire contacts"
-msgstr "底膜驱动 20 个有界响弦接触状态"
+msgid "Bottom head drives 16 bilateral wire contacts"
+msgstr "底膜驱动 16 根双向耦合响弦接触"
 
 msgctxt "drum.cymbal_output"
 msgid "CYMBAL / OUTPUT"
@@ -610,8 +610,8 @@ msgid "Master gain"
 msgstr "总输出增益"
 
 msgctxt "drum.hint"
-msgid "Closed hat chokes open hat · CC4 controls pedal opening · note-off preserves physical tails"
-msgstr "闭镲会切断开镲 · CC4 控制踏板开度 · Note-Off 保留物理衰减尾音"
+msgid "Keyboard: Space/B=Kick · S/D=Snare · F/G/C=HiHat · J/K/L=Toms · E/I=Cymbals · Click center for accent, rim for ghost note"
+msgstr "键盘: 空格/B=底鼓 · S/D=军鼓 · F/G/C=踩镲 · J/K/L=通鼓 · E/I=镲片 · 点击中心重击/边缘轻音"
 
 msgctxt "drum.pad-map.title"
 msgid "MIDI DRUM MAP"
@@ -626,24 +626,24 @@ msgid "Acoustic Snare"
 msgstr "原声军鼓"
 
 msgctxt "drum.pad.41"
-msgid "Low Floor Tom"
-msgstr "低音落地通鼓"
+msgid "Floor Tom"
+msgstr "落地通鼓"
 
 msgctxt "drum.pad.42"
 msgid "Closed Hi-Hat"
 msgstr "闭镲"
 
-msgctxt "drum.pad.43"
-msgid "High Floor Tom"
-msgstr "高音落地通鼓"
+msgctxt "drum.pad.50"
+msgid "High Tom"
+msgstr "高音通鼓"
 
 msgctxt "drum.pad.44"
 msgid "Pedal Hi-Hat"
 msgstr "踏板踩镲"
 
 msgctxt "drum.pad.45"
-msgid "Low Tom"
-msgstr "低音通鼓"
+msgid "Mid Tom"
+msgstr "中音通鼓"
 
 msgctxt "drum.pad.46"
 msgid "Open Hi-Hat"

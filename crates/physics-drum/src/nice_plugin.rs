@@ -280,15 +280,28 @@ impl Plugin for PhysicsDrum {
             self.engine.ride.energy(),
             self.engine.hats.energy(),
             self.engine.hats.energy(),
-            self.engine.toms[1].top.energy() + self.engine.toms[1].bottom.energy(),
+            self.engine.toms[2].top.energy() + self.engine.toms[2].bottom.energy(),
             self.engine.toms[1].top.energy() + self.engine.toms[1].bottom.energy(),
             self.engine.toms[0].top.energy() + self.engine.toms[0].bottom.energy(),
             self.engine.snare.top.energy() + self.engine.snare.bottom.energy(),
             self.engine.kick.top.energy() + self.engine.kick.bottom.energy(),
             self.engine.hats.energy(),
         ];
-        for (shared, energy) in self.voice_energies_shared.iter().zip(energies) {
-            let visual_energy = (energy / (energy + 1.0)).sqrt().clamp(0.0, 1.0) as f32;
+        // Characteristic physical energy scales for responsive visual glow
+        const CHAR_ENERGIES: [f64; 10] = [
+            0.003, // Crash
+            0.003, // Ride
+            0.003, // Open Hat
+            0.003, // Closed Hat
+            0.05,  // Hi Tom (10")
+            0.06,  // Mid Tom (12")
+            0.08,  // Floor Tom (16")
+            0.06,  // Snare (14")
+            0.15,  // Kick (22")
+            0.003, // Pedal Hat
+        ];
+        for ((shared, energy), &e0) in self.voice_energies_shared.iter().zip(energies).zip(&CHAR_ENERGIES) {
+            let visual_energy = (energy / (energy + e0)).sqrt().clamp(0.0, 1.0) as f32;
             shared.store(visual_energy.to_bits(), Ordering::Relaxed);
         }
         ProcessStatus::Normal

@@ -457,7 +457,7 @@ pub fn create_vizia_drum_editor(
                             112.0,
                         );
                         parameter_slider(cx, translate(lang, "drum.snare_decay", "Snare decay"), &params.snare_decay, 112.0);
-                        Label::new(cx, translate(lang, "drum.snare_note", "Bottom head drives 20 bounded wire contacts")).class("small-note");
+                        Label::new(cx, translate(lang, "drum.snare_note", "Bottom head drives 16 bilateral wire contacts")).class("small-note");
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
@@ -480,7 +480,7 @@ pub fn create_vizia_drum_editor(
                     .width(Stretch(1.0))
                     .height(Pixels(350.0))
                     .overflow(Overflow::Hidden);
-                Label::new(cx, translate(lang, "drum.hint", "Closed hat chokes open hat · CC4 controls pedal opening · note-off preserves physical tails")).class("hint-text");
+                Label::new(cx, translate(lang, "drum.hint", "Keyboard: Space/B=Kick · S/D=Snare · F/G/C=HiHat · J/K/L=Toms · E/I=Cymbals · Click center for accent, rim for ghost note")).class("hint-text");
             })
             .class("root")
             .width(Stretch(1.0))

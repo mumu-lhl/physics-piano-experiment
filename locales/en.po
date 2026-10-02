@@ -590,8 +590,8 @@ msgid "Snare decay"
 msgstr "Snare decay"
 
 msgctxt "drum.snare_note"
-msgid "Bottom head drives 20 bounded wire contacts"
-msgstr "Bottom head drives 20 bounded wire contacts"
+msgid "Bottom head drives 16 bilateral wire contacts"
+msgstr "Bottom head drives 16 bilateral wire contacts"
 
 msgctxt "drum.cymbal_output"
 msgid "CYMBAL / OUTPUT"
@@ -610,8 +610,8 @@ msgid "Master gain"
 msgstr "Master gain"
 
 msgctxt "drum.hint"
-msgid "Closed hat chokes open hat · CC4 controls pedal opening · note-off preserves physical tails"
-msgstr "Closed hat chokes open hat · CC4 controls pedal opening · note-off preserves physical tails"
+msgid "Keyboard: Space/B=Kick · S/D=Snare · F/G/C=HiHat · J/K/L=Toms · E/I=Cymbals · Click center for accent, rim for ghost note"
+msgstr "Keyboard: Space/B=Kick · S/D=Snare · F/G/C=HiHat · J/K/L=Toms · E/I=Cymbals · Click center for accent, rim for ghost note"
 
 msgctxt "drum.pad-map.title"
 msgid "MIDI DRUM MAP"
@@ -626,24 +626,24 @@ msgid "Acoustic Snare"
 msgstr "Acoustic Snare"
 
 msgctxt "drum.pad.41"
-msgid "Low Floor Tom"
-msgstr "Low Floor Tom"
+msgid "Floor Tom"
+msgstr "Floor Tom"
 
 msgctxt "drum.pad.42"
 msgid "Closed Hi-Hat"
 msgstr "Closed Hi-Hat"
 
-msgctxt "drum.pad.43"
-msgid "High Floor Tom"
-msgstr "High Floor Tom"
+msgctxt "drum.pad.50"
+msgid "High Tom"
+msgstr "High Tom"
 
 msgctxt "drum.pad.44"
 msgid "Pedal Hi-Hat"
 msgstr "Pedal Hi-Hat"
 
 msgctxt "drum.pad.45"
-msgid "Low Tom"
-msgstr "Low Tom"
+msgid "Mid Tom"
+msgstr "Mid Tom"
 
 msgctxt "drum.pad.46"
 msgid "Open Hi-Hat"
