@@ -7,7 +7,7 @@ use physics_dsp::{ModalTransition, OverdampedPolicy};
 use std::f64::consts::PI;
 
 #[repr(C, align(64))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ModalState {
     pub q: f64,
     pub v: f64,
@@ -70,6 +70,8 @@ pub struct GuitarString {
     pub slide_samples_total: usize,
     pub slide_samples_left: usize,
     pub slide_friction_noise: f64,
+    pub is_sleeping: bool,
+    silence_counter: usize,
 }
 
 impl GuitarString {
@@ -108,6 +110,8 @@ impl GuitarString {
             slide_samples_total: 0,
             slide_samples_left: 0,
             slide_friction_noise: 0.0,
+            is_sleeping: false,
+            silence_counter: 0,
         };
         s.recalculate_modal_operators();
         s
@@ -254,6 +258,8 @@ impl GuitarString {
         );
         self.is_held = true;
         self.is_releasing = false;
+        self.is_sleeping = false;
+        self.silence_counter = 0;
     }
 
     /// Transitions between frets on the vibrating string without re-initializing modal oscillators.
@@ -326,6 +332,8 @@ impl GuitarString {
 
         self.is_held = true;
         self.is_releasing = false;
+        self.is_sleeping = false;
+        self.silence_counter = 0;
     }
 
     /// Triggers a natural harmonic at a specified node (2 = 12th fret, 3 = 7th fret, 4 = 5th fret, 5 = 4th fret).
@@ -393,6 +401,8 @@ impl GuitarString {
         }
         self.is_held = true;
         self.is_releasing = false;
+        self.is_sleeping = false;
+        self.silence_counter = 0;
     }
 
     /// Initiates a continuous legato slide from current fret to target_fret over duration_ms.
@@ -401,6 +411,8 @@ impl GuitarString {
             return;
         }
         self.slide_active = true;
+        self.is_sleeping = false;
+        self.silence_counter = 0;
         self.slide_target_fret = target_fret;
         self.slide_start_length = self.effective_length;
         self.slide_target_length = self.params.effective_length_at_fret(target_fret);
@@ -414,6 +426,9 @@ impl GuitarString {
     /// Returns the bridge vertical force (Newtons) and parallel force (Newtons).
     #[inline(always)]
     pub fn step(&mut self) -> (f64, f64) {
+        if self.is_sleeping {
+            return (0.0, 0.0);
+        }
         // Continuous legato slide progress
         if self.slide_active {
             if self.slide_samples_left > 0 {
@@ -534,6 +549,31 @@ impl GuitarString {
             }
         }
 
+        // Dynamic silence culling: when string is not held/sliding and modal energy is infinitesimal
+        if !self.is_held && !self.slide_active {
+            let mut total_modal_sq = 0.0_f64;
+            for m in 0..self.num_modes {
+                total_modal_sq += self.state_t[m].q * self.state_t[m].q
+                    + self.state_t[m].v * self.state_t[m].v
+                    + self.state_p[m].q * self.state_p[m].q
+                    + self.state_p[m].v * self.state_p[m].v;
+            }
+            if total_modal_sq < 1e-15 {
+                self.silence_counter += 1;
+                if self.silence_counter > 64 {
+                    self.is_sleeping = true;
+                    for m in 0..self.num_modes {
+                        self.state_t[m] = ModalState::default();
+                        self.state_p[m] = ModalState::default();
+                    }
+                }
+            } else {
+                self.silence_counter = 0;
+            }
+        } else {
+            self.silence_counter = 0;
+        }
+
         (force_bridge_t, force_bridge_p)
     }
 
@@ -542,6 +582,9 @@ impl GuitarString {
     pub fn inject_bridge_motion(&mut self, bridge_velocity: f64, coupling: f64) {
         if coupling <= 0.0 || bridge_velocity.abs() < 1e-12 {
             return;
+        }
+        if bridge_velocity.abs() > 1e-6 {
+            self.is_sleeping = false;
         }
         let max_m = self.num_modes.min(16);
         for m in 0..max_m {
@@ -556,6 +599,9 @@ impl GuitarString {
     pub fn inject_acoustic_pressure(&mut self, pressure: f64, coupling: f64) {
         if coupling <= 0.0 || pressure.abs() < 1e-12 {
             return;
+        }
+        if pressure.abs() > 1e-5 {
+            self.is_sleeping = false;
         }
         let max_m = self.num_modes.min(10);
         let x_spk = 0.35;

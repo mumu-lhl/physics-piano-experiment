@@ -88,6 +88,12 @@ pub struct FdtdString {
     neck_mode_v: f64,
     pub fret_buzz: f64,
     pub current_fret: u8,
+    pub neck_relief: f64,
+    pub fret_crown_radius: f64,
+    fret_clearances: [f64; FRET_COUNT],
+    fret_stiffness_factors: [f64; FRET_COUNT],
+    pub is_sleeping: bool,
+    silence_counter: usize,
     pub last_contact_force: f64,
     pub current_delta_tension: f64,
     bridge_displacement: f64,
@@ -138,6 +144,12 @@ impl FdtdString {
             neck_mode_v: 0.0,
             fret_buzz: 0.35,
             current_fret: 0,
+            neck_relief: 0.00035,
+            fret_crown_radius: 0.0012,
+            fret_clearances: [0.0; FRET_COUNT],
+            fret_stiffness_factors: [1.0; FRET_COUNT],
+            is_sleeping: false,
+            silence_counter: 0,
             last_contact_force: 0.0,
             current_delta_tension: 0.0,
             bridge_displacement: 0.0,
@@ -201,19 +213,28 @@ impl FdtdString {
     }
 
     /// Rebuilds the fixed spatial contact stencils for the currently fretted
-    /// string. Open strings expose all frets; a stopped note exposes only the
-    /// frets between the nut and the finger. This keeps contact distributed
-    /// over the physical fret line instead of using one arbitrary grid node.
+    /// string. Incorporates parabolic neck relief deflection and rounded fret crown
+    /// geometry across the fingerboard.
     fn rebuild_fret_contacts(&mut self) {
         self.fret_indices.fill(0);
         self.fret_fractions.fill(0.0);
         self.fret_psi.fill(0.0);
+        self.fret_clearances.fill(0.0);
+        self.fret_stiffness_factors.fill(1.0);
         self.active_fret_count = 0;
         let last_fret = if self.current_fret == 0 {
             FRET_COUNT
         } else {
             self.current_fret.min(FRET_COUNT as u8) as usize
         };
+
+        let neck_relief_span = self.params.scale_length * 0.60;
+        let base_nut_clearance = 0.00075;
+        let base_bridge_clearance = 0.00220;
+        let buzz_mult = 1.15 - 0.55 * self.fret_buzz.clamp(0.0, 1.0);
+        let r_string = (self.params.area() / PI).max(1e-12).sqrt();
+        let crown_stiffness_mult = 1.0 + (r_string / self.fret_crown_radius.max(1e-5)).min(2.0) * 0.15;
+
         for fret in 1..=last_fret {
             let physical_position =
                 self.params.scale_length * (1.0 - 2.0_f64.powf(-(fret as f64) / 12.0));
@@ -226,12 +247,43 @@ impl FdtdString {
             self.fret_indices[self.active_fret_count] = index;
             self.fret_fractions[self.active_fret_count] =
                 (grid_position - index as f64).clamp(0.0, 1.0);
+
+            // Parabolic neck relief forward bow deflection:
+            // Apex at ~7th fret (~0.3 of relief span)
+            let relief_offset = if physical_position <= neck_relief_span {
+                let x_norm = physical_position / neck_relief_span;
+                4.0 * self.neck_relief * x_norm * (1.0 - x_norm)
+            } else {
+                0.0
+            };
+            let slope_clearance = base_nut_clearance
+                + (base_bridge_clearance - base_nut_clearance) * (physical_position / self.params.scale_length);
+
+            // Fret crown rounded profile clearance:
+            let fret_clearance = (slope_clearance + relief_offset) * buzz_mult;
+            self.fret_clearances[self.active_fret_count] = fret_clearance.max(0.00005);
+            self.fret_stiffness_factors[self.active_fret_count] = crown_stiffness_mult;
+
             self.active_fret_count += 1;
         }
     }
 
+    /// Sets the neck relief forward bow curvature depth in meters (e.g. 0.00035 for 0.35mm).
+    pub fn set_neck_relief(&mut self, relief_m: f64) {
+        self.neck_relief = relief_m.max(0.0);
+        self.rebuild_fret_contacts();
+    }
+
+    /// Sets the fret crown curvature radius in meters (e.g. 0.0012 for 1.2mm medium jumbo frets).
+    pub fn set_fret_crown_radius(&mut self, radius_m: f64) {
+        self.fret_crown_radius = radius_m.max(0.0002);
+        self.rebuild_fret_contacts();
+    }
+
     /// Applies a continuous pitch bend without clearing the vibrating grid.
     pub fn set_pitch_bend(&mut self, semitones: f64) {
+        self.is_sleeping = false;
+        self.silence_counter = 0;
         self.pitch_bend_semitones = semitones.clamp(-24.0, 24.0);
         self.current_f0 = self.nominal_f0 * 2.0_f64.powf(self.pitch_bend_semitones / 12.0);
         let base_wave_speed = (self.params.tension / self.params.linear_density.max(1e-12)).sqrt();
@@ -265,6 +317,8 @@ impl FdtdString {
         self.reset();
         self.is_held = true;
         self.is_active = true;
+        self.is_sleeping = false;
+        self.silence_counter = 0;
         self.is_releasing = false;
         self.is_ghost = style == PluckStyle::Ghost;
         self.pluck_style = style;
@@ -346,6 +400,11 @@ impl FdtdString {
         if new_fret == self.current_fret {
             return;
         }
+
+        self.is_held = true;
+        self.is_active = true;
+        self.is_sleeping = false;
+        self.silence_counter = 0;
 
         let is_hammer_on = new_fret > self.current_fret;
         let old_length = self.effective_length;
@@ -439,7 +498,8 @@ impl FdtdString {
     /// Advances the FDTD grid by one sample and returns the bridge force.
     #[inline]
     pub fn step(&mut self) -> f64 {
-        if !self.is_active {
+        if !self.is_active || self.is_sleeping {
+            self.is_sleeping = true;
             return 0.0;
         }
 
@@ -448,11 +508,34 @@ impl FdtdString {
         let dt = self.dt;
         self.u_curr.data[n] = self.bridge_displacement;
         self.u_prev.data[n] = self.previous_bridge_displacement;
-        let mut slope_integral = 0.0;
-        for i in 1..n {
-            let slope = (self.u_curr.data[i + 1] - self.u_curr.data[i - 1]) / (2.0 * h);
-            slope_integral += slope * slope * h;
+
+        // 4-lane unrolled slope integral for vectorized strain energy calculation
+        let inv_2h = 1.0 / (2.0 * h);
+        let h_scale = inv_2h * inv_2h * h;
+        let mut i = 1;
+        let mut acc0 = 0.0;
+        let mut acc1 = 0.0;
+        let mut acc2 = 0.0;
+        let mut acc3 = 0.0;
+        while i + 4 <= n {
+            let d0 = self.u_curr.data[i + 1] - self.u_curr.data[i - 1];
+            let d1 = self.u_curr.data[i + 2] - self.u_curr.data[i];
+            let d2 = self.u_curr.data[i + 3] - self.u_curr.data[i + 1];
+            let d3 = self.u_curr.data[i + 4] - self.u_curr.data[i + 2];
+            acc0 += d0 * d0;
+            acc1 += d1 * d1;
+            acc2 += d2 * d2;
+            acc3 += d3 * d3;
+            i += 4;
         }
+        let mut total_sq = (acc0 + acc1) + (acc2 + acc3);
+        while i < n {
+            let d = self.u_curr.data[i + 1] - self.u_curr.data[i - 1];
+            total_sq += d * d;
+            i += 1;
+        }
+        let slope_integral = total_sq * h_scale;
+
         let ea = self.params.youngs_modulus * self.params.area();
         let raw_delta_tension = ea / (2.0 * self.effective_length) * slope_integral;
         // Restrict geometric hardening only to the remaining CFL budget. The
@@ -477,20 +560,15 @@ impl FdtdString {
             0.0
         };
 
-        // Detect unilateral fret contacts and retain the deepest four rows.
-        // This explicit rank cap keeps the fixed-size Woodbury solve bounded:
-        // O(N + P^3), P <= 4, with no audio-thread allocation.
-        let clearance = 0.00085 * (1.15 - 0.55 * self.fret_buzz.clamp(0.0, 1.0));
-        let contact_stiffness = 9.0e5 * self.fret_buzz.clamp(0.0, 1.0);
+        // Detect unilateral fret contacts incorporating parabolic neck relief and rounded crown geometry
+        let base_contact_stiffness = 9.0e5 * self.fret_buzz.clamp(0.0, 1.0);
         let contact_exponent = CONTACT_ALPHA;
-        let root_scale = (2.0 * contact_stiffness / (contact_exponent + 1.0)).sqrt();
-        let gradient_scale = (contact_stiffness * (contact_exponent + 1.0) * 0.5).sqrt();
         let mut candidate_gradient = [0.0; FRET_COUNT];
         let mut contact_slots = [0usize; MAX_ACTIVE_FRET_CONTACTS];
         let mut contact_eta = [0.0; MAX_ACTIVE_FRET_CONTACTS];
         let mut contact_gradient = [0.0; MAX_ACTIVE_FRET_CONTACTS];
         let mut contact_count = 0;
-        if contact_stiffness > 0.0 {
+        if base_contact_stiffness > 0.0 {
             for (contact, candidate_gradient_slot) in candidate_gradient
                 .iter_mut()
                 .enumerate()
@@ -500,12 +578,15 @@ impl FdtdString {
                 let fraction = self.fret_fractions[contact];
                 let displacement = self.u_curr.data[index] * (1.0 - fraction)
                     + self.u_curr.data[index + 1] * fraction;
-                let previous_displacement = self.u_prev.data[index] * (1.0 - fraction)
-                    + self.u_prev.data[index + 1] * fraction;
+                let clearance = self.fret_clearances[contact];
                 let eta = -clearance - displacement;
                 if eta <= 0.0 {
                     continue;
                 }
+                let contact_stiffness = base_contact_stiffness * self.fret_stiffness_factors[contact];
+                let gradient_scale = (contact_stiffness * (contact_exponent + 1.0) * 0.5).sqrt();
+                let previous_displacement = self.u_prev.data[index] * (1.0 - fraction)
+                    + self.u_prev.data[index + 1] * fraction;
                 let previous_eta = -clearance - previous_displacement;
                 let extrapolated = (1.5 * eta - 0.5 * previous_eta).max(eta * 0.5);
                 *candidate_gradient_slot =
@@ -533,6 +614,8 @@ impl FdtdString {
             let contact = contact_slots[slot];
             selected[contact] = true;
             if self.fret_psi[contact] <= 1e-12 {
+                let contact_stiffness = base_contact_stiffness * self.fret_stiffness_factors[contact];
+                let root_scale = (2.0 * contact_stiffness / (contact_exponent + 1.0)).sqrt();
                 self.fret_psi[contact] =
                     root_scale * contact_eta[slot].powf((contact_exponent + 1.0) * 0.5);
             }
@@ -564,12 +647,6 @@ impl FdtdString {
                 self.slap_active = false;
             }
         }
-        let denom = 1.0 + self.params.sigma0 * dt;
-        let lap_prev_center = |idx: usize| -> f64 {
-            grid_sample(&self.u_prev, idx as isize + 1, n)
-                - 2.0 * grid_sample(&self.u_prev, idx as isize, n)
-                + grid_sample(&self.u_prev, idx as isize - 1, n)
-        };
 
         // Continuous stick-slip friction solver for bowed double bass (Arco)
         let bow_index = if self.bow_active {
@@ -592,46 +669,86 @@ impl FdtdString {
             0.0
         };
 
-        for i in 1..n {
-            let ii = i as isize;
-            let curr = grid_sample(&self.u_curr, ii, n);
-            let prev = grid_sample(&self.u_prev, ii, n);
-            let lap = grid_sample(&self.u_curr, ii + 1, n) - 2.0 * curr
-                + grid_sample(&self.u_curr, ii - 1, n);
-            let lap_old = lap_prev_center(i);
-            let biharm = grid_sample(&self.u_curr, ii + 2, n)
-                - 4.0 * grid_sample(&self.u_curr, ii + 1, n)
-                + 6.0 * curr
-                - 4.0 * grid_sample(&self.u_curr, ii - 1, n)
-                + grid_sample(&self.u_curr, ii - 2, n);
+        let denom = 1.0 + self.params.sigma0 * dt;
+        let inv_denom = 1.0 / denom;
+        let c_curr = 2.0;
+        let c_prev = 1.0 - self.params.sigma0 * dt;
+        let c_lap = self.courant * (1.0 + tension_ratio);
+        let c_biharm = self.bending_courant;
+        let c_damping = self.damping_courant;
 
-            let mut force = 0.0;
-            if i == self.excitation_index {
-                force += pulse_force;
+        // Boundary node i = 1 (with ghost at -1: u[-1] = -u[1])
+        if n >= 3 {
+            let curr = self.u_curr.data[1];
+            let prev = self.u_prev.data[1];
+            let lap = self.u_curr.data[2] - 2.0 * curr + self.u_curr.data[0];
+            let lap_old = self.u_prev.data[2] - 2.0 * prev + self.u_prev.data[0];
+            let biharm = self.u_curr.data[3] - 4.0 * self.u_curr.data[2] + 5.0 * curr - 4.0 * self.u_curr.data[0];
+            let wave_disp = c_lap * lap - c_biharm * biharm;
+            let freq_damp = c_damping * (lap - lap_old);
+            self.u_next.data[1] = (c_curr * curr - c_prev * prev + wave_disp + freq_damp) * inv_denom;
+        }
+
+        // Boundary node i = n - 1 (with ghost at n+1: u[n+1] = 2*u[n] - u[n-1])
+        if n >= 3 {
+            let curr = self.u_curr.data[n - 1];
+            let prev = self.u_prev.data[n - 1];
+            let lap = self.u_curr.data[n] - 2.0 * curr + self.u_curr.data[n - 2];
+            let lap_old = self.u_prev.data[n] - 2.0 * prev + self.u_prev.data[n - 2];
+            let biharm = -2.0 * self.u_curr.data[n] + 5.0 * curr - 4.0 * self.u_curr.data[n - 2] + self.u_curr.data[n - 3];
+            let wave_disp = c_lap * lap - c_biharm * biharm;
+            let freq_damp = c_damping * (lap - lap_old);
+            self.u_next.data[n - 1] = (c_curr * curr - c_prev * prev + wave_disp + freq_damp) * inv_denom;
+        }
+
+        // Branchless SIMD-friendly interior kernel: 2 <= i <= n - 2
+        let mut i = 2;
+        while i + 4 <= n - 1 {
+            for offset in 0..4 {
+                let idx = i + offset;
+                let curr = self.u_curr.data[idx];
+                let prev = self.u_prev.data[idx];
+                let lap = self.u_curr.data[idx + 1] - 2.0 * curr + self.u_curr.data[idx - 1];
+                let lap_old = self.u_prev.data[idx + 1] - 2.0 * prev + self.u_prev.data[idx - 1];
+                let biharm = self.u_curr.data[idx + 2] - 4.0 * self.u_curr.data[idx + 1] + 6.0 * curr
+                    - 4.0 * self.u_curr.data[idx - 1] + self.u_curr.data[idx - 2];
+                let wave_disp = c_lap * lap - c_biharm * biharm;
+                let freq_damp = c_damping * (lap - lap_old);
+                self.u_next.data[idx] = (c_curr * curr - c_prev * prev + wave_disp + freq_damp) * inv_denom;
             }
-            if i == self.excitation_index {
-                force += slap_force;
+            i += 4;
+        }
+        while i <= n - 2 {
+            let curr = self.u_curr.data[i];
+            let prev = self.u_prev.data[i];
+            let lap = self.u_curr.data[i + 1] - 2.0 * curr + self.u_curr.data[i - 1];
+            let lap_old = self.u_prev.data[i + 1] - 2.0 * prev + self.u_prev.data[i - 1];
+            let biharm = self.u_curr.data[i + 2] - 4.0 * self.u_curr.data[i + 1] + 6.0 * curr
+                - 4.0 * self.u_curr.data[i - 1] + self.u_curr.data[i - 2];
+            let wave_disp = c_lap * lap - c_biharm * biharm;
+            let freq_damp = c_damping * (lap - lap_old);
+            self.u_next.data[i] = (c_curr * curr - c_prev * prev + wave_disp + freq_damp) * inv_denom;
+            i += 1;
+        }
+
+        // Superimpose localized external forces with zero loop overhead
+        let ext_scale = dt * dt / (h * self.params.linear_density.max(1e-8) * denom);
+        if pulse_force != 0.0 || slap_force != 0.0 {
+            let total_center = (pulse_force + slap_force) * ext_scale;
+            let side = 0.5 * pulse_force * ext_scale;
+            let idx = self.excitation_index;
+            if idx > 0 && idx < n {
+                self.u_next.data[idx] += total_center;
             }
-            if self.bow_active && i == bow_index {
-                force += bow_force;
+            if idx > 1 {
+                self.u_next.data[idx - 1] += side;
             }
-            if i + 1 == self.excitation_index {
-                force += 0.5 * pulse_force;
+            if idx + 1 < n {
+                self.u_next.data[idx + 1] += side;
             }
-            if i == self.excitation_index + 1 {
-                force += 0.5 * pulse_force;
-            }
-            let force_density = force / h;
-            let external = dt * dt * force_density / self.params.linear_density.max(1e-8);
-            let nonlinear = self.courant * tension_ratio * lap;
-            let linear = self.courant * lap - self.bending_courant * biharm;
-            let frequency_damping = self.damping_courant * (lap - lap_old);
-            self.u_next.data[i] = (2.0 * curr - (1.0 - self.params.sigma0 * dt) * prev
-                + linear
-                + nonlinear
-                + frequency_damping
-                + external)
-                / denom;
+        }
+        if self.bow_active && bow_force != 0.0 && bow_index > 0 && bow_index < n {
+            self.u_next.data[bow_index] += bow_force * ext_scale;
         }
         self.u_next.data[0] = 0.0;
         self.u_next.data[n] = self.bridge_displacement;
@@ -644,8 +761,17 @@ impl FdtdString {
             let lorentzian = 1.0 / (1.0 + delta_f * delta_f);
             let dead_spot_rate = self.neck_dead_spot_depth * 8.5 * lorentzian;
             let dead_spot_decay = (-dt * dead_spot_rate).exp();
-            for i in 1..n {
+            let mut i = 1;
+            while i + 4 <= n {
                 self.u_next.data[i] *= dead_spot_decay;
+                self.u_next.data[i + 1] *= dead_spot_decay;
+                self.u_next.data[i + 2] *= dead_spot_decay;
+                self.u_next.data[i + 3] *= dead_spot_decay;
+                i += 4;
+            }
+            while i < n {
+                self.u_next.data[i] *= dead_spot_decay;
+                i += 1;
             }
             // Step physical neck resonator state
             let omega_neck = 2.0 * PI * f_neck;
@@ -656,7 +782,6 @@ impl FdtdString {
             self.neck_mode_q += dt * self.neck_mode_v;
         }
         let fret_contact_total = self.apply_sav_fret_contacts(
-            clearance,
             contact_count,
             &contact_slots,
             &contact_eta,
@@ -666,13 +791,31 @@ impl FdtdString {
         self.last_contact_force = fret_contact_total + slap_force;
         if self.is_ghost {
             let ghost_damp = (-dt / 0.008).exp();
-            for i in 1..n {
+            let mut i = 1;
+            while i + 4 <= n {
                 self.u_next.data[i] *= ghost_damp;
+                self.u_next.data[i + 1] *= ghost_damp;
+                self.u_next.data[i + 2] *= ghost_damp;
+                self.u_next.data[i + 3] *= ghost_damp;
+                i += 4;
+            }
+            while i < n {
+                self.u_next.data[i] *= ghost_damp;
+                i += 1;
             }
         } else if self.is_releasing {
             let release = (-dt / 0.15).exp();
-            for i in 1..n {
+            let mut i = 1;
+            while i + 4 <= n {
                 self.u_next.data[i] *= release;
+                self.u_next.data[i + 1] *= release;
+                self.u_next.data[i + 2] *= release;
+                self.u_next.data[i + 3] *= release;
+                i += 4;
+            }
+            while i < n {
+                self.u_next.data[i] *= release;
+                i += 1;
             }
         }
 
@@ -687,6 +830,30 @@ impl FdtdString {
             self.is_active = false;
             self.is_releasing = false;
             self.is_ghost = false;
+            self.is_sleeping = true;
+        }
+
+        // Dynamic silence culling: when string is not held/excited and energy is below threshold
+        if !self.is_held && !self.bow_active && !self.slap_active && self.pluck_samples_left == 0 {
+            let mut peak_disp = 0.0_f64;
+            for i in 1..n {
+                peak_disp = peak_disp.max(self.u_curr.data[i].abs());
+            }
+            if peak_disp < 1e-7 {
+                self.silence_counter += 1;
+                if self.silence_counter > 64 {
+                    self.is_sleeping = true;
+                    self.is_active = false;
+                    self.u_curr.data.fill(0.0);
+                    self.u_prev.data.fill(0.0);
+                    self.u_next.data.fill(0.0);
+                    self.fret_psi.fill(0.0);
+                }
+            } else {
+                self.silence_counter = 0;
+            }
+        } else {
+            self.silence_counter = 0;
         }
 
         self.bridge_force()
@@ -695,10 +862,10 @@ impl FdtdString {
     /// Applies the SAV/IEQ discrete-gradient contact update. The linear string
     /// step is already complete in `u_next`; contact is a rank-P update
     /// `(I + U Uᵀ) u = b`, solved via a fixed-size Woodbury/Cholesky system.
+    /// Incorporates per-fret clearances derived from parabolic neck relief and crown curvature.
     /// No iteration, heap allocation, or unbounded active set is used.
     fn apply_sav_fret_contacts(
         &mut self,
-        clearance: f64,
         count: usize,
         slots: &[usize; MAX_ACTIVE_FRET_CONTACTS],
         eta: &[f64; MAX_ACTIVE_FRET_CONTACTS],
@@ -724,6 +891,7 @@ impl FdtdString {
             let index = self.fret_indices[contact];
             let fraction = self.fret_fractions[contact];
             let gradient = gradients[row];
+            let clearance = self.fret_clearances[contact];
             nodes[row] = [index, index + 1];
             basis[row] = [gradient * (1.0 - fraction), gradient * fraction];
             let source = gradient * self.fret_psi[contact]
@@ -793,6 +961,7 @@ impl FdtdString {
             let contact = slots[row];
             let index = self.fret_indices[contact];
             let fraction = self.fret_fractions[contact];
+            let clearance = self.fret_clearances[contact];
             let displacement =
                 self.u_curr.data[index] * (1.0 - fraction) + self.u_curr.data[index + 1] * fraction;
             let velocity = (displacement
@@ -926,6 +1095,8 @@ impl FdtdString {
         self.clear_state();
         self.is_held = false;
         self.is_active = false;
+        self.is_sleeping = true;
+        self.silence_counter = 0;
         self.is_releasing = false;
         self.is_ghost = false;
         self.pluck_samples_left = 0;
@@ -948,6 +1119,7 @@ impl FdtdString {
 }
 
 #[inline(always)]
+#[allow(dead_code)]
 fn grid_sample(grid: &AlignedGrid, index: isize, segments: usize) -> f64 {
     if index == 0 {
         0.0

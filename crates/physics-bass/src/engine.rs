@@ -121,6 +121,8 @@ pub struct BassEngine {
     pub pluck_style: PluckStyle,
     pub pluck_position: f64,
     pub fret_buzz: f64,
+    pub neck_relief: f64,
+    pub fret_crown_radius: f64,
     pub body_mix: f64,
     pub master_gain: f64,
     pub pitch_bend_semitones: f64,
@@ -145,6 +147,8 @@ impl BassEngine {
             pluck_style: PluckStyle::Finger,
             pluck_position: 0.18,
             fret_buzz: 0.30,
+            neck_relief: 0.00035,
+            fret_crown_radius: 0.0012,
             body_mix: 0.75,
             master_gain: 0.82,
             pitch_bend_semitones: 0.0,
@@ -282,6 +286,20 @@ impl BassEngine {
         self.fret_buzz = buzz;
         for voice in &mut self.strings {
             voice.string.fret_buzz = self.fret_buzz;
+        }
+    }
+
+    pub fn set_neck_relief(&mut self, relief_m: f64) {
+        self.neck_relief = relief_m.max(0.0);
+        for voice in &mut self.strings {
+            voice.string.set_neck_relief(self.neck_relief);
+        }
+    }
+
+    pub fn set_fret_crown_radius(&mut self, radius_m: f64) {
+        self.fret_crown_radius = radius_m.max(0.0002);
+        for voice in &mut self.strings {
+            voice.string.set_fret_crown_radius(self.fret_crown_radius);
         }
     }
 

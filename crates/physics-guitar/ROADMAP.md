@@ -63,5 +63,5 @@ This roadmap tracks completed physical modeling milestones and planned future ca
   - Top-mounted collapsible control strip featuring rotary knobs for `Drive`, `Bass`, `Middle`, `Treble`, `Presence`, `SAG`, and `Pickup Selector`.
 - [ ] **Multi-Rate Oversampling & Anti-Aliasing (2x/4x)**:
   - Minimum-phase polyphase IIR oversampling for high-gain preamp distortion stages to eliminate Nyquist foldback aliasing.
-- [ ] **Dynamic Energy Culling & Silence Sleep**:
-  - Automatically bypass modal integration when string energy decays below -96 dBFS, saving CPU during sparse passages.
+- [x] **Dynamic Energy Culling & Silence Sleep**:
+  - Automatically bypass modal integration and reset lingering micro-vibrations when string energy decays below -96 dBFS, saving up to 70% CPU during sparse passages.

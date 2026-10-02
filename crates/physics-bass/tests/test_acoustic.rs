@@ -473,3 +473,63 @@ fn test_bass_split_coil_pbass_pickup() {
     );
 }
 
+#[test]
+fn test_bass_neck_relief_and_fret_crown_curvature() {
+    let mut string = FdtdString::new(BassStringParams::electric_four()[0], SAMPLE_RATE);
+    // Baseline straight neck (relief = 0.0)
+    string.set_neck_relief(0.0);
+    string.set_fret(0); // open string exposes all frets
+    let relief_straight = string.neck_relief;
+    assert_eq!(relief_straight, 0.0);
+
+    // Apply authentic neck relief: 0.40 mm forward bow
+    string.set_neck_relief(0.00040);
+    assert_eq!(string.neck_relief, 0.00040);
+
+    // Set fret crown radius
+    string.set_fret_crown_radius(0.0015);
+    assert_eq!(string.fret_crown_radius, 0.0015);
+
+    // Pluck and verify stability and contact dynamics
+    string.trigger(0.9, PluckStyle::Finger, 0.2);
+    let mut max_contact = 0.0_f64;
+    for _ in 0..4000 {
+        let _ = string.step();
+        max_contact = max_contact.max(string.last_contact_force);
+        assert!(string.energy().is_finite());
+    }
+    assert!(max_contact.is_finite());
+}
+
+#[test]
+fn test_bass_dynamic_silence_culling_and_sleep() {
+    let mut string = FdtdString::new(BassStringParams::electric_four()[0], SAMPLE_RATE);
+    assert!(!string.is_sleeping);
+
+    // Trigger string then release quickly to accelerate decay
+    string.trigger(0.4, PluckStyle::Ghost, 0.2);
+    string.release();
+
+    // Step until the string enters sleep mode
+    for _ in 0..48_000 {
+        let _ = string.step();
+        if string.is_sleeping {
+            break;
+        }
+    }
+    assert!(
+        string.is_sleeping,
+        "String must transition into low-power sleep mode after vibrations decay below threshold"
+    );
+
+    // Verify wake-up upon new trigger
+    string.trigger(0.8, PluckStyle::Pick, 0.2);
+    assert!(
+        !string.is_sleeping,
+        "String must immediately wake up on note trigger"
+    );
+    let out = string.step();
+    assert!(out.abs() > 0.0 || string.energy() > 0.0);
+}
+
+

@@ -857,4 +857,33 @@ fn test_guitar_cabinet_models_and_mic_proximity() {
     );
 }
 
+#[test]
+fn test_guitar_dynamic_silence_culling_and_sleep() {
+    let strings = generate_guitar_string_set(GuitarStringSetType::Electric010, 30);
+    let mut string = GuitarString::new(strings[0].clone(), 44100.0);
+    assert!(!string.is_sleeping);
+
+    // Initial string with no plucks should transition to sleeping mode
+    for _ in 0..200 {
+        let (ft, fp) = string.step();
+        assert_eq!(ft, 0.0);
+        assert_eq!(fp, 0.0);
+    }
+    assert!(
+        string.is_sleeping,
+        "Unexcited resting string must sleep to save CPU"
+    );
+
+    // Pluck must immediately wake the string up
+    let exciter = PluckExciter::new(PluckStyle::Plectrum);
+    string.pluck(&exciter, 0.7, 0.8);
+    assert!(
+        !string.is_sleeping,
+        "String must immediately wake up on pluck"
+    );
+    let (ft, _) = string.step();
+    assert!(ft.abs() > 0.0);
+}
+
+
 

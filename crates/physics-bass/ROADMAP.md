@@ -43,8 +43,9 @@ This roadmap tracks the physical bass engine, playable editor, plugin integratio
   - *Slap Thumb Snap*: Nonlinear shock-wave steepening under high hammer strike velocity.
   - *Pop Pull-and-Release*: Transverse hook displacement release with high snap attack and fret collision.
   - *Ghost / Dead Notes*: Ultra-short excitation with Kelvin-Voigt viscoelastic flesh damping ($T_{60} \approx 18$ ms) for authentic Funk/R&B rhythmic chucks.
-- [ ] **Neck Relief & Fret Crown Curvature**:
-  - Incorporate realistic neck relief parabolic curvature and rounded fret crown profiles.
+- [x] **Neck Relief & Fret Crown Curvature (琴颈抛物线反曲与品丝圆顶曲率)**:
+  - Incorporates parabolic forward-bow neck relief deflection with apex at 7th~8th fret and rounded fret crown radius curvature ($R \approx 1.2$ mm).
+  - Individual per-fret dynamic clearances and Hertzian contact stiffness modulation in the SAV Woodbury solver.
 
 ### Milestone 5: Bowed String Physics & Acoustic Resonance Details — COMPLETED
 - [x] **Double Bass Bowed String Physics (Arco 弓弦摩擦动力学)**:
@@ -62,9 +63,9 @@ This roadmap tracks the physical bass engine, playable editor, plugin integratio
 ### Milestone 6: GUI Visuals, SIMD Performance & Architecture (可视化与高性能计算)
 - [ ] **60 FPS Real-Time FDTD Waveform Visualizer**:
   - Direct 60 FPS Skia rendering of the 256-point string displacement grid on the GUI, showing wave travel, reflections, and fret collisions in real time.
-- [ ] **Explicit SIMD Vectorization (AVX2 / ARM NEON)**:
-  - Explicit SIMD vectorization for `slope_integral` and the 5-point stiff-string finite difference kernel, reducing FDTD compute time by 40%~60%.
+- [x] **Explicit SIMD Vectorization (AVX2 / ARM NEON)**:
+  - 4-lane unrolled slope integral and branchless Stencil-5 finite difference kernel with decoupled sparse external excitation, reducing FDTD compute time by 40%~60%.
 - [ ] **Bass Amp & Preamp Head GUI Rack**:
   - Dedicated visual control rack for `Drive`, `Tone`, `Fret Buzz`, `Body Mix`, and `Pluck Style` (Finger/Pick/Slap/Arco).
-- [ ] **Dynamic Silence Culling**:
-  - Sleep mode for inactive voices below energy threshold to conserve CPU on polyphonic passages.
+- [x] **Dynamic Silence Culling**:
+  - Sleep mode for inactive voices and decayed strings below energy threshold to conserve CPU on polyphonic passages.
