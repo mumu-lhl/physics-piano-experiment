@@ -155,8 +155,19 @@ impl GuitarEngine {
             }
         }
 
-        // Check if MPE channel (Channel 2..=7) or standard MIDI
-        let loc = if (2..=7).contains(&channel) {
+        // If this exact MIDI note is already sounding on a string, reuse that same string!
+        // This avoids orphaning the currently sounding string and creating stuck/dangling notes.
+        let existing_string = self
+            .active_notes_on_string
+            .iter()
+            .position(|&opt| opt == Some(midi_note));
+
+        let loc = if let Some(str_idx) = existing_string {
+            Some(crate::core::fretboard::FretboardLocation {
+                string_index: (str_idx + 1) as u8,
+                fret: self.strings[str_idx].current_fret,
+            })
+        } else if (2..=7).contains(&channel) {
             self.router.allocate_mpe_note(channel, midi_note)
         } else {
             self.router

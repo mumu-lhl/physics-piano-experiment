@@ -217,6 +217,10 @@ pub struct PhysicsGuitar {
     pub language: Arc<AtomicU8>,
     pub preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     pub undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
+
+    // De-bounce/de-repeat for GUI virtual keyboard to prevent OS auto-repeat machine-gun re-strikes
+    pending_gui_midi_note_offs: [usize; 128],
+    pending_gui_string_note_offs: [usize; 7],
 }
 
 impl Default for PhysicsGuitar {
@@ -264,9 +268,12 @@ impl Default for PhysicsGuitar {
                 guitar_factory_presets(),
             ))),
             undo_manager: Arc::new(parking_lot::RwLock::new(UndoManager::default())),
+            pending_gui_midi_note_offs: [0; 128],
+            pending_gui_string_note_offs: [0; 7],
         }
     }
 }
+
 
 impl Plugin for PhysicsGuitar {
     const NAME: &'static str = "Physics Guitar";
@@ -314,12 +321,26 @@ impl Plugin for PhysicsGuitar {
         true
     }
 
+    fn reset(&mut self) {
+        while self.gui_event_rx.try_recv().is_ok() {}
+        self.pending_gui_midi_note_offs.fill(0);
+        self.pending_gui_string_note_offs.fill(0);
+        for f in self.active_frets_shared.iter() {
+            f.store(255, Ordering::Relaxed);
+        }
+        for e in self.string_energies_shared.iter() {
+            e.store(0, Ordering::Relaxed);
+        }
+    }
+
     fn process(
         &mut self,
         buffer: &mut Buffer,
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        let debounce_samples = (self.engine.sample_rate * 0.045) as usize; // 45ms auto-repeat filter window
+
         // 1. Process GUI manual fret events from lock-free queue
         while let Ok(event) = self.gui_event_rx.try_recv() {
             match event {
@@ -329,6 +350,13 @@ impl Plugin for PhysicsGuitar {
                     velocity,
                 } => {
                     if (1..=6).contains(&string_index) {
+                        let s_u = string_index as usize;
+                        if self.pending_gui_string_note_offs[s_u] > 0 {
+                            // Key remains held down (OS auto-repeat); cancel pending release and suppress re-strike!
+                            self.pending_gui_string_note_offs[s_u] = 0;
+                            continue;
+                        }
+
                         let s_i = (string_index - 1) as usize;
                         let open_note = self.engine.router.open_notes[s_i];
                         let midi_note = open_note + fret;
@@ -343,14 +371,48 @@ impl Plugin for PhysicsGuitar {
                 }
                 GuiGuitarEvent::NoteOff { string_index, .. } => {
                     if (1..=6).contains(&string_index) {
-                        self.engine.release_string(string_index);
+                        self.pending_gui_string_note_offs[string_index as usize] = debounce_samples;
                     }
                 }
                 GuiGuitarEvent::MidiNoteOn { note, velocity } => {
+                    let n = note as usize;
+                    if n < 128 && self.pending_gui_midi_note_offs[n] > 0 {
+                        // Key remains held down (OS auto-repeat); cancel pending release and suppress re-strike!
+                        self.pending_gui_midi_note_offs[n] = 0;
+                        continue;
+                    }
                     self.engine.note_on(0, note, velocity as f64);
                 }
                 GuiGuitarEvent::MidiNoteOff { note } => {
-                    self.engine.note_off(0, note);
+                    let n = note as usize;
+                    if n < 128 {
+                        self.pending_gui_midi_note_offs[n] = debounce_samples;
+                    } else {
+                        self.engine.note_off(0, note);
+                    }
+                }
+            }
+        }
+
+        // Process pending NoteOff events whose debounce window has elapsed (finger actually released)
+        let num_samples = buffer.samples();
+        for note in 0..128 {
+            if self.pending_gui_midi_note_offs[note] > 0 {
+                if self.pending_gui_midi_note_offs[note] <= num_samples {
+                    self.pending_gui_midi_note_offs[note] = 0;
+                    self.engine.note_off(0, note as u8);
+                } else {
+                    self.pending_gui_midi_note_offs[note] -= num_samples;
+                }
+            }
+        }
+        for s in 1..=6 {
+            if self.pending_gui_string_note_offs[s] > 0 {
+                if self.pending_gui_string_note_offs[s] <= num_samples {
+                    self.pending_gui_string_note_offs[s] = 0;
+                    self.engine.release_string(s as u8);
+                } else {
+                    self.pending_gui_string_note_offs[s] -= num_samples;
                 }
             }
         }
@@ -425,6 +487,10 @@ impl Plugin for PhysicsGuitar {
                         velocity,
                         ..
                     } => {
+                        let n = note as usize;
+                        if n < 128 {
+                            self.pending_gui_midi_note_offs[n] = 0;
+                        }
                         self.engine.note_on(channel, note, velocity as f64);
                     }
                     NoteEvent::NoteOff { channel, note, .. } => {

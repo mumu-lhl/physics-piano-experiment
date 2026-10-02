@@ -46,7 +46,6 @@ fn spectrum(signal: &[f64], start: usize, length: usize) -> (Vec<f64>, usize) {
 
 fn peak_frequency(signal: &[f64], start: usize, length: usize, target_hz: f64) -> f64 {
     let (magnitudes, fft_size) = spectrum(signal, start, length);
-    let resolution = SAMPLE_RATE / fft_size as f64;
     let radius_hz = (target_hz * 0.08).max(2.0);
     peak_in_band(&magnitudes, fft_size, target_hz, radius_hz)
 }
@@ -249,6 +248,13 @@ fn test_gui_dynamic_velocity_and_midi_routing() {
     assert!(engine.strings[1].current_note.is_some());
     engine.note_off(28);
     assert!(engine.strings[1].string.is_releasing);
+
+    // 3. Repeated note_on on same note retriggers without state corruption
+    engine.note_on(28, 0.88);
+    assert_eq!(engine.strings[1].current_note, Some(28));
+    engine.note_on(28, 0.95);
+    assert_eq!(engine.strings[1].current_note, Some(28));
+    assert!(engine.strings[1].string.is_active);
 }
 
 #[test]

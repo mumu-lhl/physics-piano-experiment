@@ -139,6 +139,10 @@ pub struct PhysicsBass {
     pub language: Arc<AtomicU8>,
     pub preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     pub undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
+
+    // De-bounce/de-repeat for GUI virtual keyboard to prevent OS auto-repeat machine-gun re-strikes
+    pending_gui_midi_note_offs: [usize; 128],
+    pending_gui_string_note_offs: [usize; 5],
 }
 
 impl Default for PhysicsBass {
@@ -171,9 +175,12 @@ impl Default for PhysicsBass {
                 bass_factory_presets(),
             ))),
             undo_manager: Arc::new(parking_lot::RwLock::new(UndoManager::default())),
+            pending_gui_midi_note_offs: [0; 128],
+            pending_gui_string_note_offs: [0; 5],
         }
     }
 }
+
 
 impl PhysicsBass {
     fn sync_parameters(&mut self) {
@@ -282,6 +289,8 @@ impl Plugin for PhysicsBass {
         self.sync_parameters();
         self.apply_smoothed_parameters();
         while self.gui_event_rx.try_recv().is_ok() {}
+        self.pending_gui_midi_note_offs.fill(0);
+        self.pending_gui_string_note_offs.fill(0);
         for fret in self.active_frets_shared.iter() {
             fret.store(255, Ordering::Relaxed);
         }
@@ -298,6 +307,8 @@ impl Plugin for PhysicsBass {
     ) -> ProcessStatus {
         sanitize_floating_point_environment();
 
+        let debounce_samples = (self.sample_rate * 0.045) as usize; // 45ms auto-repeat filter window
+
         // GUI fretboard gestures use a bounded lock-free queue. `try_recv()`
         // keeps the audio callback wait-free even if the user drags quickly.
         while let Ok(event) = self.gui_event_rx.try_recv() {
@@ -306,17 +317,63 @@ impl Plugin for PhysicsBass {
                     string_index,
                     fret,
                     velocity,
-                } => self
-                    .engine
-                    .note_on_string(string_index as usize, fret, velocity),
+                } => {
+                    let s_u = string_index as usize;
+                    if s_u < 5 && self.pending_gui_string_note_offs[s_u] > 0 {
+                        // Key remains held down (OS auto-repeat); cancel pending release and suppress re-strike!
+                        self.pending_gui_string_note_offs[s_u] = 0;
+                        continue;
+                    }
+                    self.engine
+                        .note_on_string(string_index as usize, fret, velocity);
+                }
                 GuiBassEvent::NoteOff { string_index } => {
-                    self.engine.note_off_string(string_index as usize)
+                    let s_u = string_index as usize;
+                    if s_u < 5 {
+                        self.pending_gui_string_note_offs[s_u] = debounce_samples;
+                    } else {
+                        self.engine.note_off_string(s_u);
+                    }
                 }
                 GuiBassEvent::MidiNoteOn { note, velocity } => {
+                    let n = note as usize;
+                    if n < 128 && self.pending_gui_midi_note_offs[n] > 0 {
+                        // Key remains held down (OS auto-repeat); cancel pending release and suppress re-strike!
+                        self.pending_gui_midi_note_offs[n] = 0;
+                        continue;
+                    }
                     self.engine.note_on(note, velocity);
                 }
                 GuiBassEvent::MidiNoteOff { note } => {
-                    self.engine.note_off(note);
+                    let n = note as usize;
+                    if n < 128 {
+                        self.pending_gui_midi_note_offs[n] = debounce_samples;
+                    } else {
+                        self.engine.note_off(note);
+                    }
+                }
+            }
+        }
+
+        // Process pending NoteOff events whose debounce window has elapsed (finger actually released)
+        let num_samples = buffer.samples();
+        for note in 0..128 {
+            if self.pending_gui_midi_note_offs[note] > 0 {
+                if self.pending_gui_midi_note_offs[note] <= num_samples {
+                    self.pending_gui_midi_note_offs[note] = 0;
+                    self.engine.note_off(note as u8);
+                } else {
+                    self.pending_gui_midi_note_offs[note] -= num_samples;
+                }
+            }
+        }
+        for s in 0..5 {
+            if self.pending_gui_string_note_offs[s] > 0 {
+                if self.pending_gui_string_note_offs[s] <= num_samples {
+                    self.pending_gui_string_note_offs[s] = 0;
+                    self.engine.note_off_string(s);
+                } else {
+                    self.pending_gui_string_note_offs[s] -= num_samples;
                 }
             }
         }
@@ -330,9 +387,19 @@ impl Plugin for PhysicsBass {
                 }
                 match event {
                     NoteEvent::NoteOn { note, velocity, .. } => {
+                        let n = note as usize;
+                        if n < 128 {
+                            self.pending_gui_midi_note_offs[n] = 0;
+                        }
                         self.engine.note_on(note, velocity as f64);
                     }
-                    NoteEvent::NoteOff { note, .. } => self.engine.note_off(note),
+                    NoteEvent::NoteOff { note, .. } => {
+                        let n = note as usize;
+                        if n < 128 {
+                            self.pending_gui_midi_note_offs[n] = 0;
+                        }
+                        self.engine.note_off(note);
+                    }
                     NoteEvent::MidiPitchBend { value, .. } => {
                         self.engine.set_pitch_bend((value as f64 - 0.5) * 24.0);
                     }

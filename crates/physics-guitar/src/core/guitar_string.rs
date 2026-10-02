@@ -220,9 +220,12 @@ impl GuitarString {
             velocity,
             num_modes,
             |mode, q_t, q_p, v_t| {
-                self.state_t[mode].q += q_t;
+                // Plectrum contact damping on vibrating string:
+                // Touching a vibrating string with a pick or finger partially arrests prior motion
+                // rather than purely summing displacement, preventing unbounded energy accumulation
+                self.state_t[mode].q = self.state_t[mode].q * 0.25 + q_t;
                 self.state_t[mode].v = v_t;
-                self.state_p[mode].q += q_p;
+                self.state_p[mode].q = self.state_p[mode].q * 0.25 + q_p;
                 self.state_p[mode].v = 0.0;
             },
         );

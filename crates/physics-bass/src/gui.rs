@@ -429,6 +429,7 @@ impl Model for BassUiState {
                 ];
                 if let Some((_, string_idx)) = BASS_STRING_KEYS.iter().find(|(k, _)| k == code) {
                     if *string_idx == 0 && !self.params.five_string.value() {
+                        meta.consume();
                         return;
                     }
                     if !self.held_string_keys.contains_key(code) {
@@ -438,9 +439,9 @@ impl Model for BassUiState {
                             fret: 0,
                             velocity: 0.90,
                         });
-                        meta.consume();
-                        return;
                     }
+                    meta.consume();
+                    return;
                 }
                 // Chromatic note keys: A-K (C4 base, shifted by octave_offset, default -24 for C2)
                 const KEY_MAP: &[(Code, u8)] = &[
@@ -472,8 +473,9 @@ impl Model for BassUiState {
                             note: midi,
                             velocity: 0.88,
                         });
-                        meta.consume();
                     }
+                    meta.consume();
+                    return;
                 }
             }
             WindowEvent::KeyUp(code, _) => {

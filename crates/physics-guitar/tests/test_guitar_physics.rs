@@ -512,6 +512,59 @@ fn test_gui_dynamic_velocity_and_keyboard_event_routing() {
 }
 
 #[test]
+fn test_guitar_repeat_note_on_string_reuse_and_energy_damping() {
+    let mut engine = GuitarEngine::new(
+        44100.0,
+        GuitarStringSetType::Electric010,
+        GuitarInstrumentMode::Electric,
+    );
+
+    // Initial note on C4 (MIDI 60)
+    engine.note_on(0, 60, 0.8);
+    let first_string_idx = engine
+        .active_notes_on_string
+        .iter()
+        .position(|&n| n == Some(60))
+        .expect("Note 60 should be active on a string");
+
+    // Repeated note_on for same note (e.g. key repeat) should reuse the SAME string rather than allocating a new one
+    engine.note_on(0, 60, 0.8);
+    let second_string_idx = engine
+        .active_notes_on_string
+        .iter()
+        .position(|&n| n == Some(60))
+        .expect("Note 60 should still be active");
+    assert_eq!(
+        first_string_idx, second_string_idx,
+        "Repeated NoteOn must reuse active string"
+    );
+
+    // Count how many strings are playing note 60: exactly 1
+    let active_count = engine
+        .active_notes_on_string
+        .iter()
+        .filter(|&&n| n == Some(60))
+        .count();
+    assert_eq!(active_count, 1, "Only one string should hold note 60");
+
+    // Verify re-pluck damping prevents energy explosion
+    let exciter = PluckExciter::new(PluckStyle::Plectrum);
+    let mut string = engine.strings[first_string_idx].clone();
+    string.pluck(&exciter, 0.7, 0.9);
+    let energy1 = string.total_energy();
+
+    // 10 repeated rapid plucks without delay
+    for _ in 0..10 {
+        string.pluck(&exciter, 0.7, 0.9);
+    }
+    let energy_accum = string.total_energy();
+    assert!(
+        energy_accum < energy1 * 5.0,
+        "Repeated rapid plucks must be physically damped by plectrum contact, avoiding energy runaway (single={energy1}, 10x={energy_accum})"
+    );
+}
+
+#[test]
 fn test_multi_stage_tube_amp_and_tone_stack() {
     use physics_guitar::core::amp_cab::GuitarAmpCab;
 

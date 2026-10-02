@@ -532,9 +532,9 @@ impl Model for GuitarUiState {
                             fret: 0,
                             velocity: 0.88,
                         });
-                        meta.consume();
-                        return;
                     }
+                    meta.consume();
+                    return;
                 }
                 // Chromatic note keys: A-K (C4 base, shifted by octave_offset)
                 const KEY_MAP: &[(Code, u8)] = &[
@@ -565,9 +565,10 @@ impl Model for GuitarUiState {
                             note: midi,
                             velocity: 0.85,
                         });
-                        meta.consume();
                     }
+                    meta.consume();
                 }
+
             }
             WindowEvent::KeyUp(code, _) => {
                 self.held_nav_keys.remove(code);
