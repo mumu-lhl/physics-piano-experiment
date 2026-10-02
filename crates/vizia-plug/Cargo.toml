@@ -6,9 +6,6 @@ authors = ["George Atkinson <geom3trik@vizia.dev>"]
 license = "MIT"
 description = "An adapter to use VIZIA GUIs with nice-plug"
 
-[workspace]
-members = ["xtask", "examples/gain_gui"]
-
 [lib]
 crate-type = ["cdylib", "lib"]
 

@@ -29,7 +29,7 @@ physics-ui = { path = "../physics-ui" }
 physics-presets = { path = "../physics-presets" }
 crossbeam-channel = "0.5"
 parking_lot = "0.12"
-vizia_plug = { git = "https://github.com/vizia/vizia-plug.git", rev = "34812c0ba14c5df39621bab956c74e660220636b" }
+vizia_plug = { path = "../vizia-plug" }
 hound = "3.5.1"
 log = "0.4"
 nice-log = "0.2.4"

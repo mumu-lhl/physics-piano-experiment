@@ -13,4 +13,4 @@ name = "physics_ui"
 nice-plug = { version = "0.1.8", default-features = false }
 parking_lot = "0.12"
 physics-presets = { path = "../physics-presets" }
-vizia_plug = { git = "https://github.com/vizia/vizia-plug.git", rev = "34812c0ba14c5df39621bab956c74e660220636b" }
+vizia_plug = { path = "../vizia-plug" }
