@@ -1,5 +1,6 @@
 pub mod amp_cab;
 pub mod body;
+pub mod convolution;
 pub mod fretboard;
 pub mod groove;
 pub mod guitar_string;
@@ -10,6 +11,7 @@ pub mod strummer;
 
 pub use amp_cab::*;
 pub use body::*;
+pub use convolution::*;
 pub use fretboard::*;
 pub use groove::*;
 pub use guitar_string::*;

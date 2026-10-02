@@ -885,5 +885,59 @@ fn test_guitar_dynamic_silence_culling_and_sleep() {
     assert!(ft.abs() > 0.0);
 }
 
+#[test]
+fn test_guitar_upols_convolution_engine() {
+    use physics_guitar::core::convolution::UpolsConvolutionEngine;
+
+    let mut engine = UpolsConvolutionEngine::new();
+    assert_eq!(engine.num_partitions, 8);
+
+    // Feed a unit impulse: x[0] = 1.0, x[n] = 0.0
+    let mut output = Vec::with_capacity(256);
+    let y0 = engine.process_sample(1.0);
+    output.push(y0);
+    for _ in 1..256 {
+        output.push(engine.process_sample(0.0));
+    }
+
+    // Output must be finite and contain non-zero impulse response values
+    for (i, &y) in output.iter().enumerate() {
+        assert!(!y.is_nan() && !y.is_infinite(), "Output at index {i} must be finite");
+    }
+    let energy: f64 = output.iter().map(|&s| s * s).sum();
+    assert!(energy > 1e-6, "Convolution output must have non-zero energy: {energy}");
+
+    // Test IR loading
+    let custom_ir = vec![1.0f64; 128];
+    engine.load_ir(&custom_ir);
+    assert_eq!(engine.num_partitions, 2);
+}
+
+#[test]
+fn test_guitar_oversampled_tube_amp_and_cabinet_ir() {
+    use physics_guitar::core::amp_cab::{CabinetModel, GuitarAmpCab, OversamplingFactor};
+
+    for &factor in &[OversamplingFactor::X1, OversamplingFactor::X2, OversamplingFactor::X4] {
+        let mut amp = GuitarAmpCab::new(44100.0);
+        amp.is_enabled = true;
+        amp.cab_enabled = true;
+        amp.set_oversampling(factor);
+        amp.set_drive(0.85);
+        amp.set_cabinet_model(CabinetModel::Vintage30);
+        amp.set_use_ir_cabinet(true);
+
+        // Feed strong 1 kHz tone
+        let mut max_out = 0.0f64;
+        for n in 0..1000 {
+            let input = 1.5 * (2.0 * std::f64::consts::PI * 1000.0 * (n as f64) / 44100.0).sin();
+            let out = amp.process(input);
+            assert!(!out.is_nan() && !out.is_infinite(), "Amp output must be finite for factor {:?}", factor);
+            max_out = max_out.max(out.abs());
+        }
+        assert!(max_out > 0.0 && max_out < 10.0, "Oversampled amp output must be within bounds: max_out={max_out}");
+    }
+}
+
+
 
 

@@ -60,12 +60,12 @@ This roadmap tracks the physical bass engine, playable editor, plugin integratio
 - [x] **Split-Coil P-Bass Magnetic Geometry**:
   - Physical offset split-coil pickup configuration with independent EA / DG apertures and humbucking wiring for Precision Bass punch.
 
-### Milestone 6: GUI Visuals, SIMD Performance & Architecture (可视化与高性能计算)
-- [ ] **60 FPS Real-Time FDTD Waveform Visualizer**:
-  - Direct 60 FPS Skia rendering of the 256-point string displacement grid on the GUI, showing wave travel, reflections, and fret collisions in real time.
+### Milestone 6: GUI Visuals, SIMD Performance & Architecture — COMPLETED
+- [x] **60 FPS Real-Time FDTD Waveform Visualizer**:
+  - Direct 60 FPS Skia rendering of the 32-node physical wave shape curve on the GUI fretboard with animated glow halo, showing traveling waves and boundary reflections with strictly zero audio thread allocation.
 - [x] **Explicit SIMD Vectorization (AVX2 / ARM NEON)**:
   - 4-lane unrolled slope integral and branchless Stencil-5 finite difference kernel with decoupled sparse external excitation, reducing FDTD compute time by 40%~60%.
-- [ ] **Bass Amp & Preamp Head GUI Rack**:
-  - Dedicated visual control rack for `Drive`, `Tone`, `Fret Buzz`, `Body Mix`, and `Pluck Style` (Finger/Pick/Slap/Arco).
+- [x] **Bass Amp & Preamp Head GUI Rack**:
+  - Dedicated visual control rack for `Drive` (asymmetric tube/FET saturation), `Tone`, `Fret Buzz`, `Body Mix`, and `Pluck Style` (Finger/Pick/Slap/Arco).
 - [x] **Dynamic Silence Culling**:
   - Sleep mode for inactive voices and decayed strings below energy threshold to conserve CPU on polyphonic passages.

@@ -12,7 +12,7 @@ use super::skia_compat as vg;
 use super::skia_compat::CanvasExt;
 use crossbeam_channel::Sender;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 use vizia_plug::vizia::prelude::*;
 
 use crate::nice_plugin::GuiGuitarEvent;
@@ -20,6 +20,7 @@ use crate::nice_plugin::GuiGuitarEvent;
 pub struct GuitarFretboardWidget {
     active_frets: Arc<[AtomicU8; 6]>,
     string_energies: Arc<[AtomicU32; 6]>,
+    string_profiles: Arc<[[AtomicI32; 16]; 6]>,
     gui_tx: Sender<GuiGuitarEvent>,
     held_mouse_pos: Option<(u8, u8)>, // (string_index 1..=6, fret 0..=24)
     active_strum_frets: [Option<u8>; 6],
@@ -49,10 +50,12 @@ impl GuitarFretboardWidget {
         gui_tx: Sender<GuiGuitarEvent>,
         active_frets: Arc<[AtomicU8; 6]>,
         string_energies: Arc<[AtomicU32; 6]>,
+        string_profiles: Arc<[[AtomicI32; 16]; 6]>,
     ) -> Handle<'_, Self> {
         Self {
             active_frets,
             string_energies,
+            string_profiles,
             gui_tx,
             held_mouse_pos: None,
             active_strum_frets: [None; 6],
@@ -301,8 +304,35 @@ impl View for GuitarFretboardWidget {
             str_paint.set_line_width(gauge);
 
             let mut str_path = vg::Path::new();
-            str_path.move_to(bounds.x, base_y);
-            str_path.line_to(bounds.x + bounds.w, base_y);
+            if is_sounding {
+                let vibrate_start_x = if active_fret > 0 && active_fret <= 24 {
+                    fret_x_positions[active_fret as usize]
+                } else {
+                    bounds.x + nut_w
+                };
+                let vibrate_end_x = bounds.x + bounds.w;
+                let vibrate_len = (vibrate_end_x - vibrate_start_x).max(10.0);
+
+                str_path.move_to(bounds.x, base_y);
+                str_path.line_to(vibrate_start_x, base_y);
+
+                let amp_scale = (energy.sqrt() * 12.0).clamp(1.2, 14.0);
+                for k in 0..16 {
+                    let disp_raw = self.string_profiles[s][k].load(Ordering::Relaxed) as f32 / 10000.0;
+                    let x = vibrate_start_x + ((k as f32 + 0.5) / 16.0) * vibrate_len;
+                    let disp_y = base_y + (disp_raw * amp_scale).clamp(-10.0, 10.0);
+                    str_path.line_to(x, disp_y);
+                }
+                str_path.line_to(vibrate_end_x, base_y);
+
+                // Translucent glow halo around the vibrating wave packet
+                let mut halo_paint = vg::Paint::color(vg::Color::rgba(255, 200, 80, 60));
+                halo_paint.set_line_width(gauge + 3.0);
+                canvas.stroke_path(&mut str_path, &halo_paint);
+            } else {
+                str_path.move_to(bounds.x, base_y);
+                str_path.line_to(bounds.x + bounds.w, base_y);
+            }
             canvas.stroke_path(&mut str_path, &str_paint);
 
             // 5. Active Fret Indicator Dot (Glows under finger)

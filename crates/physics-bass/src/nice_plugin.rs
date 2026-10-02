@@ -8,7 +8,7 @@ use nice_plug::prelude::*;
 use physics_presets::{PresetManager, UndoManager, bass_factory_presets};
 use std::num::NonZeroU32;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 use vizia_plug::ViziaState;
 
 #[derive(Params)]
@@ -40,6 +40,9 @@ pub struct PhysicsBassParams {
     /// Acoustic body contribution in electric mode.
     #[id = "body_mix"]
     pub body_mix: FloatParam,
+    /// Asymmetric tube/FET preamp overdrive saturation.
+    #[id = "drive"]
+    pub drive: FloatParam,
     #[id = "gain"]
     pub master_gain: FloatParam,
 }
@@ -92,6 +95,11 @@ impl Default for PhysicsBassParams {
                 .with_unit(" %")
                 .with_value_to_string(formatters::v2s_f32_percentage(0))
                 .with_string_to_value(formatters::s2v_f32_percentage()),
+            drive: FloatParam::new("Drive", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_smoother(SmoothingStyle::Linear(20.0))
+                .with_unit(" %")
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
             master_gain: FloatParam::new(
                 "Master Gain",
                 util::db_to_gain(0.0),
@@ -134,6 +142,7 @@ pub struct PhysicsBass {
     sample_rate: f64,
     pub active_frets_shared: Arc<[AtomicU8; 5]>,
     pub string_energies_shared: Arc<[AtomicU32; 5]>,
+    pub string_profiles_shared: Arc<[[AtomicI32; 32]; 5]>,
     pub gui_event_tx: crossbeam_channel::Sender<GuiBassEvent>,
     gui_event_rx: crossbeam_channel::Receiver<GuiBassEvent>,
     pub language: Arc<AtomicU8>,
@@ -167,6 +176,9 @@ impl Default for PhysicsBass {
                 AtomicU32::new(0),
                 AtomicU32::new(0),
             ]),
+            string_profiles_shared: Arc::new(std::array::from_fn(|_| {
+                std::array::from_fn(|_| AtomicI32::new(0))
+            })),
             gui_event_tx,
             gui_event_rx,
             language: Arc::new(AtomicU8::new(language)),
@@ -214,6 +226,8 @@ impl PhysicsBass {
         self.engine
             .set_body_mix(self.params.body_mix.smoothed.next() as f64);
         self.engine
+            .set_drive(self.params.drive.smoothed.next() as f64);
+        self.engine
             .set_master_gain(self.params.master_gain.smoothed.next() as f64);
     }
 
@@ -235,6 +249,10 @@ impl PhysicsBass {
             .body_mix
             .smoothed
             .reset(self.params.body_mix.value());
+        self.params
+            .drive
+            .smoothed
+            .reset(self.params.drive.value());
         self.params
             .master_gain
             .smoothed
@@ -421,6 +439,7 @@ impl Plugin for PhysicsBass {
             }
         }
 
+        let mut sample_buf = [0.0f32; 32];
         for (index, voice) in self.engine.strings.iter().enumerate() {
             let fret = if voice.string.is_held {
                 voice.current_fret
@@ -431,6 +450,12 @@ impl Plugin for PhysicsBass {
             let energy = voice.string.energy();
             let visual_energy = (energy / (energy + 1.0)).sqrt().clamp(0.0, 1.0) as f32;
             self.string_energies_shared[index].store(visual_energy.to_bits(), Ordering::Relaxed);
+
+            voice.string.sample_spatial_profile(&mut sample_buf);
+            for (k, val) in sample_buf.iter().enumerate() {
+                self.string_profiles_shared[index][k]
+                    .store(val.to_bits() as i32, Ordering::Relaxed);
+            }
         }
         ProcessStatus::Normal
     }
@@ -440,6 +465,7 @@ impl Plugin for PhysicsBass {
             self.params.clone(),
             self.active_frets_shared.clone(),
             self.string_energies_shared.clone(),
+            self.string_profiles_shared.clone(),
             self.gui_event_tx.clone(),
             self.language.clone(),
             self.preset_manager.clone(),

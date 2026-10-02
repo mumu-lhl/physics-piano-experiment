@@ -3,7 +3,7 @@
 use nice_plug::prelude::*;
 use physics_presets::{PresetManager, UndoManager, guitar_factory_presets};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 use vizia_plug::ViziaState;
 
 use crate::core::groove::GroovePattern;
@@ -50,9 +50,37 @@ pub struct PhysicsGuitarParams {
     #[id = "amp_drive"]
     pub amp_drive: FloatParam,
 
+    /// Amp Tone Stack Bass [0.0 ~ 1.0]
+    #[id = "amp_bass"]
+    pub amp_bass: FloatParam,
+
+    /// Amp Tone Stack Middle [0.0 ~ 1.0]
+    #[id = "amp_middle"]
+    pub amp_middle: FloatParam,
+
+    /// Amp Tone Stack Treble [0.0 ~ 1.0]
+    #[id = "amp_treble"]
+    pub amp_treble: FloatParam,
+
+    /// Amp Tone Stack Presence [0.0 ~ 1.0]
+    #[id = "amp_presence"]
+    pub amp_presence: FloatParam,
+
+    /// Power Amp SAG Compression [0.0 ~ 1.0]
+    #[id = "amp_sag"]
+    pub amp_sag: FloatParam,
+
     /// 12" Guitar Cabinet Simulation Filter
     #[id = "cab_enabled"]
     pub cab_enabled: BoolParam,
+
+    /// Cabinet Profile: 0 = Celestion Vintage 30, 1 = Fender Twin Reverb, 2 = Marshall Greenback
+    #[id = "cabinet_model"]
+    pub cabinet_model: IntParam,
+
+    /// Partitioned Convolution IR Cabinet Mode
+    #[id = "use_ir_cab"]
+    pub use_ir_cab: BoolParam,
 
     /// Smart Strum Speed [0.0 ms ~ 50.0 ms] (0 = instant solo, 18ms = acoustic strum)
     #[id = "strum_speed"]
@@ -123,7 +151,34 @@ impl Default for PhysicsGuitarParams {
             .with_value_to_string(formatters::v2s_f32_percentage(0))
             .with_string_to_value(formatters::s2v_f32_percentage()),
 
+            amp_bass: FloatParam::new("Amp Bass", 0.50, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_unit(" %")
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+
+            amp_middle: FloatParam::new("Amp Middle", 0.50, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_unit(" %")
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+
+            amp_treble: FloatParam::new("Amp Treble", 0.50, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_unit(" %")
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+
+            amp_presence: FloatParam::new("Amp Presence", 0.50, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_unit(" %")
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+
+            amp_sag: FloatParam::new("Power SAG", 0.35, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_unit(" %")
+                .with_value_to_string(formatters::v2s_f32_percentage(0))
+                .with_string_to_value(formatters::s2v_f32_percentage()),
+
             cab_enabled: BoolParam::new("12\" Cabinet", true),
+            cabinet_model: IntParam::new("Cabinet Model", 0, IntRange::Linear { min: 0, max: 2 }),
+            use_ir_cab: BoolParam::new("UPOLS IR Cab", false),
 
             strum_speed: FloatParam::new(
                 "Strum Speed",
@@ -211,6 +266,7 @@ pub struct PhysicsGuitar {
     // Shared state for GUI animation (atomic / lock-free)
     pub active_frets_shared: Arc<[AtomicU8; 6]>,
     pub string_energies_shared: Arc<[AtomicU32; 6]>,
+    pub string_profiles_shared: Arc<[[AtomicI32; 16]; 6]>,
     // Lock-free event queue from GUI clicks/releases into audio engine
     pub gui_event_tx: crossbeam_channel::Sender<GuiGuitarEvent>,
     pub gui_event_rx: crossbeam_channel::Receiver<GuiGuitarEvent>,
@@ -252,6 +308,10 @@ impl Default for PhysicsGuitar {
             AtomicU32::new(0),
         ]);
 
+        let string_profiles_shared = Arc::new(std::array::from_fn(|_| {
+            std::array::from_fn(|_| AtomicI32::new(0))
+        }));
+
         let (gui_event_tx, gui_event_rx) = crossbeam_channel::bounded(256);
 
         Self {
@@ -260,6 +320,7 @@ impl Default for PhysicsGuitar {
             sample_rate: sample_rate as f32,
             active_frets_shared,
             string_energies_shared,
+            string_profiles_shared,
             gui_event_tx,
             gui_event_rx,
             language: Arc::new(AtomicU8::new(lang_code)),
@@ -469,7 +530,20 @@ impl Plugin for PhysicsGuitar {
                 .set_bpm(self.params.groove_bpm.value() as f64);
         }
         self.engine.amp_cab.drive = self.params.amp_drive.value() as f64;
+        self.engine.amp_cab.set_tone_stack(
+            self.params.amp_bass.value() as f64,
+            self.params.amp_middle.value() as f64,
+            self.params.amp_treble.value() as f64,
+            self.params.amp_presence.value() as f64,
+        );
+        self.engine.amp_cab.sag = self.params.amp_sag.value() as f64;
         self.engine.amp_cab.cab_enabled = self.params.cab_enabled.value();
+        self.engine.amp_cab.cabinet.model = match self.params.cabinet_model.value() {
+            1 => crate::core::amp_cab::CabinetModel::TwinReverb,
+            2 => crate::core::amp_cab::CabinetModel::Greenback,
+            _ => crate::core::amp_cab::CabinetModel::Vintage30,
+        };
+        self.engine.amp_cab.set_use_ir_cabinet(self.params.use_ir_cab.value());
         self.engine.pluck_pos_ratio = self.params.pluck_pos.value() as f64;
         self.engine.master_volume = self.params.master_gain.value() as f64;
 
@@ -518,6 +592,7 @@ impl Plugin for PhysicsGuitar {
         }
 
         // 4. Update atomic shared states for GUI visualization
+        let mut profile_buf = [0.0f32; 16];
         for i in 0..6 {
             let string = &self.engine.strings[i];
             let fret_val = if string.is_held {
@@ -529,6 +604,12 @@ impl Plugin for PhysicsGuitar {
 
             let energy = (string.total_energy() * 1000.0).clamp(0.0, 1.0) as f32;
             self.string_energies_shared[i].store(energy.to_bits(), Ordering::Relaxed);
+
+            string.sample_spatial_profile(&mut profile_buf);
+            for k in 0..16 {
+                let fixed = (profile_buf[k] * 10000.0) as i32;
+                self.string_profiles_shared[i][k].store(fixed, Ordering::Relaxed);
+            }
         }
 
         ProcessStatus::Normal
@@ -539,6 +620,7 @@ impl Plugin for PhysicsGuitar {
             self.params.clone(),
             self.active_frets_shared.clone(),
             self.string_energies_shared.clone(),
+            self.string_profiles_shared.clone(),
             self.language.clone(),
             self.gui_event_tx.clone(),
             self.preset_manager.clone(),

@@ -10,7 +10,7 @@ use physics_ui::skia_compat as vg;
 use physics_ui::skia_compat::CanvasExt;
 use physics_ui::{Language, translate};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 use vizia_plug::vizia::prelude::*;
 
 const STRING_COUNT: usize = 5;
@@ -21,6 +21,7 @@ pub struct BassFretboardWidget {
     params: Arc<PhysicsBassParams>,
     active_frets: Arc<[AtomicU8; STRING_COUNT]>,
     string_energies: Arc<[AtomicU32; STRING_COUNT]>,
+    string_profiles: Arc<[[AtomicI32; 32]; STRING_COUNT]>,
     gui_tx: crossbeam_channel::Sender<GuiBassEvent>,
     language: Arc<AtomicU8>,
     held: Option<(usize, u8)>,
@@ -42,6 +43,7 @@ impl BassFretboardWidget {
         params: Arc<PhysicsBassParams>,
         active_frets: Arc<[AtomicU8; STRING_COUNT]>,
         string_energies: Arc<[AtomicU32; STRING_COUNT]>,
+        string_profiles: Arc<[[AtomicI32; 32]; STRING_COUNT]>,
         gui_tx: crossbeam_channel::Sender<GuiBassEvent>,
         language: Arc<AtomicU8>,
     ) -> Handle<'_, Self> {
@@ -49,6 +51,7 @@ impl BassFretboardWidget {
             params,
             active_frets,
             string_energies,
+            string_profiles,
             gui_tx,
             language,
             held: None,
@@ -262,16 +265,64 @@ impl View for BassFretboardWidget {
             shadow_paint.set_line_width(gauges[string] + 4.0 * energy);
             canvas.stroke_path(&shadow, &shadow_paint);
 
+            let is_vibrating = enabled && energy > 0.005;
             let string_color = if !enabled {
                 vg::Color::rgb(76, 78, 84)
-            } else if energy > 0.015 {
+            } else if is_vibrating {
                 vg::Color::rgb(255, 193, 87)
             } else {
                 vg::Color::rgb(201, 208, 220)
             };
+
+            // Calculate active speaking string start x
+            let start_x = if fret > 0 && fret <= FRETS {
+                board_x + nut_width + fret_span * (1.0 - 2.0_f32.powf(-(fret as f32) / 12.0))
+            } else {
+                board_x + nut_width
+            };
+            let end_x = board_x + board_width;
+
+            // Draw muted portion of string before fret as straight wire
+            if fret > 0 && fret <= FRETS {
+                let mut quiet_wire = vg::Path::new();
+                quiet_wire.move_to(board_x, y);
+                quiet_wire.line_to(start_x, y);
+                let mut wire_paint = vg::Paint::color(vg::Color::rgb(140, 145, 155));
+                wire_paint.set_line_width(gauges[string]);
+                canvas.stroke_path(&quiet_wire, &wire_paint);
+            }
+
+            // Draw vibrating physical FDTD wave curve
             let mut string_path = vg::Path::new();
-            string_path.move_to(board_x, y);
-            string_path.line_to(board_x + board_width, y);
+            string_path.move_to(start_x, y);
+            if is_vibrating {
+                let speaking_length = end_x - start_x;
+                let amp_scale = (energy.sqrt() * 16.0).min(row_height * 0.45);
+                const NUM_PTS: usize = 32;
+                for k in 0..NUM_PTS {
+                    let frac = (k as f32 + 1.0) / (NUM_PTS as f32 + 1.0);
+                    let px = start_x + speaking_length * frac;
+                    let profile_raw = self.string_profiles[string][k].load(Ordering::Relaxed);
+                    let profile_disp = f32::from_bits(profile_raw as u32);
+                    let py = y + profile_disp.clamp(-1.0, 1.0) * amp_scale;
+                    string_path.line_to(px, py);
+                }
+                string_path.line_to(end_x, y);
+            } else {
+                string_path.line_to(end_x, y);
+            }
+
+            if is_vibrating {
+                let mut glow = vg::Paint::color(vg::Color::rgba(
+                    255,
+                    175,
+                    45,
+                    (85.0 * energy).min(90.0) as u8,
+                ));
+                glow.set_line_width(gauges[string] + 6.0 * energy);
+                canvas.stroke_path(&string_path, &glow);
+            }
+
             let mut string_paint = vg::Paint::color(string_color);
             string_paint.set_line_width(gauges[string]);
             canvas.stroke_path(&string_path, &string_paint);

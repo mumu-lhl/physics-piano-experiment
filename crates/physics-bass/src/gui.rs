@@ -18,7 +18,7 @@ use physics_ui::{
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 use vizia_plug::vizia::prelude::*;
 use vizia_plug::widgets::util::ModifiersExt;
 use vizia_plug::widgets::{ParamButton, ParamButtonExt, RawParamEvent};
@@ -59,6 +59,7 @@ fn bass_value(params: &PhysicsBassParams, id: &str) -> Option<f32> {
         "tone" => params.tone.value(),
         "fret_buzz" => params.fret_buzz.value(),
         "body_mix" => params.body_mix.value(),
+        "drive" => params.drive.value(),
         "gain" => params.master_gain.value(),
         _ => return None,
     })
@@ -74,6 +75,7 @@ fn set_bass_value(cx: &mut EventContext, params: &PhysicsBassParams, id: &str, v
         "tone" => set_param(cx, &params.tone, value),
         "fret_buzz" => set_param(cx, &params.fret_buzz, value),
         "body_mix" => set_param(cx, &params.body_mix, value),
+        "drive" => set_param(cx, &params.drive, value),
         "gain" => set_param(cx, &params.master_gain, value),
         _ => {}
     }
@@ -89,6 +91,7 @@ fn bass_snapshot(params: &PhysicsBassParams) -> HashMap<String, f32> {
         "tone",
         "fret_buzz",
         "body_mix",
+        "drive",
         "gain",
     ]
     .into_iter()
@@ -328,6 +331,8 @@ impl Model for BassUiState {
                 "fret_buzz"
             } else if ptr == params.body_mix.as_ptr() {
                 "body_mix"
+            } else if ptr == params.drive.as_ptr() {
+                "drive"
             } else if ptr == params.master_gain.as_ptr() {
                 "gain"
             } else {
@@ -368,6 +373,8 @@ impl Model for BassUiState {
                 ("fret_buzz", params.fret_buzz.value())
             } else if ptr == params.body_mix.as_ptr() {
                 ("body_mix", params.body_mix.value())
+            } else if ptr == params.drive.as_ptr() {
+                ("drive", params.drive.value())
             } else if ptr == params.master_gain.as_ptr() {
                 ("gain", params.master_gain.value())
             } else {
@@ -511,6 +518,7 @@ pub fn create_vizia_bass_editor(
     params: Arc<PhysicsBassParams>,
     active_frets: Arc<[std::sync::atomic::AtomicU8; 5]>,
     string_energies: Arc<[std::sync::atomic::AtomicU32; 5]>,
+    string_profiles: Arc<[[AtomicI32; 32]; 5]>,
     gui_tx: crossbeam_channel::Sender<GuiBassEvent>,
     language_atom: Arc<AtomicU8>,
     preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
@@ -577,6 +585,7 @@ pub fn create_vizia_bass_editor(
         let language_view = language.clone();
         let active_frets_ui = active_frets.clone();
         let string_energies_ui = string_energies.clone();
+        let string_profiles_ui = string_profiles.clone();
         let gui_tx_ui = gui_tx.clone();
         let selected_name_ui = selected_name_signal;
         let preset_choices_ui = preset_choices_signal;
@@ -594,6 +603,7 @@ pub fn create_vizia_bass_editor(
             let discrete = discrete_ui.clone();
             let active_frets = active_frets_ui.clone();
             let string_energies = string_energies_ui.clone();
+            let string_profiles = string_profiles_ui.clone();
             let gui_tx = gui_tx_ui.clone();
             let language_atom = language_atom_ui.clone();
             VStack::new(cx, move |cx| {
@@ -705,9 +715,10 @@ pub fn create_vizia_bass_editor(
                     .width(Stretch(1.0));
 
                     VStack::new(cx, |cx| {
-                        Label::new(cx, translate(lang, "bass.output", "OUTPUT")).class("rack-title");
+                        Label::new(cx, translate(lang, "bass.output", "AMP & OUTPUT")).class("rack-title");
+                        parameter_slider(cx, translate(lang, "bass.drive", "Drive"), &params.drive, 108.0);
                         parameter_slider(cx, translate(lang, "bass.master_gain", "Master gain"), &params.master_gain, 108.0);
-                        Label::new(cx, translate(lang, "bass.output_note", "Electric: finite-gap pickup · Acoustic: A0 / B1 / bridge hill")).class("small-note");
+                        Label::new(cx, translate(lang, "bass.output_note", "Electric: tube/FET drive & pickup · Acoustic: cavity")).class("small-note");
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
@@ -723,6 +734,7 @@ pub fn create_vizia_bass_editor(
                     params,
                     active_frets,
                     string_energies,
+                    string_profiles,
                     gui_tx,
                     language_atom,
                 )

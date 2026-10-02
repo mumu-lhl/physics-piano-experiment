@@ -124,6 +124,7 @@ pub struct BassEngine {
     pub neck_relief: f64,
     pub fret_crown_radius: f64,
     pub body_mix: f64,
+    pub drive: f64,
     pub master_gain: f64,
     pub pitch_bend_semitones: f64,
 }
@@ -150,6 +151,7 @@ impl BassEngine {
             neck_relief: 0.00035,
             fret_crown_radius: 0.0012,
             body_mix: 0.75,
+            drive: 0.0,
             master_gain: 0.82,
             pitch_bend_semitones: 0.0,
         }
@@ -319,6 +321,10 @@ impl BassEngine {
         self.body_mix = mix.clamp(0.0, 1.0);
     }
 
+    pub fn set_drive(&mut self, drive: f64) {
+        self.drive = drive.clamp(0.0, 1.0);
+    }
+
     pub fn set_pickup_type(&mut self, pt: crate::acoustic::BassPickupType) {
         self.pickup.set_pickup_type(pt);
     }
@@ -376,10 +382,22 @@ impl BassEngine {
         }
 
         let body_signal = self.body.process(bridge_force);
-        let signal = match self.mode {
+        let raw = match self.mode {
             BassMode::Electric => pickup_signal + body_signal * self.body_mix * 0.08,
             BassMode::Acoustic => body_signal * (0.55 + 0.45 * self.body_mix),
-        } * self.master_gain;
+        };
+        let driven = if self.drive > 0.001 {
+            let gain = 1.0 + self.drive * 4.5;
+            let x = raw * gain;
+            if x >= 0.0 {
+                x.tanh()
+            } else {
+                (x * 1.15).tanh() / 1.15
+            }
+        } else {
+            raw
+        };
+        let signal = driven * self.master_gain;
         let signal = soft_limit(signal);
         let pan = match self.mode {
             BassMode::Electric => (bridge_force * 0.00001).tanh() * 0.035,

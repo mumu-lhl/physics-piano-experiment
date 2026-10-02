@@ -1111,6 +1111,20 @@ impl FdtdString {
         self.neck_mode_v = 0.0;
     }
 
+    /// Samples 32 equidistant points from the FDTD spatial displacement grid for 60 FPS GUI rendering.
+    pub fn sample_spatial_profile(&self, out: &mut [f32; 32]) {
+        if self.is_sleeping || !self.is_active || self.segments < 2 {
+            out.fill(0.0);
+            return;
+        }
+        let seg_f = self.segments as f32;
+        let step = (seg_f - 1.0) / 31.0;
+        for (k, val) in out.iter_mut().enumerate() {
+            let idx = ((k as f32 * step).round() as usize).min(self.segments);
+            *val = self.u_curr.data[idx] as f32;
+        }
+    }
+
     fn clear_state(&mut self) {
         self.u_prev.clear();
         self.u_curr.clear();

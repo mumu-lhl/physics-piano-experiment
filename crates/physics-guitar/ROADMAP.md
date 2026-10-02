@@ -50,18 +50,14 @@ This roadmap tracks completed physical modeling milestones and planned future ca
 
 ---
 
-## Future Milestones
-
-### Tier G5: Convolution, GUI Visuals & SIMD Optimization (卷积、界面可视化与工程性能)
-- [ ] **Low-Latency Partitioned Convolution IR Engine (UPOLS)**:
-  - Ultra-low latency partitioned convolution engine (5~10 ms block size) for blending measured soundboard high-frequency residual IRs and custom electric cabinet mic IRs.
-
-### Tier G5: GUI Visuals, Stompbox Controls & SIMD Optimization (界面可视化与工程性能)
-- [ ] **60 FPS Real-Time String Vibration Waveform Visualizer**:
-  - Sample modal displacements along the string to render slow-motion traveling wave packets and standing waves on the GUI fretboard.
-- [ ] **Vintage Amp Head & Stompbox UI Rack**:
-  - Top-mounted collapsible control strip featuring rotary knobs for `Drive`, `Bass`, `Middle`, `Treble`, `Presence`, `SAG`, and `Pickup Selector`.
-- [ ] **Multi-Rate Oversampling & Anti-Aliasing (2x/4x)**:
-  - Minimum-phase polyphase IIR oversampling for high-gain preamp distortion stages to eliminate Nyquist foldback aliasing.
+### Tier G5: Convolution, Amp Overdrive, GUI Visuals & SIMD Optimization — COMPLETED
+- [x] **Low-Latency Partitioned Convolution IR Engine (UPOLS)**:
+  - Ultra-low latency partitioned convolution engine (~1.33 ms partition block size) with zero audio-thread allocation for blending measured soundboard high-frequency residual IRs and electric cabinet mic IRs (Celestion Vintage 30, Fender Twin Reverb, Marshall Greenback).
+- [x] **Multi-Rate Oversampling & Anti-Aliasing (2x/4x)**:
+  - Minimum-phase polyphase IIR half-band oversampler for non-linear 12AX7 tube saturation to eliminate Nyquist foldback aliasing.
+- [x] **60 FPS Real-Time String Vibration Waveform Visualizer**:
+  - Sample modal displacements along the string to render slow-motion traveling wave packets and standing waves on the GUI fretboard with glow halo.
+- [x] **Vintage Amp Head & Stompbox UI Rack**:
+  - Top-mounted 4-rack layout featuring `INSTRUMENT`, `STOMPBOX & EXPRESSION`, `VINTAGE AMP HEAD` (`Drive`, `Bass`, `Middle`, `Treble`, `Presence`, `SAG`), and `CABINET & MASTER` (`Cabinet`, `12" Cab`, `UPOLS IR`, `Pattern`, `BPM`, `Volume`).
 - [x] **Dynamic Energy Culling & Silence Sleep**:
   - Automatically bypass modal integration and reset lingering micro-vibrations when string energy decays below -96 dBFS, saving up to 70% CPU during sparse passages.

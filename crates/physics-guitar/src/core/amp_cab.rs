@@ -8,6 +8,86 @@
 //! - 12-inch Celestion Vintage 30 cabinet acoustic filtering with thump bump and cone roll-off
 
 use physics_dsp::Biquad;
+use crate::core::convolution::{CabinetIrProfile, UpolsConvolutionEngine};
+
+/// Multi-rate oversampling factor for the non-linear tube preamp stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OversamplingFactor {
+    X1,
+    X2,
+    X4,
+}
+
+/// 1st-order allpass section for polyphase half-band filters.
+#[derive(Debug, Clone, Copy, Default)]
+struct PolyphaseAllpass {
+    a: f64,
+    z1: f64,
+    z2: f64,
+}
+
+impl PolyphaseAllpass {
+    pub fn new(a: f64) -> Self {
+        Self { a, z1: 0.0, z2: 0.0 }
+    }
+
+    #[inline(always)]
+    pub fn process(&mut self, x: f64) -> f64 {
+        let y = self.a * x + self.z2;
+        self.z2 = self.z1;
+        self.z1 = x - self.a * y;
+        y
+    }
+
+    pub fn reset(&mut self) {
+        self.z1 = 0.0;
+        self.z2 = 0.0;
+    }
+}
+
+/// High-efficiency polyphase IIR half-band 2x oversampler for zero-allocation anti-aliased saturation.
+#[derive(Debug, Clone)]
+pub struct HalfbandOversampler2x {
+    // 2-branch allpass coefficients yielding > 50 dB stopband attenuation
+    up_ap0: PolyphaseAllpass,
+    up_ap1: PolyphaseAllpass,
+    down_ap0: PolyphaseAllpass,
+    down_ap1: PolyphaseAllpass,
+}
+
+impl HalfbandOversampler2x {
+    pub fn new() -> Self {
+        Self {
+            up_ap0: PolyphaseAllpass::new(0.1413476743),
+            up_ap1: PolyphaseAllpass::new(0.5899948011),
+            down_ap0: PolyphaseAllpass::new(0.1413476743),
+            down_ap1: PolyphaseAllpass::new(0.5899948011),
+        }
+    }
+
+    /// Upsamples 1 input sample into 2 oversampled samples.
+    #[inline(always)]
+    pub fn upsample(&mut self, x: f64) -> (f64, f64) {
+        let s0 = self.up_ap0.process(x);
+        let s1 = self.up_ap1.process(x);
+        (s0, s1)
+    }
+
+    /// Decimates 2 oversampled samples into 1 anti-aliased output sample.
+    #[inline(always)]
+    pub fn downsample(&mut self, y0: f64, y1: f64) -> f64 {
+        let s0 = self.down_ap0.process(y0);
+        let s1 = self.down_ap1.process(y1);
+        0.5 * (s0 + s1)
+    }
+
+    pub fn reset(&mut self) {
+        self.up_ap0.reset();
+        self.up_ap1.reset();
+        self.down_ap0.reset();
+        self.down_ap1.reset();
+    }
+}
 
 /// Asymmetric 12AX7 tube preamplifier saturation with dynamic cathode bias drift.
 #[inline(always)]
@@ -143,6 +223,11 @@ pub struct GuitarAmpCab {
     pub presence: f64,
     pub sag: f64,
     pub cabinet: GuitarCabinet,
+    pub oversampling: OversamplingFactor,
+    pub ir_engine: UpolsConvolutionEngine,
+    pub use_ir_cabinet: bool,
+    oversampler1: HalfbandOversampler2x,
+    oversampler2: HalfbandOversampler2x,
     bias_drift: f64,
     power_sag: f64,
     bass_filter: Biquad,
@@ -162,6 +247,11 @@ impl GuitarAmpCab {
             treble: 0.5,
             presence: 0.5,
             sag: 0.35,
+            oversampling: OversamplingFactor::X2,
+            ir_engine: UpolsConvolutionEngine::new(),
+            use_ir_cabinet: false,
+            oversampler1: HalfbandOversampler2x::new(),
+            oversampler2: HalfbandOversampler2x::new(),
             bias_drift: 0.0,
             power_sag: 0.0,
             bass_filter: Biquad::peaking(sample_rate, 110.0, 0.75, 0.0),
@@ -184,8 +274,31 @@ impl GuitarAmpCab {
         self.drive = drive.clamp(0.0, 1.0);
     }
 
+    pub fn set_oversampling(&mut self, factor: OversamplingFactor) {
+        self.oversampling = factor;
+        self.oversampler1.reset();
+        self.oversampler2.reset();
+    }
+
+    pub fn set_use_ir_cabinet(&mut self, use_ir: bool) {
+        self.use_ir_cabinet = use_ir;
+    }
+
+    pub fn load_ir_profile(&mut self, profile: CabinetIrProfile) {
+        self.ir_engine.load_preset(profile);
+    }
+
+    pub fn load_custom_ir(&mut self, ir: &[f64]) {
+        self.ir_engine.load_ir(ir);
+    }
+
     pub fn set_cabinet_model(&mut self, model: CabinetModel) {
         self.cabinet.set_model(model);
+        match model {
+            CabinetModel::Vintage30 => self.ir_engine.load_preset(CabinetIrProfile::CelestionVintage30),
+            CabinetModel::TwinReverb => self.ir_engine.load_preset(CabinetIrProfile::FenderTwinReverb),
+            CabinetModel::Greenback => self.ir_engine.load_preset(CabinetIrProfile::MarshallGreenback),
+        }
     }
 
     pub fn set_mic_distance(&mut self, distance_cm: f64) {
@@ -208,8 +321,32 @@ impl GuitarAmpCab {
         }
         let dt = 1.0 / self.sample_rate;
 
-        // 1. Stage 1: 12AX7 Preamp tube with cathode bias drift
-        let preamped = preamp_12ax7(di_input, self.drive, &mut self.bias_drift, dt);
+        // 1. Stage 1: 12AX7 Preamp tube with polyphase oversampling & anti-aliasing
+        let preamped = match self.oversampling {
+            OversamplingFactor::X1 => {
+                preamp_12ax7(di_input, self.drive, &mut self.bias_drift, dt)
+            }
+            OversamplingFactor::X2 => {
+                let (x0, x1) = self.oversampler1.upsample(di_input);
+                let dt_half = dt * 0.5;
+                let y0 = preamp_12ax7(x0, self.drive, &mut self.bias_drift, dt_half);
+                let y1 = preamp_12ax7(x1, self.drive, &mut self.bias_drift, dt_half);
+                self.oversampler1.downsample(y0, y1)
+            }
+            OversamplingFactor::X4 => {
+                let (x_a, x_b) = self.oversampler1.upsample(di_input);
+                let (x00, x01) = self.oversampler2.upsample(x_a);
+                let (x10, x11) = self.oversampler2.upsample(x_b);
+                let dt_quarter = dt * 0.25;
+                let y00 = preamp_12ax7(x00, self.drive, &mut self.bias_drift, dt_quarter);
+                let y01 = preamp_12ax7(x01, self.drive, &mut self.bias_drift, dt_quarter);
+                let y10 = preamp_12ax7(x10, self.drive, &mut self.bias_drift, dt_quarter);
+                let y11 = preamp_12ax7(x11, self.drive, &mut self.bias_drift, dt_quarter);
+                let y_a = self.oversampler2.downsample(y00, y01);
+                let y_b = self.oversampler2.downsample(y10, y11);
+                self.oversampler1.downsample(y_a, y_b)
+            }
+        };
 
         // 2. 3-Band Tone Stack (Bass, Middle, Treble)
         let tone_shaped = self
@@ -219,9 +356,13 @@ impl GuitarAmpCab {
         // 3. Stage 2: Push-pull power amplifier (6L6/EL34) with dynamic power sag
         let saturated = power_amp_push_pull(tone_shaped, &mut self.power_sag, self.sag, dt);
 
-        // 4. 12-inch guitar cabinet filtering (can be bypassed for external IRs)
+        // 4. 12-inch guitar cabinet filtering (analytic physical biquad or UPOLS IR engine)
         if self.cab_enabled {
-            self.cabinet.process(saturated)
+            if self.use_ir_cabinet {
+                self.ir_engine.process_sample(saturated)
+            } else {
+                self.cabinet.process(saturated)
+            }
         } else {
             saturated
         }

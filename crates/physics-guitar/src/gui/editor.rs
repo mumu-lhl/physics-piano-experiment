@@ -3,7 +3,7 @@
 use crossbeam_channel::Sender;
 use nice_plug::prelude::{Editor, Param};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 use vizia_plug::vizia::prelude::*;
 use vizia_plug::widgets::util::ModifiersExt;
 use vizia_plug::widgets::*;
@@ -27,6 +27,7 @@ struct DiscreteSelections {
     pluck_style: Signal<i32>,
     pickup_pos: Signal<i32>,
     pickup_type: Signal<i32>,
+    cabinet_model: Signal<i32>,
     groove_pattern: Signal<i32>,
 }
 
@@ -36,11 +37,12 @@ enum DiscreteParam {
     PluckStyle,
     PickupPosition,
     PickupType,
+    CabinetModel,
     GroovePattern,
 }
 
 pub const EDITOR_WIDTH: u32 = 1080;
-pub const EDITOR_HEIGHT: u32 = 560;
+pub const EDITOR_HEIGHT: u32 = 620;
 
 fn slider<P: Param + 'static>(cx: &mut Context, label: &'static str, param: &P) {
     parameter_slider(cx, label, param, 92.0);
@@ -70,6 +72,7 @@ fn set_discrete_param(
         DiscreteParam::PluckStyle => set_param(cx, &params.pluck_style, value),
         DiscreteParam::PickupPosition => set_param(cx, &params.pickup_pos, value),
         DiscreteParam::PickupType => set_param(cx, &params.pickup_type, value),
+        DiscreteParam::CabinetModel => set_param(cx, &params.cabinet_model, value),
         DiscreteParam::GroovePattern => set_param(cx, &params.groove_pattern, value),
     }
 }
@@ -122,8 +125,21 @@ fn guitar_value(params: &PhysicsGuitarParams, id: &str) -> Option<f32> {
         "palmmute" => params.palm_mute.value(),
         "pluckpos" => params.pluck_pos.value(),
         "amp_drive" => params.amp_drive.value(),
+        "amp_bass" => params.amp_bass.value(),
+        "amp_middle" => params.amp_middle.value(),
+        "amp_treble" => params.amp_treble.value(),
+        "amp_presence" => params.amp_presence.value(),
+        "amp_sag" => params.amp_sag.value(),
         "cab_enabled" => {
             if params.cab_enabled.value() {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        "cabinet_model" => params.cabinet_model.value() as f32,
+        "use_ir_cab" => {
+            if params.use_ir_cab.value() {
                 1.0
             } else {
                 0.0
@@ -149,7 +165,14 @@ fn set_guitar_value(cx: &mut EventContext, params: &PhysicsGuitarParams, id: &st
         "palmmute" => set_param(cx, &params.palm_mute, value),
         "pluckpos" => set_param(cx, &params.pluck_pos, value),
         "amp_drive" => set_param(cx, &params.amp_drive, value),
+        "amp_bass" => set_param(cx, &params.amp_bass, value),
+        "amp_middle" => set_param(cx, &params.amp_middle, value),
+        "amp_treble" => set_param(cx, &params.amp_treble, value),
+        "amp_presence" => set_param(cx, &params.amp_presence, value),
+        "amp_sag" => set_param(cx, &params.amp_sag, value),
         "cab_enabled" => set_param(cx, &params.cab_enabled, value >= 0.5),
+        "cabinet_model" => set_param(cx, &params.cabinet_model, value.round() as i32),
+        "use_ir_cab" => set_param(cx, &params.use_ir_cab, value >= 0.5),
         "strum_speed" => set_param(cx, &params.strum_speed, value),
         "fret_buzz" => set_param(cx, &params.fret_buzz, value),
         "finger_squeak" => set_param(cx, &params.finger_squeak, value),
@@ -170,7 +193,14 @@ fn guitar_snapshot(params: &PhysicsGuitarParams) -> HashMap<String, f32> {
         "palmmute",
         "pluckpos",
         "amp_drive",
+        "amp_bass",
+        "amp_middle",
+        "amp_treble",
+        "amp_presence",
+        "amp_sag",
         "cab_enabled",
+        "cabinet_model",
+        "use_ir_cab",
         "strum_speed",
         "fret_buzz",
         "finger_squeak",
@@ -233,6 +263,9 @@ impl Model for GuitarUiState {
                 self.discrete
                     .pickup_type
                     .set(self.params.pickup_type.value());
+                self.discrete
+                    .cabinet_model
+                    .set(self.params.cabinet_model.value());
                 self.discrete
                     .groove_pattern
                     .set(self.params.groove_pattern.value());
@@ -398,8 +431,22 @@ impl Model for GuitarUiState {
                 "pluckpos"
             } else if ptr == params.amp_drive.as_ptr() {
                 "amp_drive"
+            } else if ptr == params.amp_bass.as_ptr() {
+                "amp_bass"
+            } else if ptr == params.amp_middle.as_ptr() {
+                "amp_middle"
+            } else if ptr == params.amp_treble.as_ptr() {
+                "amp_treble"
+            } else if ptr == params.amp_presence.as_ptr() {
+                "amp_presence"
+            } else if ptr == params.amp_sag.as_ptr() {
+                "amp_sag"
             } else if ptr == params.cab_enabled.as_ptr() {
                 "cab_enabled"
+            } else if ptr == params.cabinet_model.as_ptr() {
+                "cabinet_model"
+            } else if ptr == params.use_ir_cab.as_ptr() {
+                "use_ir_cab"
             } else if ptr == params.strum_speed.as_ptr() {
                 "strum_speed"
             } else if ptr == params.fret_buzz.as_ptr() {
@@ -450,10 +497,27 @@ impl Model for GuitarUiState {
                 ("pluckpos", params.pluck_pos.value())
             } else if ptr == params.amp_drive.as_ptr() {
                 ("amp_drive", params.amp_drive.value())
+            } else if ptr == params.amp_bass.as_ptr() {
+                ("amp_bass", params.amp_bass.value())
+            } else if ptr == params.amp_middle.as_ptr() {
+                ("amp_middle", params.amp_middle.value())
+            } else if ptr == params.amp_treble.as_ptr() {
+                ("amp_treble", params.amp_treble.value())
+            } else if ptr == params.amp_presence.as_ptr() {
+                ("amp_presence", params.amp_presence.value())
+            } else if ptr == params.amp_sag.as_ptr() {
+                ("amp_sag", params.amp_sag.value())
             } else if ptr == params.cab_enabled.as_ptr() {
                 (
                     "cab_enabled",
                     if params.cab_enabled.value() { 1.0 } else { 0.0 },
+                )
+            } else if ptr == params.cabinet_model.as_ptr() {
+                ("cabinet_model", params.cabinet_model.value() as f32)
+            } else if ptr == params.use_ir_cab.as_ptr() {
+                (
+                    "use_ir_cab",
+                    if params.use_ir_cab.value() { 1.0 } else { 0.0 },
                 )
             } else if ptr == params.strum_speed.as_ptr() {
                 ("strum_speed", params.strum_speed.value())
@@ -610,6 +674,7 @@ pub fn create_vizia_guitar_editor(
     params: Arc<PhysicsGuitarParams>,
     active_frets_shared: Arc<[AtomicU8; 6]>,
     string_energies_shared: Arc<[AtomicU32; 6]>,
+    string_profiles_shared: Arc<[[AtomicI32; 16]; 6]>,
     language_atom: Arc<AtomicU8>,
     gui_tx: Sender<GuiGuitarEvent>,
     preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
@@ -640,6 +705,7 @@ pub fn create_vizia_guitar_editor(
             pluck_style: Signal::new(params.pluck_style.value()),
             pickup_pos: Signal::new(params.pickup_pos.value()),
             pickup_type: Signal::new(params.pickup_type.value()),
+            cabinet_model: Signal::new(params.cabinet_model.value()),
             groove_pattern: Signal::new(params.groove_pattern.value()),
         };
         let is_user_preset_ui = is_user_preset.clone();
@@ -681,6 +747,7 @@ pub fn create_vizia_guitar_editor(
         let gui_tx_ui = gui_tx.clone();
         let active_frets_ui = active_frets_shared.clone();
         let string_energies_ui = string_energies_shared.clone();
+        let string_profiles_ui = string_profiles_shared.clone();
         let name_input_ui = name_input.clone();
         let preset_name_ui = preset_name.clone();
         let preset_choices_ui = preset_choices.clone();
@@ -696,6 +763,7 @@ pub fn create_vizia_guitar_editor(
             let gui_tx = gui_tx_ui.clone();
             let active_frets_shared = active_frets_ui.clone();
             let string_energies_shared = string_energies_ui.clone();
+            let string_profiles_shared = string_profiles_ui.clone();
             let initial_preset_name = preset_name_ui.clone();
             let preset_choices = preset_choices_ui.clone();
             let name_input = name_input_ui.clone();
@@ -751,6 +819,20 @@ pub fn create_vizia_guitar_editor(
                         translate(lang, "guitar.pickup_humbucker", "Humbucker").to_string(),
                     ),
                 ];
+                let cabinet_options = vec![
+                    (
+                        0,
+                        translate(lang, "guitar.cab.vintage30", "Vintage 30 4x12").to_string(),
+                    ),
+                    (
+                        1,
+                        translate(lang, "guitar.cab.twin_reverb", "Twin Reverb 2x12").to_string(),
+                    ),
+                    (
+                        2,
+                        translate(lang, "guitar.cab.greenback", "Greenback 4x12").to_string(),
+                    ),
+                ];
                 let groove_options = (0..=4)
                     .map(|index| {
                         (
@@ -797,6 +879,7 @@ pub fn create_vizia_guitar_editor(
                 );
 
                 HStack::new(cx, |cx| {
+                    // Rack 1: INSTRUMENT
                     VStack::new(cx, |cx| {
                         Label::new(cx, translate(lang, "guitar.rack_instrument", "INSTRUMENT"))
                             .class("rack-title");
@@ -836,9 +919,13 @@ pub fn create_vizia_guitar_editor(
                     .class("rack-box")
                     .width(Stretch(1.0));
 
+                    // Rack 2: STOMPBOX & EXPRESSION
                     VStack::new(cx, |cx| {
-                        Label::new(cx, translate(lang, "guitar.rack_pickup", "PICKUP SELECTOR"))
-                            .class("rack-title");
+                        Label::new(
+                            cx,
+                            translate(lang, "guitar.rack_stompbox", "STOMPBOX & EXPRESSION"),
+                        )
+                        .class("rack-title");
                         slider(
                             cx,
                             translate(lang, "guitar.tone_label", "Tone:"),
@@ -853,23 +940,6 @@ pub fn create_vizia_guitar_editor(
                             cx,
                             translate(lang, "guitar.pluck_pos_label", "PluckPos:"),
                             &params.pluck_pos,
-                        );
-                        ParamButton::new(cx, &params.cab_enabled).with_label(translate(
-                            lang,
-                            "guitar.cab_enabled",
-                            "12\" Celestion Cab",
-                        ));
-                    })
-                    .class("rack-box")
-                    .width(Stretch(1.0));
-
-                    VStack::new(cx, |cx| {
-                        Label::new(cx, translate(lang, "guitar.rack_amp", "AMP & CABINET"))
-                            .class("rack-title");
-                        slider(
-                            cx,
-                            translate(lang, "guitar.amp_drive_label", "Overdrive:"),
-                            &params.amp_drive,
                         );
                         slider(
                             cx,
@@ -890,9 +960,72 @@ pub fn create_vizia_guitar_editor(
                     .class("rack-box")
                     .width(Stretch(1.0));
 
+                    // Rack 3: VINTAGE AMP HEAD
                     VStack::new(cx, |cx| {
-                        Label::new(cx, translate(lang, "guitar.rack_master", "GROOVE & MASTER"))
+                        Label::new(cx, translate(lang, "guitar.rack_amp", "VINTAGE AMP HEAD"))
                             .class("rack-title");
+                        slider(
+                            cx,
+                            translate(lang, "guitar.amp_drive_label", "Drive:"),
+                            &params.amp_drive,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "guitar.amp_bass_label", "Bass:"),
+                            &params.amp_bass,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "guitar.amp_middle_label", "Middle:"),
+                            &params.amp_middle,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "guitar.amp_treble_label", "Treble:"),
+                            &params.amp_treble,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "guitar.amp_presence_label", "Presence:"),
+                            &params.amp_presence,
+                        );
+                        slider(
+                            cx,
+                            translate(lang, "guitar.amp_sag_label", "SAG:"),
+                            &params.amp_sag,
+                        );
+                    })
+                    .class("rack-box")
+                    .width(Stretch(1.0));
+
+                    // Rack 4: CABINET & MASTER
+                    VStack::new(cx, |cx| {
+                        Label::new(
+                            cx,
+                            translate(lang, "guitar.rack_cab_master", "CABINET & MASTER"),
+                        )
+                        .class("rack-title");
+                        discrete_selector(
+                            cx,
+                            translate(lang, "guitar.cabinet_model_label", "Cabinet:"),
+                            discrete.cabinet_model.clone(),
+                            cabinet_options,
+                            params.clone(),
+                            DiscreteParam::CabinetModel,
+                        );
+                        HStack::new(cx, |cx| {
+                            ParamButton::new(cx, &params.cab_enabled).with_label(translate(
+                                lang,
+                                "guitar.cab_enabled",
+                                "12\" Cab",
+                            ));
+                            ParamButton::new(cx, &params.use_ir_cab).with_label(translate(
+                                lang,
+                                "guitar.use_ir_cab",
+                                "UPOLS IR",
+                            ));
+                        })
+                        .horizontal_gap(Pixels(4.0));
                         discrete_selector(
                             cx,
                             translate(lang, "guitar.groove_pattern_label", "Pattern:"),
@@ -915,7 +1048,7 @@ pub fn create_vizia_guitar_editor(
                     .class("rack-box")
                     .width(Stretch(1.0));
                 })
-                .height(Pixels(150.0))
+                .height(Pixels(185.0))
                 .horizontal_gap(Pixels(8.0));
 
                 GuitarFretboardWidget::new(
@@ -923,8 +1056,9 @@ pub fn create_vizia_guitar_editor(
                     gui_tx.clone(),
                     active_frets_shared.clone(),
                     string_energies_shared.clone(),
+                    string_profiles_shared.clone(),
                 )
-                .height(Pixels(220.0))
+                .height(Pixels(210.0))
                 .width(Stretch(1.0));
                 Label::new(
                     cx,

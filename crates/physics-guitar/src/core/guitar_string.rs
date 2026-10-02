@@ -631,4 +631,24 @@ impl GuitarString {
         self.is_held = false;
         self.is_releasing = true;
     }
+
+    /// Samples 16 equidistant points of spatial modal displacement along the vibrating string for 60 FPS GUI rendering.
+    pub fn sample_spatial_profile(&self, out: &mut [f32; 16]) {
+        if self.is_sleeping {
+            out.fill(0.0);
+            return;
+        }
+        let inv_scale = (2.0 / self.effective_length.max(0.1)).sqrt() as f32;
+        let active_m = self.num_modes.min(8);
+        for (k, val) in out.iter_mut().enumerate() {
+            let x_ratio = (k as f32 + 0.5) / 16.0;
+            let mut sum = 0.0f32;
+            for m in 0..active_m {
+                let sin_val = ((m + 1) as f32 * std::f32::consts::PI * x_ratio).sin();
+                sum += self.state_t[m].q as f32 * sin_val;
+            }
+            *val = sum * inv_scale;
+        }
+    }
 }
+

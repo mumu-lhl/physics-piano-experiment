@@ -532,4 +532,66 @@ fn test_bass_dynamic_silence_culling_and_sleep() {
     assert!(out.abs() > 0.0 || string.energy() > 0.0);
 }
 
+#[test]
+fn test_bass_preamp_drive_saturation() {
+    let mut engine_clean = BassEngine::new(SAMPLE_RATE, BassMode::Electric, false);
+    let mut engine_drive = BassEngine::new(SAMPLE_RATE, BassMode::Electric, false);
+
+    engine_clean.set_drive(0.0);
+    engine_drive.set_drive(0.85);
+
+    engine_clean.note_on(28, 0.9);
+    engine_drive.note_on(28, 0.9);
+
+    let mut clean_energy = 0.0;
+    let mut drive_energy = 0.0;
+    let mut clean_peak = 0.0f64;
+    let mut drive_peak = 0.0f64;
+
+    for _ in 0..4000 {
+        let (cl, _) = engine_clean.process_sample();
+        let (dl, _) = engine_drive.process_sample();
+        clean_energy += cl * cl;
+        drive_energy += dl * dl;
+        clean_peak = clean_peak.max(cl.abs());
+        drive_peak = drive_peak.max(dl.abs());
+    }
+
+    assert!(drive_peak > 0.0 && drive_peak.is_finite());
+    assert!(clean_peak > 0.0 && clean_peak.is_finite());
+    // Drive stage adds gain and harmonic saturation
+    assert!(
+        drive_energy > clean_energy * 1.5,
+        "Driven bass preamp must generate more saturated output energy (drive={drive_energy}, clean={clean_energy})"
+    );
+}
+
+#[test]
+fn test_bass_spatial_profile_sampling() {
+    let mut string = FdtdString::new(BassStringParams::electric_four()[0], SAMPLE_RATE);
+    let mut profile = [0.0f32; 32];
+
+    // Asleep / untriggered string produces 0.0
+    string.sample_spatial_profile(&mut profile);
+    for val in profile.iter() {
+        assert_eq!(*val, 0.0);
+    }
+
+    // Trigger string
+    string.trigger(0.85, PluckStyle::Finger, 0.25);
+    for _ in 0..500 {
+        string.step();
+    }
+
+    string.sample_spatial_profile(&mut profile);
+    let max_disp = profile.iter().map(|v| v.abs()).fold(0.0f32, f32::max);
+    assert!(
+        max_disp > 1e-6,
+        "Sampled spatial profile must capture active vibrating string displacement (max={max_disp})"
+    );
+    for val in profile.iter() {
+        assert!(val.is_finite());
+    }
+}
+
 
