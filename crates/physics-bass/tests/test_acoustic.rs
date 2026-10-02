@@ -377,3 +377,99 @@ fn test_bass_dual_jbass_pickup_blend_comb_filtering() {
     );
 }
 
+#[test]
+fn test_bass_arco_bowed_stick_slip_sustain() {
+    let params = BassStringParams::electric_four()[1]; // E1 string
+    let mut string_bowed = FdtdString::new(params, SAMPLE_RATE);
+    let mut string_plucked = FdtdString::new(params, SAMPLE_RATE);
+
+    string_bowed.trigger(0.8, PluckStyle::Arco, 0.15);
+    string_plucked.trigger(0.8, PluckStyle::Finger, 0.15);
+
+    // Evolve 10,000 samples (~0.23 seconds)
+    for _ in 0..10_000 {
+        string_bowed.step();
+        string_plucked.step();
+    }
+
+    let bowed_energy = string_bowed.energy();
+    let _plucked_energy = string_plucked.energy();
+
+    assert!(
+        bowed_energy > 1e-6,
+        "Continuous stick-slip bowing must maintain sustained vibration energy (bowed={bowed_energy})"
+    );
+    assert!(
+        string_bowed.bow_active,
+        "Bow should remain active until note off / release"
+    );
+
+    // Now release bow
+    string_bowed.release();
+    assert!(!string_bowed.bow_active);
+    for _ in 0..5000 {
+        string_bowed.step();
+    }
+    assert!(
+        string_bowed.energy() < bowed_energy,
+        "After bow release, bowed string must decay naturally"
+    );
+}
+
+#[test]
+fn test_bass_neck_dead_spot_attenuation() {
+    let params = BassStringParams::electric_four()[3]; // G2 string (open 98 Hz, 6th fret = C#3 ~ 138.6 Hz near neck resonance)
+    let mut string_normal = FdtdString::new(params, SAMPLE_RATE);
+    string_normal.set_fret(6); // C#3
+    let mut string_dead_spot = string_normal.clone();
+
+    string_dead_spot.set_neck_dead_spot(0.9); // enable neck dead spot absorption
+    assert_eq!(string_dead_spot.neck_dead_spot_depth, 0.9);
+
+    string_normal.trigger(0.8, PluckStyle::Finger, 0.2);
+    string_dead_spot.trigger(0.8, PluckStyle::Finger, 0.2);
+
+    // Evolve 8000 samples (~180 ms)
+    for _ in 0..8000 {
+        string_normal.step();
+        string_dead_spot.step();
+    }
+
+    let normal_energy = string_normal.energy();
+    let dead_spot_energy = string_dead_spot.energy();
+
+    assert!(
+        dead_spot_energy < normal_energy * 0.75,
+        "Neck bending resonator must accelerate vibrational energy absorption at dead spot frequency (dead_spot={dead_spot_energy}, normal={normal_energy})"
+    );
+}
+
+#[test]
+fn test_bass_split_coil_pbass_pickup() {
+    let mut engine = BassEngine::new(SAMPLE_RATE, BassMode::Electric, true);
+    engine.set_pickup_type(physics_bass::acoustic::BassPickupType::PrecisionSplitCoil);
+    assert_eq!(
+        engine.pickup.pickup_type,
+        physics_bass::acoustic::BassPickupType::PrecisionSplitCoil
+    );
+
+    // Play low note (E1)
+    engine.note_on(28, 0.85);
+    let mut max_abs = 0.0_f64;
+    for _ in 0..800 {
+        let (l, r) = engine.process_sample();
+        max_abs = max_abs.max(l.abs()).max(r.abs());
+    }
+    assert!(
+        max_abs > 1e-4,
+        "Split-coil P-Bass pickup must produce clear audible signal on low strings"
+    );
+
+    // Switch back to Jazz Bass
+    engine.set_pickup_type(physics_bass::acoustic::BassPickupType::JazzDualSingle);
+    assert_eq!(
+        engine.pickup.pickup_type,
+        physics_bass::acoustic::BassPickupType::JazzDualSingle
+    );
+}
+

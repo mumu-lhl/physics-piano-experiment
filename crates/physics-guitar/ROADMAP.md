@@ -37,16 +37,22 @@ This roadmap tracks completed physical modeling milestones and planned future ca
 - [x] **Distributed Viscoelastic Palm Muting**:
   - Multi-zone Kelvin-Voigt viscoelastic absorber across 22mm palm contact from bridge saddle, modeling flesh strain-rate comb filtering and preserving low-end thump ("chug").
 
+### Tier G4: Transducers, Feedback Loops & Cabinet Modeling — COMPLETED
+- [x] **Acoustic Feedback / Larsen Effect Closed Loop (电吉他音箱声学自激反馈)**:
+  - Real-time closed-loop air-propagation delay line (2~8 ms) coupling speaker cabinet sound pressure back into string modal accelerations.
+  - Reproduces authentic singing feedback sustain, bloom, and harmonic overtone transitions.
+- [x] **Stratocaster In-Between Quack & 5-Way Selection**:
+  - Full 5-way selector support including Neck + Middle (pos 4 - SRV/Hendrix chime) and Bridge + Middle (pos 2).
+  - Reverse-wound reverse-polarity (RWRP) phase cancellation modeling the iconic scooped glassy quack.
+- [x] **Multi-Profile Cabinets & Microphone Proximity**:
+  - Celestion Vintage 30, Fender 65 Twin Reverb, and Marshall 1960A Greenback profiles.
+  - Variable microphone placement with acoustic proximity effect bass boost.
+
 ---
 
 ## Future Milestones
 
-### Tier G4: Transducers, Feedback Loops & Low-Latency IRs (换能器、自激反馈与卷积)
-- [ ] **Acoustic Feedback / Larsen Effect Closed Loop (电吉他音箱声学自激反馈)**:
-  - Establish a real-time feedback loop from the amplifier/cabinet output back into string modal accelerations through an adjustable air-propagation delay line (2~8 ms).
-  - Reproduce authentic singing feedback sustain and harmonic overtone transitions.
-- [ ] **Stratocaster In-Between Quack & Blend Network**:
-  - Reverse-phase pickup wiring and continuous neck/middle/bridge blend impedance, modeling pickup phase cancellation.
+### Tier G5: Convolution, GUI Visuals & SIMD Optimization (卷积、界面可视化与工程性能)
 - [ ] **Low-Latency Partitioned Convolution IR Engine (UPOLS)**:
   - Ultra-low latency partitioned convolution engine (5~10 ms block size) for blending measured soundboard high-frequency residual IRs and custom electric cabinet mic IRs.
 

@@ -48,6 +48,8 @@ pub enum PluckStyle {
     Pop,
     /// Left-hand muted percussive strike with fast viscoelastic damping.
     Ghost,
+    /// Continuous bowed double-bass excitation via nonlinear Coulomb-Stribeck stick-slip friction.
+    Arco,
 }
 
 /// One prepared bass-string physical model.
@@ -77,6 +79,13 @@ pub struct FdtdString {
     pub is_active: bool,
     pub is_releasing: bool,
     pub is_ghost: bool,
+    pub bow_active: bool,
+    pub bow_velocity: f64,
+    pub bow_pressure: f64,
+    pub bow_position: f64,
+    pub neck_dead_spot_depth: f64,
+    neck_mode_q: f64,
+    neck_mode_v: f64,
     pub fret_buzz: f64,
     pub current_fret: u8,
     pub last_contact_force: f64,
@@ -120,6 +129,13 @@ impl FdtdString {
             is_active: false,
             is_releasing: false,
             is_ghost: false,
+            bow_active: false,
+            bow_velocity: 0.0,
+            bow_pressure: 0.0,
+            bow_position: 0.15,
+            neck_dead_spot_depth: 0.0,
+            neck_mode_q: 0.0,
+            neck_mode_v: 0.0,
             fret_buzz: 0.35,
             current_fret: 0,
             last_contact_force: 0.0,
@@ -257,12 +273,35 @@ impl FdtdString {
         self.excitation_index = (self.segments as f64 * position).round() as usize;
         self.excitation_index = self.excitation_index.clamp(2, self.segments - 2);
 
+        if style == PluckStyle::Arco {
+            self.bow_active = true;
+            self.bow_velocity = 0.08 + 0.32 * velocity;
+            self.bow_pressure = 1.2 + 4.5 * velocity;
+            self.bow_position = position.clamp(0.08, 0.25);
+            let amplitude = 0.00015 * velocity;
+            let p = self.excitation_index as f64 / self.segments as f64;
+            for i in 1..self.segments {
+                let x = i as f64 / self.segments as f64;
+                let shape = if x <= p {
+                    x / p.max(1e-6)
+                } else {
+                    (1.0 - x) / (1.0 - p).max(1e-6)
+                };
+                self.u_curr.data[i] = amplitude * shape;
+                self.u_prev.data[i] = self.u_curr.data[i];
+            }
+            self.pluck_samples_left = 0;
+            self.slap_active = false;
+            return;
+        }
+
         let amplitude = match style {
             PluckStyle::Finger => 0.00065 + 0.0017 * velocity,
             PluckStyle::Pick => 0.00045 + 0.00145 * velocity,
             PluckStyle::Slap => 0.0010 + 0.0030 * velocity,
             PluckStyle::Pop => 0.0016 + 0.0038 * velocity,
             PluckStyle::Ghost => 0.00035 + 0.00085 * velocity,
+            PluckStyle::Arco => unreachable!(),
         };
         let p = self.excitation_index as f64 / self.segments as f64;
         for i in 1..self.segments {
@@ -289,6 +328,7 @@ impl FdtdString {
             PluckStyle::Slap => 5.5 * velocity,
             PluckStyle::Pop => 7.5 * velocity,
             PluckStyle::Ghost => 2.5 * velocity,
+            PluckStyle::Arco => 0.0,
         };
         self.slap_active = style == PluckStyle::Slap || style == PluckStyle::Pop;
         self.slap_position = 0.0;
@@ -363,6 +403,29 @@ impl FdtdString {
     pub fn release(&mut self) {
         self.is_held = false;
         self.is_releasing = true;
+        self.bow_active = false;
+    }
+
+    /// Starts continuous stick-slip bowed double-bass excitation.
+    pub fn start_bowing(&mut self, velocity: f64, pressure: f64, position: f64) {
+        self.is_held = true;
+        self.is_active = true;
+        self.is_releasing = false;
+        self.bow_active = true;
+        self.bow_velocity = velocity.clamp(0.01, 1.5);
+        self.bow_pressure = pressure.clamp(0.1, 20.0);
+        self.bow_position = position.clamp(0.05, 0.40);
+    }
+
+    /// Stops bowing, allowing the string to ring out and decay naturally.
+    pub fn stop_bowing(&mut self) {
+        self.bow_active = false;
+        self.is_releasing = true;
+    }
+
+    /// Configures the headstock/neck dead spot damping depth [0.0 = rigid nut, 1.0 = heavy absorption].
+    pub fn set_neck_dead_spot(&mut self, depth: f64) {
+        self.neck_dead_spot_depth = depth.clamp(0.0, 1.0);
     }
 
     /// Updates the moving bridge boundary supplied by the coupled body model.
@@ -508,6 +571,27 @@ impl FdtdString {
                 + grid_sample(&self.u_prev, idx as isize - 1, n)
         };
 
+        // Continuous stick-slip friction solver for bowed double bass (Arco)
+        let bow_index = if self.bow_active {
+            let idx = (n as f64 * self.bow_position).round() as usize;
+            idx.clamp(2, n - 2)
+        } else {
+            0
+        };
+        let bow_force = if self.bow_active && bow_index > 0 {
+            let v_str = (self.u_curr.data[bow_index] - self.u_prev.data[bow_index]) / dt;
+            let v_rel = self.bow_velocity - v_str;
+            // Nonlinear Coulomb-Stribeck friction curve
+            let mu_s = 0.85;
+            let mu_k = 0.28;
+            let v0 = 0.08;
+            let stribeck = mu_k + (mu_s - mu_k) * (-(v_rel / v0).powi(2)).exp();
+            let friction_coeff = stribeck * (v_rel / 0.008).tanh();
+            (self.bow_pressure * friction_coeff).clamp(-30.0, 30.0)
+        } else {
+            0.0
+        };
+
         for i in 1..n {
             let ii = i as isize;
             let curr = grid_sample(&self.u_curr, ii, n);
@@ -527,6 +611,9 @@ impl FdtdString {
             }
             if i == self.excitation_index {
                 force += slap_force;
+            }
+            if self.bow_active && i == bow_index {
+                force += bow_force;
             }
             if i + 1 == self.excitation_index {
                 force += 0.5 * pulse_force;
@@ -548,6 +635,26 @@ impl FdtdString {
         }
         self.u_next.data[0] = 0.0;
         self.u_next.data[n] = self.bridge_displacement;
+
+        // Headstock / Neck dead-spot resonant absorption (iconic Fender G-string C#3/D3 attenuation)
+        if self.neck_dead_spot_depth > 0.0 {
+            let f_neck = 142.0;
+            let q_neck = 20.0;
+            let delta_f = (self.current_f0 - f_neck) / (f_neck / q_neck);
+            let lorentzian = 1.0 / (1.0 + delta_f * delta_f);
+            let dead_spot_rate = self.neck_dead_spot_depth * 8.5 * lorentzian;
+            let dead_spot_decay = (-dt * dead_spot_rate).exp();
+            for i in 1..n {
+                self.u_next.data[i] *= dead_spot_decay;
+            }
+            // Step physical neck resonator state
+            let omega_neck = 2.0 * PI * f_neck;
+            let zeta = 0.5 / q_neck;
+            let force_nut = self.params.tension * (self.u_curr.data[1] - self.u_curr.data[0]) / h;
+            let accel = -omega_neck * omega_neck * self.neck_mode_q - 2.0 * zeta * omega_neck * self.neck_mode_v + force_nut * 0.05;
+            self.neck_mode_v += dt * accel;
+            self.neck_mode_q += dt * self.neck_mode_v;
+        }
         let fret_contact_total = self.apply_sav_fret_contacts(
             clearance,
             contact_count,
@@ -828,6 +935,9 @@ impl FdtdString {
         self.bridge_displacement = 0.0;
         self.previous_bridge_displacement = 0.0;
         self.fret_psi.fill(0.0);
+        self.bow_active = false;
+        self.neck_mode_q = 0.0;
+        self.neck_mode_v = 0.0;
     }
 
     fn clear_state(&mut self) {

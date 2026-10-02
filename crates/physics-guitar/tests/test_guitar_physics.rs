@@ -2,9 +2,10 @@
 
 #[cfg(debug_assertions)]
 use nice_assert_no_alloc::{assert_no_alloc, violation_count};
+use physics_guitar::core::amp_cab::CabinetModel;
 use physics_guitar::core::fretboard::FretboardRouter;
 use physics_guitar::core::guitar_string::GuitarString;
-use physics_guitar::core::pickup::{MagneticPickup, PickupPosition, PickupType};
+use physics_guitar::core::pickup::{MagneticPickup, PickupPosition, PickupSelector, PickupType};
 use physics_guitar::core::pluck::{PluckExciter, PluckStyle};
 use physics_guitar::engine::{GuitarEngine, GuitarInstrumentMode};
 use physics_guitar::params::{GuitarStringSetType, generate_guitar_string_set};
@@ -755,4 +756,105 @@ fn test_guitar_continuous_legato_slide() {
         "String should remain vibrating during and after slide"
     );
 }
+
+#[test]
+fn test_guitar_acoustic_feedback_loop_sustain() {
+    let mut engine_dry = GuitarEngine::new(
+        44100.0,
+        GuitarStringSetType::Electric010,
+        GuitarInstrumentMode::Electric,
+    );
+    let mut engine_fb = engine_dry.clone();
+
+    // Enable high-gain acoustic feedback singing loop
+    engine_fb.set_acoustic_feedback(0.92, 4.2);
+    engine_fb.amp_cab.set_drive(0.85);
+    engine_dry.amp_cab.set_drive(0.85);
+
+    // Play note on G string
+    engine_dry.note_on(1, 67, 0.9);
+    engine_fb.note_on(1, 67, 0.9);
+
+    // Evolve 18,000 samples (~0.4s)
+    for _ in 0..18_000 {
+        engine_dry.process_sample();
+        engine_fb.process_sample();
+    }
+
+    let energy_dry: f64 = engine_dry.strings.iter().map(|s| s.total_energy()).sum();
+    let energy_fb: f64 = engine_fb.strings.iter().map(|s| s.total_energy()).sum();
+
+    assert!(
+        energy_fb > energy_dry * 1.5,
+        "Acoustic feedback closed loop must sustain string vibration energy through air coupling (fb={energy_fb}, dry={energy_dry})"
+    );
+}
+
+#[test]
+fn test_guitar_stratocaster_5way_and_rwrp_quack() {
+    let mut engine = GuitarEngine::new(
+        44100.0,
+        GuitarStringSetType::Electric010,
+        GuitarInstrumentMode::Electric,
+    );
+
+    // Test position 4 (Neck + Middle)
+    engine.pickup.selector = PickupSelector::NeckAndMiddle;
+    engine.note_on(1, 64, 0.85);
+
+    let mut signal_max = 0.0_f64;
+    for _ in 0..600 {
+        let (l, r) = engine.process_sample();
+        signal_max = signal_max.max(l.abs()).max(r.abs());
+    }
+    assert!(
+        signal_max > 1e-4,
+        "Neck + Middle position must produce clear audible audio"
+    );
+
+    // Test RWRP quack toggle
+    engine.set_rwrp_quack(false);
+    assert!(!engine.pickup.rwrp_quack);
+    engine.set_rwrp_quack(true);
+    assert!(engine.pickup.rwrp_quack);
+}
+
+#[test]
+fn test_guitar_cabinet_models_and_mic_proximity() {
+    let mut engine = GuitarEngine::new(
+        44100.0,
+        GuitarStringSetType::Electric010,
+        GuitarInstrumentMode::Electric,
+    );
+
+    // Test model switching
+    engine.set_cabinet_model(CabinetModel::TwinReverb);
+    assert_eq!(engine.amp_cab.cabinet.model, CabinetModel::TwinReverb);
+
+    engine.set_cabinet_model(CabinetModel::Greenback);
+    assert_eq!(engine.amp_cab.cabinet.model, CabinetModel::Greenback);
+
+    engine.set_cabinet_model(CabinetModel::Vintage30);
+    assert_eq!(engine.amp_cab.cabinet.model, CabinetModel::Vintage30);
+
+    // Test mic proximity effect
+    engine.set_mic_distance(0.0); // Close mic
+    assert_eq!(engine.amp_cab.cabinet.mic_distance_cm, 0.0);
+
+    engine.set_mic_distance(25.0); // Distant mic
+    assert_eq!(engine.amp_cab.cabinet.mic_distance_cm, 25.0);
+
+    // Render audio through cabinet
+    engine.note_on(1, 60, 0.8);
+    let mut max_abs = 0.0_f64;
+    for _ in 0..600 {
+        let (l, r) = engine.process_sample();
+        max_abs = max_abs.max(l.abs()).max(r.abs());
+    }
+    assert!(
+        max_abs > 1e-4,
+        "Cabinet processing must output valid non-zero audio"
+    );
+}
+
 

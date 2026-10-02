@@ -550,6 +550,24 @@ impl GuitarString {
         }
     }
 
+    /// Injects external acoustic sound pressure (e.g. from amplifier cabinet speakers)
+    /// into string modes, reproducing authentic electric guitar Larsen effect singing feedback.
+    #[inline(always)]
+    pub fn inject_acoustic_pressure(&mut self, pressure: f64, coupling: f64) {
+        if coupling <= 0.0 || pressure.abs() < 1e-12 {
+            return;
+        }
+        let max_m = self.num_modes.min(10);
+        let x_spk = 0.35;
+        let dt = self.dt;
+        for m in 0..max_m {
+            let m_f = (m + 1) as f64;
+            let spatial_factor = (m_f * PI * x_spk).sin();
+            let impulse = coupling * pressure * spatial_factor * dt * 1800.0;
+            self.state_t[m].v += impulse;
+        }
+    }
+
     /// Evaluates total mechanical energy in string (Joules).
     pub fn total_energy(&self) -> f64 {
         let mut energy = 0.0;

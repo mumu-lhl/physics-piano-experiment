@@ -70,6 +70,12 @@ pub struct GuitarEngine {
     pub active_notes_on_string: [Option<u8>; 6],
     /// Global pitch bend in semitones for standard single-channel MIDI keyboards
     pub global_pitch_bend: f64,
+
+    // Acoustic feedback closed-loop
+    pub feedback_gain: f64,
+    pub feedback_delay_ms: f64,
+    feedback_buffer: [f64; 2048],
+    feedback_write_idx: usize,
 }
 
 impl GuitarEngine {
@@ -114,6 +120,10 @@ impl GuitarEngine {
             master_volume: 0.85,
             active_notes_on_string: [None; 6],
             global_pitch_bend: 0.0,
+            feedback_gain: 0.0,
+            feedback_delay_ms: 4.5,
+            feedback_buffer: [0.0; 2048],
+            feedback_write_idx: 0,
         }
     }
 
@@ -329,6 +339,27 @@ impl GuitarEngine {
         }
     }
 
+    /// Sets acoustic feedback gain and air-propagation delay line distance in ms.
+    pub fn set_acoustic_feedback(&mut self, gain: f64, delay_ms: f64) {
+        self.feedback_gain = gain.clamp(0.0, 1.0);
+        self.feedback_delay_ms = delay_ms.clamp(0.5, 25.0);
+    }
+
+    /// Sets electric guitar speaker cabinet model.
+    pub fn set_cabinet_model(&mut self, model: crate::core::amp_cab::CabinetModel) {
+        self.amp_cab.set_cabinet_model(model);
+    }
+
+    /// Sets virtual microphone placement distance in cm (proximity effect).
+    pub fn set_mic_distance(&mut self, distance_cm: f64) {
+        self.amp_cab.set_mic_distance(distance_cm);
+    }
+
+    /// Enables or disables RWRP reverse-wound phase cancellation in 2 & 4 quack positions.
+    pub fn set_rwrp_quack(&mut self, quack: bool) {
+        self.pickup.set_rwrp_quack(quack);
+    }
+
     /// Advances 1 audio sample in hard real-time (zero allocations).
     /// Returns stereo audio frame `(left, right)`.
     #[inline(always)]
@@ -448,6 +479,26 @@ impl GuitarEngine {
             GuitarInstrumentMode::Electric => {
                 let pre_amp = pickup_mix * 2.5 + squeak_sample * 0.35;
                 let amp_out = self.amp_cab.process(pre_amp);
+
+                // Acoustic feedback closed loop: sound pressure radiates through air and drives strings
+                if self.feedback_gain > 0.0 {
+                    self.feedback_buffer[self.feedback_write_idx] = amp_out;
+                    let delay_samples = (self.feedback_delay_ms * 0.001 * self.sample_rate).clamp(1.0, 2040.0);
+                    let read_idx_float = (self.feedback_write_idx as f64 + 2048.0 - delay_samples) % 2048.0;
+                    let idx0 = read_idx_float.floor() as usize % 2048;
+                    let idx1 = (idx0 + 1) % 2048;
+                    let frac = read_idx_float - read_idx_float.floor();
+                    let delayed_pressure = self.feedback_buffer[idx0] * (1.0 - frac) + self.feedback_buffer[idx1] * frac;
+                    self.feedback_write_idx = (self.feedback_write_idx + 1) % 2048;
+
+                    let fb_coupling = self.feedback_gain * 0.08;
+                    for s in &mut self.strings {
+                        if s.is_held || s.total_energy() > 1e-7 {
+                            s.inject_acoustic_pressure(delayed_pressure, fb_coupling);
+                        }
+                    }
+                }
+
                 (
                     amp_out * ELECTRIC_OUTPUT_TRIM,
                     amp_out * ELECTRIC_OUTPUT_TRIM,

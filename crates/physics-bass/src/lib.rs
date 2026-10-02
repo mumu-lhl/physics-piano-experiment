@@ -13,7 +13,7 @@ pub mod params;
 pub mod presets;
 pub mod string;
 
-pub use acoustic::{AcousticBassBody, BassPickup};
+pub use acoustic::{AcousticBassBody, BassPickup, BassPickupType};
 pub use engine::{
     BassEngine, BassEvent, BassFrame, BassMode, BassStringVoice,
     sanitize_floating_point_environment,

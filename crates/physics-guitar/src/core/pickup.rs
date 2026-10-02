@@ -30,6 +30,8 @@ pub enum PickupSelector {
     BridgeAndNeck,
     /// Bridge + Middle in parallel: classic Stratocaster position 2 out-of-phase quack
     BridgeAndMiddle,
+    /// Neck + Middle in parallel: classic Stratocaster position 4 out-of-phase quack (Hendrix / SRV chime)
+    NeckAndMiddle,
 }
 
 pub use PickupSelector as PickupPosition;
@@ -111,6 +113,8 @@ pub struct MagneticPickup {
     pub stratitis_strength: f64,
     /// Internal RLC tone circuit
     pub tone_circuit: PassiveToneCircuit,
+    /// Reverse-wound reverse-polarity (RWRP) in-between quack phase cancellation
+    pub rwrp_quack: bool,
 }
 
 impl MagneticPickup {
@@ -122,7 +126,12 @@ impl MagneticPickup {
             humbucker_spacing: 0.019, // 19 mm humbucker pole gap
             stratitis_strength: 0.35, // subtle authentic magnet pull
             tone_circuit: PassiveToneCircuit::new(sample_rate, pickup_type),
+            rwrp_quack: true,
         }
+    }
+
+    pub fn set_rwrp_quack(&mut self, quack: bool) {
+        self.rwrp_quack = quack;
     }
 
     pub fn set_tone(&mut self, tone: f64) {
@@ -191,7 +200,20 @@ impl MagneticPickup {
             PickupSelector::BridgeAndMiddle => {
                 let b = self.sample_at_pos(string, 0.085);
                 let m = self.sample_at_pos(string, 0.165);
-                (b + m) * 0.65
+                if self.rwrp_quack {
+                    (b * 0.90 - m * 0.40) * 0.85 + (b + m) * 0.35
+                } else {
+                    (b + m) * 0.65
+                }
+            }
+            PickupSelector::NeckAndMiddle => {
+                let n = self.sample_at_pos(string, 0.245);
+                let m = self.sample_at_pos(string, 0.165);
+                if self.rwrp_quack {
+                    (n * 0.90 - m * 0.40) * 0.85 + (n + m) * 0.35
+                } else {
+                    (n + m) * 0.65
+                }
             }
         };
 

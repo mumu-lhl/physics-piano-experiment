@@ -301,6 +301,28 @@ impl BassEngine {
         self.body_mix = mix.clamp(0.0, 1.0);
     }
 
+    pub fn set_pickup_type(&mut self, pt: crate::acoustic::BassPickupType) {
+        self.pickup.set_pickup_type(pt);
+    }
+
+    pub fn start_bowing(&mut self, string_index: usize, velocity: f64, pressure: f64, position: f64) {
+        if string_index < STRING_COUNT {
+            self.strings[string_index].string.start_bowing(velocity, pressure, position);
+        }
+    }
+
+    pub fn stop_bowing(&mut self, string_index: usize) {
+        if string_index < STRING_COUNT {
+            self.strings[string_index].string.stop_bowing();
+        }
+    }
+
+    pub fn set_neck_dead_spot(&mut self, depth: f64) {
+        for voice in &mut self.strings {
+            voice.string.set_neck_dead_spot(depth);
+        }
+    }
+
     pub fn set_pitch_bend(&mut self, semitones: f64) {
         self.pitch_bend_semitones = semitones.clamp(-24.0, 24.0);
         for voice in &mut self.strings {
@@ -328,7 +350,7 @@ impl BassEngine {
             bridge_force += frame.bridge_force;
             total_energy += frame.energy;
             if self.mode == BassMode::Electric {
-                pickup_signal += self.pickup.process_string(&self.strings[index].string);
+                pickup_signal += self.pickup.process_string_at_index(&self.strings[index].string, index);
             }
             if !frame.active && !self.strings[index].string.is_held {
                 self.strings[index].current_note = None;

@@ -110,10 +110,20 @@ impl AcousticBassBody {
     }
 }
 
+/// Electric bass pickup configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BassPickupType {
+    /// Fender Jazz Bass style: dual single coils (neck + bridge) with blend knob and scooped mids.
+    JazzDualSingle,
+    /// Fender Precision Bass style: offset split-coil humbucking with punchy low-mids.
+    PrecisionSplitCoil,
+}
+
 /// Electric bass pickup model. It integrates velocity over a finite aperture,
 /// applies the magnetic-gap nonlinearity, then uses a passive tone low-pass.
 #[derive(Debug, Clone)]
 pub struct BassPickup {
+    pub pickup_type: BassPickupType,
     /// Pickup center as a fraction of the vibrating string length (0 = nut).
     pub position: f64,
     /// Gaussian aperture width as a fraction of string length.
@@ -137,6 +147,7 @@ pub struct BassPickup {
 impl BassPickup {
     pub fn new(sample_rate: f64) -> Self {
         let mut pickup = Self {
+            pickup_type: BassPickupType::JazzDualSingle,
             position: 0.18,
             aperture: 0.055,
             pickup_blend: 0.0,
@@ -152,6 +163,25 @@ impl BassPickup {
         };
         pickup.update_filter();
         pickup
+    }
+
+    pub fn set_pickup_type(&mut self, pt: BassPickupType) {
+        if self.pickup_type != pt {
+            self.pickup_type = pt;
+            match pt {
+                BassPickupType::JazzDualSingle => {
+                    self.inductance_h = 2.4;
+                    self.series_resistance = 8_200.0;
+                    self.capacitance_f = 420.0e-12;
+                }
+                BassPickupType::PrecisionSplitCoil => {
+                    self.inductance_h = 3.4;
+                    self.series_resistance = 10_500.0;
+                    self.capacitance_f = 480.0e-12;
+                }
+            }
+            self.update_filter();
+        }
     }
 
     pub fn set_tone(&mut self, tone: f64) {
@@ -171,28 +201,45 @@ impl BassPickup {
     }
 
     #[inline]
-    pub fn process_string(&mut self, string: &FdtdString) -> f64 {
-        let (velocity, displacement) = if self.pickup_blend <= 0.001 {
-            (
-                string.weighted_velocity(self.position, self.aperture),
-                string.weighted_displacement(self.position, self.aperture),
-            )
-        } else {
-            // Dual J-Bass pickup geometry: Neck pickup (warmer, deeper) and Bridge pickup (bite)
-            let neck_pos = (self.position + 0.06).clamp(0.12, 0.42);
-            let bridge_pos = (self.position - 0.06).clamp(0.06, 0.25);
-            let w_neck = 1.0 - self.pickup_blend;
-            let w_bridge = self.pickup_blend;
+    pub fn process_string_at_index(&mut self, string: &FdtdString, string_index: usize) -> f64 {
+        let (velocity, displacement) = match self.pickup_type {
+            BassPickupType::JazzDualSingle => {
+                if self.pickup_blend <= 0.001 {
+                    (
+                        string.weighted_velocity(self.position, self.aperture),
+                        string.weighted_displacement(self.position, self.aperture),
+                    )
+                } else {
+                    // Dual J-Bass pickup geometry: Neck pickup (warmer, deeper) and Bridge pickup (bite)
+                    let neck_pos = (self.position + 0.06).clamp(0.12, 0.42);
+                    let bridge_pos = (self.position - 0.06).clamp(0.06, 0.25);
+                    let w_neck = 1.0 - self.pickup_blend;
+                    let w_bridge = self.pickup_blend;
 
-            let v_neck = string.weighted_velocity(neck_pos, self.aperture);
-            let v_bridge = string.weighted_velocity(bridge_pos, self.aperture);
-            let d_neck = string.weighted_displacement(neck_pos, self.aperture);
-            let d_bridge = string.weighted_displacement(bridge_pos, self.aperture);
+                    let v_neck = string.weighted_velocity(neck_pos, self.aperture);
+                    let v_bridge = string.weighted_velocity(bridge_pos, self.aperture);
+                    let d_neck = string.weighted_displacement(neck_pos, self.aperture);
+                    let d_bridge = string.weighted_displacement(bridge_pos, self.aperture);
 
-            (
-                w_neck * v_neck + w_bridge * v_bridge,
-                w_neck * d_neck + w_bridge * d_bridge,
-            )
+                    (
+                        w_neck * v_neck + w_bridge * v_bridge,
+                        w_neck * d_neck + w_bridge * d_bridge,
+                    )
+                }
+            }
+            BassPickupType::PrecisionSplitCoil => {
+                // Offset split-coil: lower strings (index <= 1) sampled at neck-offset (~0.23),
+                // higher strings (index >= 2) sampled closer to bridge (~0.16)
+                let is_low_pair = string_index <= 1;
+                let coil_pos = if is_low_pair {
+                    (self.position + 0.045).clamp(0.12, 0.38)
+                } else {
+                    (self.position - 0.035).clamp(0.08, 0.30)
+                };
+                let v = string.weighted_velocity(coil_pos, self.aperture * 1.12);
+                let d = string.weighted_displacement(coil_pos, self.aperture * 1.12);
+                (v, d)
+            }
         };
 
         // A finite gap makes large plucks asymmetric and produces the mild even
@@ -201,6 +248,11 @@ impl BassPickup {
         let nonlinear_gain = (self.magnetic_gap / gap).powi(2).clamp(0.25, 4.0);
         let signal = velocity * nonlinear_gain * self.gain * 0.018;
         self.filter.process(signal).clamp(-1.0, 1.0)
+    }
+
+    #[inline]
+    pub fn process_string(&mut self, string: &FdtdString) -> f64 {
+        self.process_string_at_index(string, 0)
     }
 
     /// Rebuilds the bilinear-transform equivalent of the pickup's passive RLC

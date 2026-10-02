@@ -49,7 +49,7 @@ impl Default for PhysicsBassParams {
         Self {
             editor_state: ViziaState::new(|| (1120, 650)),
             mode: IntParam::new("Mode", 0, IntRange::Linear { min: 0, max: 1 }),
-            pluck_style: IntParam::new("Pluck Style", 0, IntRange::Linear { min: 0, max: 4 }),
+            pluck_style: IntParam::new("Pluck Style", 0, IntRange::Linear { min: 0, max: 5 }),
             five_string: BoolParam::new("Five String", false),
             pickup_position: FloatParam::new(
                 "Pickup Position",
@@ -196,6 +196,7 @@ impl PhysicsBass {
                 2 => PluckStyle::Slap,
                 3 => PluckStyle::Pop,
                 4 => PluckStyle::Ghost,
+                5 => PluckStyle::Arco,
                 _ => PluckStyle::Finger,
             });
     }
