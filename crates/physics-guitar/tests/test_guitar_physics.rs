@@ -600,3 +600,159 @@ fn test_acoustic_high_frequency_air_and_cavity_dispersion() {
     assert!(l.abs() > 0.0 && r.abs() > 0.0);
 }
 
+#[test]
+fn test_guitar_physical_legato_modal_projection_and_energy_conservation() {
+    let engine = GuitarEngine::new(
+        44100.0,
+        GuitarStringSetType::Electric010,
+        GuitarInstrumentMode::Electric,
+    );
+    let exciter = PluckExciter::new(PluckStyle::Plectrum);
+
+    // 1. Initial pluck at fret 2 (e.g. string 2, A string, fret 2 = B1)
+    let mut string = engine.strings[1].clone();
+    string.set_fret(2);
+    string.pluck(&exciter, 0.7, 0.85);
+
+    // Let it vibrate for 500 samples
+    for _ in 0..500 {
+        string.step();
+    }
+    let energy_before = string.total_energy();
+    assert!(
+        energy_before > 1e-6,
+        "String must possess vibrational energy before legato"
+    );
+
+    // 2. Hammer-on to fret 5 (L decreases)
+    string.legato_fret(5, 0.80);
+    assert_eq!(string.current_fret, 5);
+    let energy_after_hammer = string.total_energy();
+    // Modal projection must preserve stored energy and inject hammer impulse (not collapse to zero)
+    assert!(
+        energy_after_hammer > energy_before * 0.5,
+        "Hammer-on modal projection must preserve energy (before={energy_before}, after={energy_after_hammer})"
+    );
+    assert!(string.is_held);
+
+    // Let it vibrate at fret 5
+    for _ in 0..500 {
+        string.step();
+    }
+    let energy_fret5 = string.total_energy();
+
+    // 3. Pull-off back to fret 2 (L increases)
+    string.legato_fret(2, 0.75);
+    assert_eq!(string.current_fret, 2);
+    let energy_after_pulloff = string.total_energy();
+    assert!(
+        energy_after_pulloff > energy_fret5 * 0.4,
+        "Pull-off modal projection must preserve energy (before={energy_fret5}, after={energy_after_pulloff})"
+    );
+}
+
+#[test]
+fn test_guitar_distributed_viscoelastic_palm_muting() {
+    let params = physics_guitar::params::guitar_tuning::generate_guitar_string_set(
+        physics_guitar::params::guitar_tuning::GuitarStringSetType::Electric010,
+        24,
+    )[0]
+    .clone();
+    let mut string_open = GuitarString::new(params, 44100.0);
+    let mut string_muted = string_open.clone();
+    string_muted.palm_mute_depth = 0.9;
+    string_muted.recalculate_modal_operators();
+
+    let exciter = PluckExciter::new(PluckStyle::Plectrum);
+    string_open.pluck(&exciter, 0.2, 0.9);
+    string_muted.pluck(&exciter, 0.2, 0.9);
+
+    // Evolve 4000 samples (~90ms)
+    for _ in 0..4000 {
+        string_open.step();
+        string_muted.step();
+    }
+
+    // High modes (m >= 8) under viscoelastic palm mute must decay much faster than fundamental
+    let muted_fund_amp = string_muted.state_t[0].q.abs();
+    let muted_high_amp = string_muted.state_t[7].q.abs();
+    let open_high_amp = string_open.state_t[7].q.abs();
+
+    assert!(
+        muted_fund_amp > 1e-7,
+        "Fundamental thump should be preserved under bridge palm mute"
+    );
+    assert!(
+        muted_high_amp < open_high_amp * 0.15,
+        "High modes under viscoelastic palm muting must decay dramatically faster than open string (muted={muted_high_amp}, open={open_high_amp})"
+    );
+}
+
+#[test]
+fn test_guitar_comprehensive_harmonics() {
+    let params = physics_guitar::params::guitar_tuning::generate_guitar_string_set(
+        physics_guitar::params::guitar_tuning::GuitarStringSetType::Electric010,
+        24,
+    )[0]
+    .clone();
+    let mut string = GuitarString::new(params, 44100.0);
+    let exciter = PluckExciter::new(PluckStyle::Plectrum);
+
+    // 1. Natural harmonic at 12th fret (Node 2 = octave): fundamental mode 1 should be damped, mode 2 active
+    string.trigger_natural_harmonic(&exciter, 2, 0.85);
+    let mode1 = string.state_t[0].q.abs();
+    let mode2 = string.state_t[1].q.abs();
+    assert!(
+        mode2 > mode1 * 4.0,
+        "12th fret natural harmonic must suppress fundamental in favor of 2nd harmonic (m1={mode1}, m2={mode2})"
+    );
+
+    // 2. Pinch harmonic: fundamental (modes 1 & 2) suppressed, upper screaming harmonics active
+    let mut string_pinch = GuitarString::new(
+        physics_guitar::params::guitar_tuning::generate_guitar_string_set(
+            physics_guitar::params::guitar_tuning::GuitarStringSetType::Electric010,
+            24,
+        )[0]
+        .clone(),
+        44100.0,
+    );
+    string_pinch.trigger_pinch_harmonic(&exciter, 0.20, 0.90);
+    let pinch_low = string_pinch.state_t[0].q.abs() + string_pinch.state_t[1].q.abs();
+    let pinch_high = string_pinch.state_t[2].q.abs() + string_pinch.state_t[3].q.abs();
+    assert!(
+        pinch_high > pinch_low * 3.0,
+        "Pinch harmonic must suppress low fundamental in favor of high harmonics (low={pinch_low}, high={pinch_high})"
+    );
+}
+
+#[test]
+fn test_guitar_continuous_legato_slide() {
+    let params = physics_guitar::params::guitar_tuning::generate_guitar_string_set(
+        physics_guitar::params::guitar_tuning::GuitarStringSetType::Electric010,
+        24,
+    )[0]
+    .clone();
+    let mut string = GuitarString::new(params, 44100.0);
+    let exciter = PluckExciter::new(PluckStyle::Plectrum);
+    string.set_fret(2);
+    string.pluck(&exciter, 0.5, 0.85);
+
+    // Slide from fret 2 to fret 7 over 40ms (~1764 samples)
+    string.start_slide(7, 40.0);
+    assert!(string.slide_active);
+
+    for _ in 0..1800 {
+        string.step();
+    }
+
+    assert!(!string.slide_active, "Slide must complete after duration");
+    assert_eq!(
+        string.current_fret, 7,
+        "Fret should be target fret after slide"
+    );
+    assert!(
+        string.total_energy() > 1e-7,
+        "String should remain vibrating during and after slide"
+    );
+}
+

@@ -44,6 +44,10 @@ pub enum PluckStyle {
     Pick,
     /// A stronger initial displacement and a bounded fret/slap collision.
     Slap,
+    /// High-velocity hook and snap producing an aggressive slap pop.
+    Pop,
+    /// Left-hand muted percussive strike with fast viscoelastic damping.
+    Ghost,
 }
 
 /// One prepared bass-string physical model.
@@ -72,6 +76,7 @@ pub struct FdtdString {
     pub is_held: bool,
     pub is_active: bool,
     pub is_releasing: bool,
+    pub is_ghost: bool,
     pub fret_buzz: f64,
     pub current_fret: u8,
     pub last_contact_force: f64,
@@ -114,6 +119,7 @@ impl FdtdString {
             is_held: false,
             is_active: false,
             is_releasing: false,
+            is_ghost: false,
             fret_buzz: 0.35,
             current_fret: 0,
             last_contact_force: 0.0,
@@ -244,6 +250,7 @@ impl FdtdString {
         self.is_held = true;
         self.is_active = true;
         self.is_releasing = false;
+        self.is_ghost = style == PluckStyle::Ghost;
         self.pluck_style = style;
         let velocity = velocity.clamp(0.001, 1.0);
         let position = position.clamp(0.06, 0.45);
@@ -254,6 +261,8 @@ impl FdtdString {
             PluckStyle::Finger => 0.00065 + 0.0017 * velocity,
             PluckStyle::Pick => 0.00045 + 0.00145 * velocity,
             PluckStyle::Slap => 0.0010 + 0.0030 * velocity,
+            PluckStyle::Pop => 0.0016 + 0.0038 * velocity,
+            PluckStyle::Ghost => 0.00035 + 0.00085 * velocity,
         };
         let p = self.excitation_index as f64 / self.segments as f64;
         for i in 1..self.segments {
@@ -267,17 +276,86 @@ impl FdtdString {
             self.u_prev.data[i] = self.u_curr.data[i];
         }
 
-        self.pluck_duration = (self.sample_rate * 0.0035).round() as usize;
+        self.pluck_duration = if style == PluckStyle::Ghost {
+            (self.sample_rate * 0.0012).round() as usize
+        } else {
+            (self.sample_rate * 0.0035).round() as usize
+        };
         self.pluck_duration = self.pluck_duration.max(1);
         self.pluck_samples_left = self.pluck_duration;
         self.pluck_force = match style {
             PluckStyle::Finger => 2.0 * velocity,
             PluckStyle::Pick => 3.5 * velocity,
             PluckStyle::Slap => 5.5 * velocity,
+            PluckStyle::Pop => 7.5 * velocity,
+            PluckStyle::Ghost => 2.5 * velocity,
         };
-        self.slap_active = style == PluckStyle::Slap;
+        self.slap_active = style == PluckStyle::Slap || style == PluckStyle::Pop;
         self.slap_position = 0.0;
-        self.slap_velocity = 0.65 * velocity;
+        self.slap_velocity = match style {
+            PluckStyle::Pop => 0.95 * velocity,
+            _ => 0.65 * velocity,
+        };
+    }
+
+    /// Transitions to a new fret on the vibrating string without clearing the FDTD grid.
+    /// Preserves stored wave energy, interpolates spatial displacements across the new effective
+    /// scale length, and injects hammer-on/pull-off fret contact transients.
+    pub fn legato_to_fret(&mut self, new_fret: u8, velocity: f64) {
+        let new_fret = new_fret.min(FRET_COUNT as u8);
+        if new_fret == self.current_fret {
+            return;
+        }
+
+        let is_hammer_on = new_fret > self.current_fret;
+        let old_length = self.effective_length;
+        let new_length = self.params.length_at_fret(new_fret);
+        let ratio = new_length / old_length.max(1e-6);
+
+        let n = self.segments;
+        let mut new_curr = [0.0; MAX_GRID_POINTS];
+        let mut new_prev = [0.0; MAX_GRID_POINTS];
+
+        // Spatial wave mapping relative to the fixed bridge (index n)
+        for i in 1..n {
+            let i_old = n as f64 - (n - i) as f64 * ratio;
+            if i_old >= 0.0 && i_old <= n as f64 {
+                let idx = i_old.floor() as usize;
+                let frac = i_old - idx as f64;
+                let idx_next = (idx + 1).min(n);
+                new_curr[i] =
+                    self.u_curr.data[idx] * (1.0 - frac) + self.u_curr.data[idx_next] * frac;
+                new_prev[i] =
+                    self.u_prev.data[idx] * (1.0 - frac) + self.u_prev.data[idx_next] * frac;
+            }
+        }
+
+        self.u_curr.data[1..n].copy_from_slice(&new_curr[1..n]);
+        self.u_prev.data[1..n].copy_from_slice(&new_prev[1..n]);
+
+        // Articulation transient:
+        let velocity = velocity.clamp(0.01, 1.0);
+        if is_hammer_on {
+            // Metallic fret-strike impulse at the new stopping boundary (near node 1)
+            let strike_impulse = 0.00030 * velocity;
+            self.u_curr.data[1] += strike_impulse;
+            self.u_curr.data[2] += strike_impulse * 0.5;
+        } else {
+            // Finger-pad release step for pull-off
+            let pull_transient = 0.00015 * velocity;
+            let mid = n / 4;
+            self.u_curr.data[mid] += pull_transient;
+        }
+
+        self.current_fret = new_fret;
+        self.configure_length(
+            self.params.length_at_fret(new_fret),
+            self.params.frequency_at_fret(new_fret),
+        );
+        self.is_held = true;
+        self.is_active = true;
+        self.is_releasing = false;
+        self.is_ghost = false;
     }
 
     /// Releases the finger. The state is left alive and damped so a release is
@@ -479,7 +557,12 @@ impl FdtdString {
             denom,
         );
         self.last_contact_force = fret_contact_total + slap_force;
-        if self.is_releasing {
+        if self.is_ghost {
+            let ghost_damp = (-dt / 0.008).exp();
+            for i in 1..n {
+                self.u_next.data[i] *= ghost_damp;
+            }
+        } else if self.is_releasing {
             let release = (-dt / 0.15).exp();
             for i in 1..n {
                 self.u_next.data[i] *= release;
@@ -492,10 +575,11 @@ impl FdtdString {
         self.u_curr.data[n] = self.bridge_displacement;
         self.u_prev.data[n] = self.previous_bridge_displacement;
 
-        if self.is_releasing && self.energy() < 1e-11 {
+        if (self.is_releasing || self.is_ghost) && self.energy() < 1e-11 {
             self.clear_state();
             self.is_active = false;
             self.is_releasing = false;
+            self.is_ghost = false;
         }
 
         self.bridge_force()
@@ -736,6 +820,7 @@ impl FdtdString {
         self.is_held = false;
         self.is_active = false;
         self.is_releasing = false;
+        self.is_ghost = false;
         self.pluck_samples_left = 0;
         self.slap_active = false;
         self.last_contact_force = 0.0;

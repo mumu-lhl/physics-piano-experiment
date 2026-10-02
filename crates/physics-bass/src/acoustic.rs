@@ -118,6 +118,8 @@ pub struct BassPickup {
     pub position: f64,
     /// Gaussian aperture width as a fraction of string length.
     pub aperture: f64,
+    /// Pickup blend: 0.0 = Neck pickup, 0.5 = 50/50 scooped J-bass, 1.0 = Bridge pickup.
+    pub pickup_blend: f64,
     /// Tone control, 0 = dark and 1 = open.
     pub tone: f64,
     /// Pickup output gain.
@@ -137,6 +139,7 @@ impl BassPickup {
         let mut pickup = Self {
             position: 0.18,
             aperture: 0.055,
+            pickup_blend: 0.0,
             tone: 0.72,
             gain: 0.85,
             magnetic_gap: 0.012,
@@ -163,12 +166,37 @@ impl BassPickup {
         self.position = position.clamp(0.06, 0.42);
     }
 
+    pub fn set_blend(&mut self, blend: f64) {
+        self.pickup_blend = blend.clamp(0.0, 1.0);
+    }
+
     #[inline]
     pub fn process_string(&mut self, string: &FdtdString) -> f64 {
-        let velocity = string.weighted_velocity(self.position, self.aperture);
+        let (velocity, displacement) = if self.pickup_blend <= 0.001 {
+            (
+                string.weighted_velocity(self.position, self.aperture),
+                string.weighted_displacement(self.position, self.aperture),
+            )
+        } else {
+            // Dual J-Bass pickup geometry: Neck pickup (warmer, deeper) and Bridge pickup (bite)
+            let neck_pos = (self.position + 0.06).clamp(0.12, 0.42);
+            let bridge_pos = (self.position - 0.06).clamp(0.06, 0.25);
+            let w_neck = 1.0 - self.pickup_blend;
+            let w_bridge = self.pickup_blend;
+
+            let v_neck = string.weighted_velocity(neck_pos, self.aperture);
+            let v_bridge = string.weighted_velocity(bridge_pos, self.aperture);
+            let d_neck = string.weighted_displacement(neck_pos, self.aperture);
+            let d_bridge = string.weighted_displacement(bridge_pos, self.aperture);
+
+            (
+                w_neck * v_neck + w_bridge * v_bridge,
+                w_neck * d_neck + w_bridge * d_bridge,
+            )
+        };
+
         // A finite gap makes large plucks asymmetric and produces the mild even
         // harmonic content of a magnetic pickup without a hard clip.
-        let displacement = string.weighted_displacement(self.position, self.aperture);
         let gap = (self.magnetic_gap - displacement).max(self.magnetic_gap * 0.35);
         let nonlinear_gain = (self.magnetic_gap / gap).powi(2).clamp(0.25, 4.0);
         let signal = velocity * nonlinear_gain * self.gain * 0.018;

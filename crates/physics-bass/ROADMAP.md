@@ -35,13 +35,14 @@ This roadmap tracks the physical bass engine, playable editor, plugin integratio
 - [ ] **Unconditional Energy-Stable Contact Solver (SAV / IEQ Formulation)**:
   - Upgrade penalty-based fret contact to a Scalar Auxiliary Variable (SAV) / Invariant Energy Quadratization (IEQ) discrete formulation.
   - Guarantee strictly non-increasing discrete energy ($\Delta E \le 0$) under extreme slap velocities and low string action.
-- [ ] **FDTD Physical Legato Engine (Hammer-on & Pull-off)**:
+- [x] **FDTD Physical Legato Engine (Hammer-on & Pull-off)**:
   - Transition between notes on the vibrating FDTD spatial grid without clearing wave states.
+  - Spatial grid resampling and coordinate projection preserving stored string vibrational energy.
   - Adjust effective stopping boundary dynamically and inject localized fret impact transients.
-- [ ] **Slap, Pop & Ghost Notes (击勾弦与死音/切音)**:
+- [x] **Slap, Pop & Ghost Notes (击勾弦与死音/切音)**:
   - *Slap Thumb Snap*: Nonlinear shock-wave steepening under high hammer strike velocity.
-  - *Pop Pull-and-Release*: Transverse hook displacement release with high snap attack.
-  - *Ghost / Dead Notes*: Highly damped percussive excitation for authentic Funk/R&B rhythmic chucks.
+  - *Pop Pull-and-Release*: Transverse hook displacement release with high snap attack and fret collision.
+  - *Ghost / Dead Notes*: Ultra-short excitation with Kelvin-Voigt viscoelastic flesh damping ($T_{60} \approx 18$ ms) for authentic Funk/R&B rhythmic chucks.
 - [ ] **Neck Relief & Fret Crown Curvature**:
   - Incorporate realistic neck relief parabolic curvature and rounded fret crown profiles.
 
@@ -53,9 +54,10 @@ This roadmap tracks the physical bass engine, playable editor, plugin integratio
 - [ ] **Neck Admittance & Dead Spots (琴颈吸收与死音点)**:
   - Couple a 2nd-order neck bending resonator at the nut/headstock boundary.
   - Reproduce the iconic Fender G-string 5th~7th fret (C#3/D3) dead spot attenuation.
-- [ ] **Split-Coil P-Bass & Dual J-Bass Geometry**:
-  - Physical split-coil pickup configuration for precision bass.
-  - Variable neck/bridge pickup continuous blend with phase-cancellation mid-scoop for Jazz Bass.
+- [x] **Dual J-Bass Geometry & Continuous Pickup Blend**:
+  - Variable neck/bridge pickup continuous blend with phase-cancellation mid-scoop for Jazz Bass slap & finger funk tones.
+- [ ] **Split-Coil P-Bass Magnetic Geometry**:
+  - Physical offset split-coil pickup configuration with independent pole pieces for Precision Bass.
 
 ### Milestone 6: GUI Visuals, SIMD Performance & Architecture (可视化与高性能计算)
 - [ ] **60 FPS Real-Time FDTD Waveform Visualizer**:

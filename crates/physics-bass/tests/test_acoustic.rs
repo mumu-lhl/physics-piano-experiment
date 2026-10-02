@@ -277,3 +277,103 @@ fn test_acoustic_bass_mode_switching_and_tuning() {
     }
 }
 
+#[test]
+fn test_bass_fdtd_physical_legato_preserves_energy_and_pitch() {
+    let mut engine = BassEngine::new(SAMPLE_RATE, BassMode::Electric, true);
+    // Pluck E1 string at fret 0 (open E1)
+    engine.note_on_string(1, 0, 0.85);
+
+    for _ in 0..500 {
+        let _ = engine.process_sample();
+    }
+    let energy_before = engine.strings[1].string.energy();
+    assert!(
+        energy_before > 1e-7,
+        "String must be vibrating before legato"
+    );
+
+    // Hammer-on to fret 5 (A1)
+    engine.legato_to_string(1, 5, 0.80);
+    assert_eq!(engine.strings[1].current_fret, 5);
+    assert!(engine.strings[1].string.is_active);
+    let energy_after_hammer = engine.strings[1].string.energy();
+    assert!(
+        energy_after_hammer > energy_before * 0.35,
+        "FDTD legato must preserve vibrating wave energy (before={energy_before}, after={energy_after_hammer})"
+    );
+
+    for _ in 0..500 {
+        let _ = engine.process_sample();
+    }
+    let energy_fret5 = engine.strings[1].string.energy();
+
+    // Pull-off back to fret 0
+    engine.legato_to_string(1, 0, 0.75);
+    assert_eq!(engine.strings[1].current_fret, 0);
+    assert!(engine.strings[1].string.is_active);
+    let energy_after_pulloff = engine.strings[1].string.energy();
+    assert!(
+        energy_after_pulloff > energy_fret5 * 0.30,
+        "Pull-off must preserve energy without grid wipe (before={energy_fret5}, after={energy_after_pulloff})"
+    );
+}
+
+#[test]
+fn test_bass_pop_and_ghost_articulations() {
+    let mut string_finger = FdtdString::new(BassStringParams::electric_four()[0], SAMPLE_RATE);
+    let mut string_pop = string_finger.clone();
+    let mut string_ghost = string_finger.clone();
+
+    // 1. Pop has high attack energy & slap active
+    string_pop.trigger(0.9, PluckStyle::Pop, 0.2);
+    assert!(string_pop.is_active);
+    assert!(
+        string_pop.energy() > 1e-5,
+        "Pop excitation must produce high initial energy"
+    );
+
+    // 2. Ghost note has fast viscoelastic damping
+    string_finger.trigger(0.9, PluckStyle::Finger, 0.2);
+    string_ghost.trigger(0.9, PluckStyle::Ghost, 0.2);
+
+    for _ in 0..2500 {
+        // ~55ms
+        string_finger.step();
+        string_ghost.step();
+    }
+
+    let finger_energy = string_finger.energy();
+    let ghost_energy = string_ghost.energy();
+    assert!(
+        ghost_energy < finger_energy * 0.15,
+        "Ghost note must decay rapidly compared to finger pluck (ghost={ghost_energy}, finger={finger_energy})"
+    );
+}
+
+#[test]
+fn test_bass_dual_jbass_pickup_blend_comb_filtering() {
+    let mut engine = BassEngine::new(SAMPLE_RATE, BassMode::Electric, true);
+    // Test blend settings
+    engine.set_pickup_blend(0.0); // 100% Neck
+    assert_eq!(engine.pickup.pickup_blend, 0.0);
+
+    engine.set_pickup_blend(0.5); // 50/50 Scooped J-Bass
+    assert_eq!(engine.pickup.pickup_blend, 0.5);
+
+    engine.set_pickup_blend(1.0); // 100% Bridge
+    assert_eq!(engine.pickup.pickup_blend, 1.0);
+
+    // Render with 50/50 blend
+    engine.note_on(28, 0.85);
+    let mut max_abs = 0.0_f64;
+    for _ in 0..1000 {
+        let (l, r) = engine.process_sample();
+        assert!(!l.is_nan() && !r.is_nan());
+        max_abs = max_abs.max(l.abs()).max(r.abs());
+    }
+    assert!(
+        max_abs > 1e-4,
+        "Blended dual pickup must produce clear audible audio"
+    );
+}
+

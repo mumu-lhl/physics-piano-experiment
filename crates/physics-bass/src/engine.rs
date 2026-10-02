@@ -68,6 +68,13 @@ impl BassStringVoice {
         self.current_note = Some(note);
     }
 
+    pub fn legato_to_note(&mut self, note: u8, velocity: f64) {
+        let fret = note.saturating_sub(self.open_midi).min(24);
+        self.current_fret = fret;
+        self.string.legato_to_fret(fret, velocity);
+        self.current_note = Some(note);
+    }
+
     pub fn release(&mut self) {
         self.string.release();
     }
@@ -189,11 +196,35 @@ impl BassEngine {
         }
         let fret = fret.min(24);
         let note = self.strings[index].open_midi.saturating_add(fret);
+
+        // Physical legato: if this string is currently vibrating and the fret changed,
+        // perform smooth legato without resetting the wave grid!
+        let is_legato = self.strings[index].string.is_held
+            && self.strings[index].current_fret != fret
+            && self.strings[index].string.energy() > 1e-8;
+        if is_legato {
+            self.strings[index].legato_to_note(note, velocity);
+            return;
+        }
+
         if self.strings[index].current_note.is_some() {
             self.strings[index].reset();
         }
         self.strings[index].string.fret_buzz = self.fret_buzz;
         self.strings[index].trigger(note, velocity, self.pluck_style, self.pluck_position);
+    }
+
+    /// Explicitly triggers a physical legato transition (hammer-on or pull-off) on a string.
+    pub fn legato_to_string(&mut self, index: usize, fret: u8, velocity: f64) {
+        if index < STRING_COUNT {
+            let fret = fret.min(24);
+            let note = self.strings[index].open_midi.saturating_add(fret);
+            self.strings[index].legato_to_note(note, velocity);
+        }
+    }
+
+    pub fn set_pickup_blend(&mut self, blend: f64) {
+        self.pickup.set_blend(blend);
     }
 
     pub fn note_off(&mut self, note: u8) {

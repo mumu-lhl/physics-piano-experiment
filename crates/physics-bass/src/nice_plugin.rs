@@ -19,7 +19,7 @@ pub struct PhysicsBassParams {
     /// 0 = electric, 1 = acoustic wooden bass.
     #[id = "mode"]
     pub mode: IntParam,
-    /// 0 = finger, 1 = pick, 2 = slap.
+    /// 0 = finger, 1 = pick, 2 = slap, 3 = pop, 4 = ghost.
     #[id = "pluck_style"]
     pub pluck_style: IntParam,
     /// Four-string or five-string layout.
@@ -49,7 +49,7 @@ impl Default for PhysicsBassParams {
         Self {
             editor_state: ViziaState::new(|| (1120, 650)),
             mode: IntParam::new("Mode", 0, IntRange::Linear { min: 0, max: 1 }),
-            pluck_style: IntParam::new("Pluck Style", 0, IntRange::Linear { min: 0, max: 2 }),
+            pluck_style: IntParam::new("Pluck Style", 0, IntRange::Linear { min: 0, max: 4 }),
             five_string: BoolParam::new("Five String", false),
             pickup_position: FloatParam::new(
                 "Pickup Position",
@@ -194,6 +194,8 @@ impl PhysicsBass {
             .set_pluck_style(match self.params.pluck_style.value() {
                 1 => PluckStyle::Pick,
                 2 => PluckStyle::Slap,
+                3 => PluckStyle::Pop,
+                4 => PluckStyle::Ghost,
                 _ => PluckStyle::Finger,
             });
     }

@@ -186,14 +186,19 @@ impl GuitarEngine {
 
             let is_mpe = (2..=7).contains(&channel);
             if self.strummer.strum_speed_ms <= 1.0 {
-                // Instant direct pluck
+                // Instant direct pluck with physical legato if string is already ringing
                 let string = &mut self.strings[str_idx];
-                string.set_fret(loc.fret);
+                let is_legato = string.is_held && string.current_fret != loc.fret && string.total_energy() > 1e-6;
+                if is_legato {
+                    string.legato_fret(loc.fret, velocity);
+                } else {
+                    string.set_fret(loc.fret);
+                    string.palm_mute_depth = self.palm_mute_depth;
+                    string.pluck(&self.exciter, self.pluck_pos_ratio, velocity);
+                }
                 if !is_mpe {
                     string.set_pitch_bend(self.global_pitch_bend);
                 }
-                string.palm_mute_depth = self.palm_mute_depth;
-                string.pluck(&self.exciter, self.pluck_pos_ratio, velocity);
             } else {
                 // Route to smart strummer for chord strumming and picking delays
                 self.strings[str_idx].set_fret(loc.fret);
@@ -203,6 +208,50 @@ impl GuitarEngine {
                 self.strings[str_idx].palm_mute_depth = self.palm_mute_depth;
                 self.strummer.trigger_note(str_idx, loc.fret, velocity);
             }
+        }
+    }
+
+    /// Performs a physical legato transition (hammer-on or pull-off) on a specific string.
+    pub fn legato_to_fret(&mut self, string_index: usize, new_fret: u8, velocity: f64) {
+        if string_index < 6 {
+            let open_note = self.router.open_notes[string_index];
+            self.strings[string_index].legato_fret(new_fret, velocity);
+            self.active_notes_on_string[string_index] = Some(open_note + new_fret);
+        }
+    }
+
+    /// Initiates a continuous legato slide on a string.
+    pub fn slide_string(&mut self, string_index: usize, target_fret: u8, duration_ms: f64) {
+        if string_index < 6 {
+            let open_note = self.router.open_notes[string_index];
+            self.strings[string_index].start_slide(target_fret, duration_ms);
+            self.active_notes_on_string[string_index] = Some(open_note + target_fret);
+        }
+    }
+
+    /// Plays a natural harmonic on a string (node 2 = 12th fret, node 3 = 7th fret, node 4 = 5th fret).
+    pub fn play_natural_harmonic(&mut self, string_index: usize, node: u8, velocity: f64) {
+        if string_index < 6 {
+            self.strings[string_index].trigger_natural_harmonic(&self.exciter, node, velocity);
+            let open_note = self.router.open_notes[string_index];
+            self.active_notes_on_string[string_index] = Some(open_note);
+        }
+    }
+
+    /// Plays a rock/metal pinch harmonic on a string (high overtone squeal).
+    pub fn play_pinch_harmonic(&mut self, string_index: usize, node_ratio: f64, velocity: f64) {
+        if string_index < 6 {
+            self.strings[string_index].trigger_pinch_harmonic(&self.exciter, node_ratio, velocity);
+            let open_note = self.router.open_notes[string_index];
+            self.active_notes_on_string[string_index] =
+                Some(open_note + self.strings[string_index].current_fret);
+        }
+    }
+
+    /// Plays a tap harmonic at specified fret above fretted note.
+    pub fn play_tap_harmonic(&mut self, string_index: usize, tap_node_fret: u8, velocity: f64) {
+        if string_index < 6 {
+            self.strings[string_index].trigger_tap_harmonic(tap_node_fret, velocity);
         }
     }
 

@@ -62,13 +62,22 @@ pub struct GuitarString {
     pub is_held: bool,
     /// Active finger release muting (true while finger is damping after key release)
     pub is_releasing: bool,
+    /// Continuous legato slide state
+    pub slide_active: bool,
+    pub slide_target_fret: u8,
+    pub slide_start_length: f64,
+    pub slide_target_length: f64,
+    pub slide_samples_total: usize,
+    pub slide_samples_left: usize,
+    pub slide_friction_noise: f64,
 }
 
 impl GuitarString {
     pub fn new(params: GuitarStringParams, sample_rate: f64) -> Self {
         let dt = 1.0 / sample_rate;
+        let scale_length = params.scale_length;
         let mut s = Self {
-            effective_length: params.scale_length,
+            effective_length: scale_length,
             current_f0: params.open_f0,
             num_modes: params.num_modes,
             params,
@@ -92,6 +101,13 @@ impl GuitarString {
             fret_buzz_sensitivity: 0.35,
             is_held: false,
             is_releasing: false,
+            slide_active: false,
+            slide_target_fret: 0,
+            slide_start_length: scale_length,
+            slide_target_length: scale_length,
+            slide_samples_total: 0,
+            slide_samples_left: 0,
+            slide_friction_noise: 0.0,
         };
         s.recalculate_modal_operators();
         s
@@ -155,10 +171,17 @@ impl GuitarString {
             let omega_m_p = omega_base * 1.0025;
 
             // Damping calculation: sigma = sigma0 + sigma1 * (m * pi / L)^2
-            // plus palm mute additional damping: Delta C = gamma_palm * (m / N)^1.5
             let mut sigma_m = self.params.sigma0 + self.params.sigma1 * (m_f * PI / length).powi(2);
             if self.palm_mute_depth > 0.0 {
-                sigma_m += self.palm_mute_depth * 80.0 * (1.0 + 0.15 * m_f);
+                // Multi-zone Kelvin-Voigt viscoelastic palm absorber (15~25mm from the bridge saddle)
+                let palm_width = 0.022; // 22mm palm contact width from bridge saddle
+                let w_ratio = (palm_width / length).min(0.25);
+                // Spatial coverage: integral_0^W phi_m^2(x) dx = W/L - sin(2 m pi W/L) / (2 m pi)
+                let spatial_coverage = (w_ratio - (2.0 * m_f * PI * w_ratio).sin() / (2.0 * m_f * PI)).max(0.0005);
+                // Flesh viscoelastic strain-rate absorption (Kelvin-Voigt eta * d/dt)
+                let viscoelastic_factor = 1.0 + 0.00028 * omega_base;
+                let palm_damping = self.palm_mute_depth * 2500.0 * spatial_coverage * viscoelastic_factor;
+                sigma_m += palm_damping;
             }
 
             // Natural harmonic selective damping (docx Chapter 3)
@@ -233,10 +256,191 @@ impl GuitarString {
         self.is_releasing = false;
     }
 
+    /// Transitions between frets on the vibrating string without re-initializing modal oscillators.
+    /// Projects existing modal coordinates onto the new vibrating scale length L_eff,
+    /// preserving stored vibrational energy, and injects hammer-on/pull-off transients.
+    pub fn legato_fret(&mut self, new_fret: u8, velocity: f64) {
+        if new_fret == self.current_fret {
+            return;
+        }
+
+        let is_hammer_on = new_fret > self.current_fret;
+        let old_length = self.effective_length;
+        let old_modes = self.num_modes;
+        let old_state_t = self.state_t.clone();
+        let old_state_p = self.state_p.clone();
+
+        // Configure new fret
+        self.current_fret = new_fret;
+        self.effective_length = self.params.effective_length_at_fret(new_fret);
+        self.current_f0 = self.params.frequency_at_fret(new_fret);
+        self.recalculate_modal_operators();
+
+        let new_length = self.effective_length;
+        let l_min = old_length.min(new_length);
+        let new_modes = self.num_modes;
+
+        // Analytical modal projection: C_{k,m} = (2 / sqrt(L1 * L2)) * integral_0^Lmin sin(m*pi*x/L1) sin(k*pi*x/L2) dx
+        let norm = 2.0 / (old_length * new_length).sqrt();
+        for k in 0..new_modes {
+            let k_f = (k + 1) as f64;
+            let beta = k_f * PI / new_length;
+            let mut q_proj_t = 0.0;
+            let mut v_proj_t = 0.0;
+            let mut q_proj_p = 0.0;
+            let mut v_proj_p = 0.0;
+
+            for m in 0..old_modes {
+                let m_f = (m + 1) as f64;
+                let alpha = m_f * PI / old_length;
+                let diff = (alpha - beta).abs();
+                let sum = alpha + beta;
+                let i_km = if diff < 1e-7 {
+                    0.5 * (l_min - (sum * l_min).sin() / sum)
+                } else {
+                    0.5 * (((diff * l_min).sin() / (alpha - beta)) - ((sum * l_min).sin() / sum))
+                };
+                let c_km = norm * i_km;
+                q_proj_t += c_km * old_state_t[m].q;
+                v_proj_t += c_km * old_state_t[m].v;
+                q_proj_p += c_km * old_state_p[m].q;
+                v_proj_p += c_km * old_state_p[m].v;
+            }
+
+            // Articulation transient:
+            if is_hammer_on {
+                // Localized fret-strike metallic impact at the stopping fret boundary
+                let hammer_impulse = 0.00025 * velocity;
+                let sign = if (k + 1) % 2 == 0 { 1.0 } else { -1.0 };
+                let modal_impact = hammer_impulse * sign * (k_f / new_modes as f64).sqrt();
+                v_proj_t += modal_impact;
+            } else {
+                // Finger-pad release step for pull-off at old fret position
+                let pull_transient = 0.00012 * velocity * (k_f * PI * old_length / new_length).sin();
+                q_proj_t += pull_transient;
+            }
+
+            self.state_t[k] = ModalState { q: q_proj_t, v: v_proj_t };
+            self.state_p[k] = ModalState { q: q_proj_p, v: v_proj_p };
+        }
+
+        self.is_held = true;
+        self.is_releasing = false;
+    }
+
+    /// Triggers a natural harmonic at a specified node (2 = 12th fret, 3 = 7th fret, 4 = 5th fret, 5 = 4th fret).
+    pub fn trigger_natural_harmonic(
+        &mut self,
+        exciter: &PluckExciter,
+        node: u8,
+        velocity: f64,
+    ) {
+        self.harmonic_node = node;
+        self.recalculate_modal_operators();
+        let node_ratio = 1.0 / (node as f64);
+        let pluck_pos = (node_ratio * 0.5).clamp(0.05, 0.45);
+        self.pluck(exciter, pluck_pos, velocity);
+
+        let n_f = node as f64;
+        for m in 0..self.num_modes {
+            let m_f = (m + 1) as f64;
+            let antinode_distance = (m_f * PI / n_f).sin().abs();
+            if antinode_distance > 0.05 {
+                // Suppress non-harmonic overtone modes
+                self.state_t[m].q *= 0.04;
+                self.state_t[m].v *= 0.04;
+                self.state_p[m].q *= 0.04;
+                self.state_p[m].v *= 0.04;
+            }
+        }
+    }
+
+    /// Triggers an aggressive rock/metal pinch harmonic (pick excitation + immediate thumb node damping).
+    pub fn trigger_pinch_harmonic(
+        &mut self,
+        exciter: &PluckExciter,
+        node_ratio: f64,
+        velocity: f64,
+    ) {
+        self.harmonic_node = 0;
+        self.recalculate_modal_operators();
+        let node_ratio = node_ratio.clamp(0.08, 0.35);
+        self.pluck(exciter, node_ratio, velocity * 1.15);
+
+        for m in 0..self.num_modes {
+            let m_f = (m + 1) as f64;
+            let pinch_factor = if m_f <= 2.0 {
+                0.005 // Heavily suppress low fundamental & 2nd harmonic under thumb contact
+            } else {
+                let antinode = (m_f * PI * node_ratio).sin().abs();
+                (1.0 - 0.85 * antinode).clamp(0.12, 1.40)
+            };
+            self.state_t[m].q *= pinch_factor;
+            self.state_t[m].v *= pinch_factor;
+            self.state_p[m].q *= pinch_factor;
+            self.state_p[m].v *= pinch_factor;
+        }
+    }
+
+    /// Triggers a percussive tap harmonic at a specified fret above the fretted note.
+    pub fn trigger_tap_harmonic(&mut self, tap_node_fret: u8, velocity: f64) {
+        let tap_ratio = 2.0_f64.powf(-(tap_node_fret as f64) / 12.0);
+        let tap_impulse = 0.00045 * velocity;
+        for m in 0..self.num_modes {
+            let m_f = (m + 1) as f64;
+            let mode_amp = (m_f * PI * tap_ratio).sin();
+            self.state_t[m].v += tap_impulse * mode_amp;
+        }
+        self.is_held = true;
+        self.is_releasing = false;
+    }
+
+    /// Initiates a continuous legato slide from current fret to target_fret over duration_ms.
+    pub fn start_slide(&mut self, target_fret: u8, duration_ms: f64) {
+        if target_fret == self.current_fret {
+            return;
+        }
+        self.slide_active = true;
+        self.slide_target_fret = target_fret;
+        self.slide_start_length = self.effective_length;
+        self.slide_target_length = self.params.effective_length_at_fret(target_fret);
+        let samples = (self.sample_rate * (duration_ms / 1000.0).max(0.01)).round() as usize;
+        self.slide_samples_total = samples.max(1);
+        self.slide_samples_left = self.slide_samples_total;
+        self.slide_friction_noise = 0.0;
+    }
+
     /// Advances the modal oscillators by 1 audio sample (dt).
     /// Returns the bridge vertical force (Newtons) and parallel force (Newtons).
     #[inline(always)]
     pub fn step(&mut self) -> (f64, f64) {
+        // Continuous legato slide progress
+        if self.slide_active {
+            if self.slide_samples_left > 0 {
+                let progress = 1.0 - (self.slide_samples_left as f64 / self.slide_samples_total as f64);
+                self.slide_samples_left -= 1;
+                let smooth_p = 0.5 * (1.0 - (PI * progress).cos());
+                self.effective_length = self.slide_start_length
+                    + (self.slide_target_length - self.slide_start_length) * smooth_p;
+                let f0_start = self.params.frequency_at_fret(self.current_fret);
+                let f0_target = self.params.frequency_at_fret(self.slide_target_fret);
+                self.current_f0 = f0_start * (f0_target / f0_start).powf(smooth_p);
+
+                // Slight fret friction dissipation on string during slide
+                let slide_speed = (self.slide_target_length - self.slide_start_length).abs()
+                    / (self.slide_samples_total as f64 * self.dt);
+                for m in 0..self.num_modes {
+                    let m_f = (m + 1) as f64;
+                    let friction_damping = 1.0 - (0.000006 * slide_speed * m_f).clamp(0.0, 0.002);
+                    self.state_t[m].v *= friction_damping;
+                    self.state_p[m].v *= friction_damping;
+                }
+            } else {
+                self.slide_active = false;
+                self.set_fret(self.slide_target_fret);
+            }
+        }
+
         let mut force_bridge_t = 0.0;
         let mut force_bridge_p = 0.0;
         let mut modal_sq_sum = 0.0;

@@ -22,24 +22,24 @@ This roadmap tracks completed physical modeling milestones and planned future ca
 - [x] **Acoustic Body 3-Stage Cavity Dispersion & 10.5 kHz Air Transmission**: 3-stage Schroeder all-pass cavity reflection network and gentle studio-grade high-frequency air absorption.
 - [x] **Interactive GUI Dynamic Velocity & Strumming**: Distance-weighted click velocity, polyphonic chord strumming, and QWERTY keyboard auditioning.
 
----
-
-## Future Milestones
-
-### Tier G3: Expressive Articulations & Legato Physics (连奏与演奏法微物理)
-- [ ] **Physical Legato Engine (Hammer-on / Pull-off)**:
+### Tier G3: Expressive Articulations & Legato Physics — COMPLETED
+- [x] **Physical Legato Engine (Hammer-on / Pull-off)**:
   - Transition between notes on the same string without re-initializing the modal oscillators.
   - Project existing modal displacement/velocity vectors onto the new vibrating scale length $L_{\text{eff}}$, preserving stored vibrational energy.
   - Inject localized fret-strike impulse for hammer-ons and finger-pad release step for pull-offs.
-- [ ] **Continuous Legato Slide (平滑滑音)**:
+- [x] **Continuous Legato Slide (平滑滑音)**:
   - Time-varying effective scale length with continuous modal operator recalculation.
   - Natural pitch-glide doppler shift and string-fret friction energy dissipation during slide.
-- [ ] **Comprehensive Harmonics Modeling (全套自然/人工/敲击泛音)**:
+- [x] **Comprehensive Harmonics Modeling (全套自然/人工/敲击泛音)**:
   - *Natural Harmonics*: Selective modal suppression at 12th (1/2), 7th/19th (1/3), 5th (1/4), and 4th/9th (1/5) nodal points.
   - *Pinch Harmonics (人工捏泛音)*: Simultaneous pick excitation and thumb-flesh damping, producing high-gain rock/metal screaming harmonics.
   - *Tap Harmonics (点弦泛音)*: Percussive excitation at nodal positions above fretted notes.
-- [ ] **Distributed Viscoelastic Palm Muting**:
-  - Replace lumped damping multiplier with a multi-zone Kelvin-Voigt viscoelastic absorber 10~30mm from the bridge saddle, modeling flesh compression and comb filtering.
+- [x] **Distributed Viscoelastic Palm Muting**:
+  - Multi-zone Kelvin-Voigt viscoelastic absorber across 22mm palm contact from bridge saddle, modeling flesh strain-rate comb filtering and preserving low-end thump ("chug").
+
+---
+
+## Future Milestones
 
 ### Tier G4: Transducers, Feedback Loops & Low-Latency IRs (换能器、自激反馈与卷积)
 - [ ] **Acoustic Feedback / Larsen Effect Closed Loop (电吉他音箱声学自激反馈)**:
