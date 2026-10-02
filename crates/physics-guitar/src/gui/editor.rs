@@ -1,13 +1,13 @@
 //! Vizia Plug editor for the physical guitar.
 
 use crossbeam_channel::Sender;
-use nice_plug::prelude::{Editor, Param};
+use nice_plug::prelude::Param;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 use vizia_plug::vizia::prelude::*;
 use vizia_plug::widgets::util::ModifiersExt;
 use vizia_plug::widgets::*;
-use vizia_plug::{ViziaState, ViziaTheming, create_vizia_editor};
+use vizia_plug::{ViziaEditor, ViziaState, ViziaTheming, create_vizia_editor};
 
 use crate::gui::fretboard_view::GuitarFretboardWidget;
 use crate::nice_plugin::{GuiGuitarEvent, PhysicsGuitarParams};
@@ -680,7 +680,7 @@ pub fn create_vizia_guitar_editor(
     preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
     editor_state: Arc<ViziaState>,
-) -> Option<Box<dyn Editor>> {
+) -> Option<ViziaEditor> {
     let lang = Language::from_index(language_atom.load(Ordering::Relaxed));
     let selected_name = preset_manager
         .read()

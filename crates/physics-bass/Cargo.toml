@@ -26,9 +26,7 @@ crossbeam-channel = "0.5"
 parking_lot = "0.12"
 vizia_plug = { path = "../vizia-plug" }
 hound = "3.5.1"
-log = "0.4"
-nice-log = "0.2.4"
-nice-plug = { version = "0.1.8", default-features = false, features = ["assert_process_allocs", "standalone", "vst3"] }
+nice-plug = { version = "0.4.2", default-features = false, features = ["assert_process_allocs", "standalone", "vst3", "editor"] }
 
 [dev-dependencies]
 nice-assert-no-alloc = { version = "1.0", features = ["warn_debug"] }

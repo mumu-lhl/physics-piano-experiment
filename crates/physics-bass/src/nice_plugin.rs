@@ -276,16 +276,17 @@ impl Plugin for PhysicsBass {
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
     type SysExMessage = ();
     type BackgroundTask = ();
+    type Editor = vizia_plug::ViziaEditor;
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
     }
 
-    fn initialize(
+    fn activate(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
-        _context: &mut impl InitContext<Self>,
+        _context: &mut impl ActivateContext<Self>,
     ) -> bool {
         sanitize_floating_point_environment();
         self.sample_rate = buffer_config.sample_rate as f64;
@@ -407,14 +408,16 @@ impl Plugin for PhysicsBass {
                     break;
                 }
                 match event {
-                    NoteEvent::NoteOn { note, velocity, .. } => {
+                    NoteEvent::NoteOn { key, velocity, .. } => {
+                        let note = key.number().unwrap_or(0);
                         let n = note as usize;
                         if n < 128 {
                             self.pending_gui_midi_note_offs[n] = 0;
                         }
                         self.engine.note_on(note, velocity as f64);
                     }
-                    NoteEvent::NoteOff { note, .. } => {
+                    NoteEvent::NoteOff { key, .. } => {
+                        let note = key.number().unwrap_or(0);
                         let n = note as usize;
                         if n < 128 {
                             self.pending_gui_midi_note_offs[n] = 0;
@@ -460,7 +463,7 @@ impl Plugin for PhysicsBass {
         ProcessStatus::Normal
     }
 
-    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Self::Editor> {
         create_vizia_bass_editor(
             self.params.clone(),
             self.active_frets_shared.clone(),

@@ -2,13 +2,13 @@
 
 use atomic_float::AtomicF32;
 use crossbeam_channel::Sender;
-use nice_plug::prelude::{Editor, Param};
+use nice_plug::prelude::Param;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU64};
 use vizia_plug::vizia::prelude::*;
 use vizia_plug::widgets::util::ModifiersExt;
 use vizia_plug::widgets::*;
-use vizia_plug::{ViziaState, ViziaTheming, create_vizia_editor};
+use vizia_plug::{ViziaEditor, ViziaState, ViziaTheming, create_vizia_editor};
 
 use crate::engine::EngineEvent;
 use crate::gui::keyboard::PianoKeyboardWidget;
@@ -545,7 +545,7 @@ pub fn create_vizia_piano_editor(
     preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
     editor_state: Arc<ViziaState>,
-) -> Option<Box<dyn Editor>> {
+) -> Option<ViziaEditor> {
     let lang = Language::from_index(language_atom.load(std::sync::atomic::Ordering::Relaxed));
     let selected_name = preset_manager
         .read()

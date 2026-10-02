@@ -186,16 +186,17 @@ impl Plugin for PhysicsDrum {
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
     type SysExMessage = ();
     type BackgroundTask = ();
+    type Editor = vizia_plug::ViziaEditor;
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
     }
 
-    fn initialize(
+    fn activate(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
-        _context: &mut impl InitContext<Self>,
+        _context: &mut impl ActivateContext<Self>,
     ) -> bool {
         sanitize_floating_point_environment();
         self.engine = DrumEngine::new(buffer_config.sample_rate as f64);
@@ -247,11 +248,15 @@ impl Plugin for PhysicsDrum {
                     break;
                 }
                 match event {
-                    NoteEvent::NoteOn { note, velocity, .. } => {
+                    NoteEvent::NoteOn { key, velocity, .. } => {
+                        let note = key.number().unwrap_or(0);
                         self.engine.trigger(note, velocity as f64);
                     }
-                    NoteEvent::NoteOff { note, .. } => self.engine.release(note),
-                    NoteEvent::MidiCC { cc: 4, value, .. } => {
+                    NoteEvent::NoteOff { key, .. } => {
+                        let note = key.number().unwrap_or(0);
+                        self.engine.release(note);
+                    }
+                    NoteEvent::MidiCC { cc, value, .. } if cc == 4 => {
                         // General-MIDI foot controller drives the continuous
                         // hi-hat opening without waiting for the next hit.
                         self.hihat_cc_override = Some(value as f64);
@@ -307,7 +312,7 @@ impl Plugin for PhysicsDrum {
         ProcessStatus::Normal
     }
 
-    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Self::Editor> {
         create_vizia_drum_editor(
             self.params.clone(),
             self.voice_energies_shared.clone(),

@@ -10,7 +10,7 @@ description = "Shared Vizia UI and drawing support for physical-modeling instrum
 name = "physics_ui"
 
 [dependencies]
-nice-plug = { version = "0.1.8", default-features = false }
+nice-plug = { version = "0.4.2", default-features = false }
 parking_lot = "0.12"
 physics-presets = { path = "../physics-presets" }
 vizia_plug = { path = "../vizia-plug" }

@@ -354,16 +354,17 @@ impl Plugin for PhysicsGuitar {
 
     type SysExMessage = ();
     type BackgroundTask = ();
+    type Editor = vizia_plug::ViziaEditor;
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
     }
 
-    fn initialize(
+    fn activate(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
-        _context: &mut impl InitContext<Self>,
+        _context: &mut impl ActivateContext<Self>,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate;
         let mode_val = self.params.mode.value();
@@ -557,18 +558,20 @@ impl Plugin for PhysicsGuitar {
                 match event {
                     NoteEvent::NoteOn {
                         channel,
-                        note,
+                        key,
                         velocity,
                         ..
                     } => {
+                        let note = key.number().unwrap_or(0);
                         let n = note as usize;
                         if n < 128 {
                             self.pending_gui_midi_note_offs[n] = 0;
                         }
-                        self.engine.note_on(channel, note, velocity as f64);
+                        self.engine.note_on(channel.number().unwrap_or(0), note, velocity as f64);
                     }
-                    NoteEvent::NoteOff { channel, note, .. } => {
-                        self.engine.note_off(channel, note);
+                    NoteEvent::NoteOff { channel, key, .. } => {
+                        let note = key.number().unwrap_or(0);
+                        self.engine.note_off(channel.number().unwrap_or(0), note);
                     }
                     NoteEvent::MidiPitchBend { channel, value, .. } => {
                         // nice-plug normalizes value to [0.0, 1.0], where 0.5 is center (0 bend)
@@ -615,7 +618,7 @@ impl Plugin for PhysicsGuitar {
         ProcessStatus::Normal
     }
 
-    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Self::Editor> {
         create_vizia_guitar_editor(
             self.params.clone(),
             self.active_frets_shared.clone(),

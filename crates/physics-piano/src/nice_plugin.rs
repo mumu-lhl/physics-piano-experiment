@@ -310,16 +310,17 @@ impl Plugin for PhysicsPiano {
 
     type SysExMessage = ();
     type BackgroundTask = ();
+    type Editor = vizia_plug::ViziaEditor;
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
     }
 
-    fn initialize(
+    fn activate(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
-        _context: &mut impl InitContext<Self>,
+        _context: &mut impl ActivateContext<Self>,
     ) -> bool {
         self.engine = PianoEngine::new(buffer_config.sample_rate as f64, 35, true);
         let max_samples = buffer_config.max_buffer_size as usize;
@@ -389,11 +390,12 @@ impl Plugin for PhysicsPiano {
         while let Some(event) = context.next_event() {
             match event {
                 NoteEvent::NoteOn {
-                    note,
+                    key,
                     velocity,
                     timing,
                     ..
                 } => {
+                    let Some(note) = key.number() else { continue };
                     let key_idx = (note as i32 - 21) as usize;
                     if key_idx < 88 {
                         let velocities = self.key_velocities.try_write();
@@ -407,7 +409,8 @@ impl Plugin for PhysicsPiano {
                         velocity: velocity as f64,
                     });
                 }
-                NoteEvent::NoteOff { note, timing, .. } => {
+                NoteEvent::NoteOff { key, timing, .. } => {
+                    let Some(note) = key.number() else { continue };
                     self.events_scratch.push(EngineEvent::NoteOff {
                         time: timing as usize,
                         key: note,
@@ -628,7 +631,7 @@ impl Plugin for PhysicsPiano {
         ProcessStatus::Normal
     }
 
-    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Self::Editor> {
         create_vizia_piano_editor(
             self.params.clone(),
             self.peak_l.clone(),

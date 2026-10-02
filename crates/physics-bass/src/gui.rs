@@ -9,7 +9,7 @@ mod fretboard_view;
 
 use crate::nice_plugin::{GuiBassEvent, PhysicsBassParams};
 use fretboard_view::BassFretboardWidget;
-use nice_plug::prelude::{Editor, Param};
+use nice_plug::prelude::Param;
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
     CancelParamGestureEvent, Language, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 use vizia_plug::vizia::prelude::*;
 use vizia_plug::widgets::util::ModifiersExt;
 use vizia_plug::widgets::{ParamButton, ParamButtonExt, RawParamEvent};
-use vizia_plug::{ViziaTheming, create_vizia_editor};
+use vizia_plug::{ViziaEditor, ViziaTheming, create_vizia_editor};
 
 pub const EDITOR_WIDTH: u32 = 1120;
 pub const EDITOR_HEIGHT: u32 = 650;
@@ -523,7 +523,7 @@ pub fn create_vizia_bass_editor(
     language_atom: Arc<AtomicU8>,
     preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
-) -> Option<Box<dyn Editor>> {
+) -> Option<ViziaEditor> {
     let language_initial = Language::from_index(language_atom.load(Ordering::Relaxed));
     let selected_id = "bass_finger_punch".to_string();
     let selected_name = preset_manager

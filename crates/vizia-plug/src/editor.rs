@@ -3,7 +3,11 @@
 use crossbeam::atomic::AtomicCell;
 use nice_plug_core::context::gui::GuiContext;
 use nice_plug_core::debug::*;
-use nice_plug_core::editor::{Editor, Modifiers, ParentWindowHandle, ResizeHint, VirtualKeyCode};
+use nice_plug_core::editor::dpi::NativeSize;
+use nice_plug_core::editor::{
+    Editor, EditorHandle, HostMethods, Modifiers, ParentWindowHandle, ResizeHint, SizeConstraints,
+    SpawnedEditor, VirtualKeyCode,
+};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,44 +18,47 @@ use crate::widgets::RawParamEvent;
 use crate::widgets::param_registry::ParamRegistry;
 use crate::{ViziaState, ViziaTheming, widgets};
 
+/// Adapter to convert nice-plug-core 0.4 ParentWindowHandle into raw-window-handle 0.5 HasRawWindowHandle for vizia_baseview.
+pub(crate) struct Rwh05Parent(ParentWindowHandle);
+
+unsafe impl raw_window_handle_05::HasRawWindowHandle for Rwh05Parent {
+    fn raw_window_handle(&self) -> raw_window_handle_05::RawWindowHandle {
+        match self.0 {
+            ParentWindowHandle::XlibWindow(window) => {
+                let mut handle = raw_window_handle_05::XlibWindowHandle::empty();
+                handle.window = window;
+                raw_window_handle_05::RawWindowHandle::Xlib(handle)
+            }
+            ParentWindowHandle::XcbWindow(window) => {
+                let mut handle = raw_window_handle_05::XcbWindowHandle::empty();
+                handle.window = window.get();
+                raw_window_handle_05::RawWindowHandle::Xcb(handle)
+            }
+            ParentWindowHandle::AppKitNsView(ns_view) => {
+                let mut handle = raw_window_handle_05::AppKitWindowHandle::empty();
+                handle.ns_view = ns_view.as_ptr();
+                raw_window_handle_05::RawWindowHandle::AppKit(handle)
+            }
+            ParentWindowHandle::Win32Hwnd(hwnd) => {
+                let mut handle = raw_window_handle_05::Win32WindowHandle::empty();
+                handle.hwnd = hwnd.get() as *mut std::ffi::c_void;
+                raw_window_handle_05::RawWindowHandle::Win32(handle)
+            }
+        }
+    }
+}
+
 /// A key-down event queued by the host-thread
 /// `Editor::on_virtual_key_from_host` callback, waiting for the next
 /// `on_idle` tick to dispatch on the GUI thread.
-///
-/// Split between character input (goes through `TextEvent::InsertText`)
-/// and non-printable control keys (goes through `WindowEvent::KeyDown`)
-/// so the GUI-thread drain stays trivially correct without having to
-/// re-guess a key's semantics: the classification is made on the host
-/// thread from the host's virtual key code.
 pub(crate) enum KeyInject {
-    /// A printable character (derived from a virtual key that maps 1:1
-    /// to a printable character: Space, Numpad0..Numpad9, the numpad
-    /// operator keys, Equals). Dispatched as `TextEvent::InsertText`.
     Char(char),
-    /// A non-printable key (Backspace, Enter, Tab, Escape, arrows,
-    /// Home/End, Delete, F-keys, etc.). Dispatched as
-    /// `WindowEvent::KeyDown(code, Some(key))` so the target view's
-    /// own key handling (e.g. textbox's `WindowEvent::KeyDown`
-    /// match arm) runs.
     ControlKey(Code, Key),
 }
 
-/// State shared between [`ViziaEditor`] (invoked from the host UI
-/// thread) and the vizia `on_idle` callback (invoked on the GUI thread).
-///
-/// The `Editor::on_virtual_key_from_host` callback runs on the host
-/// thread and cannot reach into the live vizia `Context`. Instead, it
-/// consults `text_focused` (kept in sync from `on_idle`) to decide
-/// whether to claim the key, and pushes a [`KeyInject`] into `pending`.
-/// The next `on_idle` tick drains the queue and dispatches each entry
-/// to the currently focused entity.
 pub(crate) struct KeyInjectState {
-    /// `true` while the vizia focused view reports element name `"textbox"`.
-    /// Updated on every `on_idle` tick.
-    text_focused: AtomicBool,
-    /// Keys the host delivered via the virtual-key hook that still need
-    /// to be dispatched into the focused view on the next idle tick.
-    pending: Mutex<VecDeque<KeyInject>>,
+    pub(crate) text_focused: AtomicBool,
+    pub(crate) pending: Mutex<VecDeque<KeyInject>>,
 }
 
 impl KeyInjectState {
@@ -63,208 +70,210 @@ impl KeyInjectState {
     }
 }
 
+#[derive(Clone)]
+pub struct ViziaWindow {
+    pub(crate) inner: Arc<Mutex<Option<WindowHandle>>>,
+    #[allow(clippy::type_complexity)]
+    pub(crate) open_parented_fn: Arc<Mutex<Option<Box<dyn FnOnce(&Rwh05Parent) -> WindowHandle + Send>>>>,
+    pub(crate) open_blocking_fn: Arc<Mutex<Option<Box<dyn FnOnce() + Send>>>>,
+}
+
+unsafe impl Send for ViziaWindow {}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ViziaEditorError {
+    #[error("Editor window failed to open")]
+    OpenFailed,
+}
+
 /// An [`Editor`] implementation that calls a vizia draw loop.
-pub(crate) struct ViziaEditor {
+pub struct ViziaEditor {
     pub(crate) vizia_state: Arc<ViziaState>,
-    /// The user's app function.
-    pub(crate) app: Arc<dyn Fn(&mut Context, Arc<dyn GuiContext>) + 'static + Send + Sync>,
-    /// What level of theming to apply. See [`ViziaEditorTheming`].
+    pub(crate) app: Arc<dyn Fn(&mut Context, GuiContext) + 'static + Send + Sync>,
     pub(crate) theming: ViziaTheming,
-
-    /// The scaling factor reported by the host, if any. On macOS this will never be set and we
-    /// should use the system scaling factor instead.
     pub(crate) scaling_factor: AtomicCell<Option<f32>>,
-
-    /// Whether to emit a parameters changed event during the next idle callback. This is set in the
-    /// `parameter_values_changed()` implementation and it can be used by widgets to explicitly
-    /// check for new parameter values. This is useful when the parameter value is (indirectly) used
-    /// to compute a property in an event handler. Like when positioning an element based on the
-    /// display value's width.
     pub(crate) emit_parameters_changed_event: Arc<AtomicBool>,
-
-    /// Shared registry of `SyncSignal<f32>`s tracking each parameter's live value. Widgets
-    /// subscribe via `cx.data::<ParamRegistry>()`; the editor calls `flush_all()` from the
-    /// `parameter_value_changed` / `parameter_values_changed` hooks so the reactive graph picks
-    /// up value changes that nice-plug reports.
     pub(crate) param_registry: ParamRegistry,
-
-    /// Shared state bridging the host-thread
-    /// `on_virtual_key_from_host` callback with the GUI-thread
-    /// `on_idle` callback. See [`KeyInjectState`].
     pub(crate) key_inject: Arc<KeyInjectState>,
 }
 
 impl Editor for ViziaEditor {
+    type Handle = ViziaEditorHandle;
+
     fn spawn(
         &self,
-        parent: ParentWindowHandle,
-        context: Arc<dyn GuiContext>,
-    ) -> Box<dyn std::any::Any + Send> {
+        parent: Option<ParentWindowHandle>,
+        wait_for_parent: bool,
+        fallback_scale_factor: Option<f64>,
+        gui_context: GuiContext,
+        _host: Option<HostMethods>,
+    ) -> Result<SpawnedEditor<Self::Handle>, Box<dyn std::error::Error>> {
         let app = self.app.clone();
         let vizia_state = self.vizia_state.clone();
         let theming = self.theming;
         let param_registry = self.param_registry.clone();
-        let param_registry_for_build = param_registry.clone();
+        let emit_parameters_changed_event = self.emit_parameters_changed_event.clone();
+        let key_inject = self.key_inject.clone();
 
-        // Prevent stale runtime-bound signals from previous editor instances from being reused.
         param_registry.clear_signals();
 
         let (unscaled_width, unscaled_height) = vizia_state.inner_logical_size();
-        let system_scaling_factor = self.scaling_factor.load();
+        let system_scaling_factor = self
+            .scaling_factor
+            .load()
+            .map(|s| s as f64)
+            .or(fallback_scale_factor);
         let user_scale_factor = vizia_state.user_scale_factor();
 
-        let mut application = Application::new(move |cx| {
-            // Set some default styles to match the iced integration
-            //if theming >= ViziaTheming::Custom {
-            // NOTE: `Context::set_default_font` was removed upstream as a deprecated API
-            // (vizia commit ff943a0b, "Context: remove deprecated APIs and clarify docs").
-            // The default font is now controlled through stylesheets — `theme.css` below
-            // can set `* { font-family: ...; }` if a specific font is required.
-            if let Err(err) = cx.add_stylesheet(include_style!("src/assets/theme.css")) {
-                nice_error!("Failed to load stylesheet: {err:?}");
-                panic!();
-            }
+        let make_application = {
+            let app = app.clone();
+            let vizia_state = vizia_state.clone();
+            let param_registry = param_registry.clone();
+            let emit_parameters_changed_event = emit_parameters_changed_event.clone();
+            let key_inject = key_inject.clone();
+            let gui_context = gui_context.clone();
 
-            // There doesn't seem to be any way to bundle styles with a widget, so we'll always
-            // include the style sheet for our custom widgets at context creation
-            widgets::register_theme(cx);
-            //}
+            move || {
+                let vizia_state_for_idle = vizia_state.clone();
+                let mut application = Application::new(move |cx| {
+                    if let Err(err) = cx.add_stylesheet(include_style!("src/assets/theme.css")) {
+                        nice_error!("Failed to load stylesheet: {err:?}");
+                        panic!();
+                    }
+                    widgets::register_theme(cx);
+                    param_registry.clone().build(cx);
+                    widgets::ParamModel {
+                        context: gui_context.clone(),
+                    }
+                    .build(cx);
 
-            // Install the parameter signal registry so widgets can find it via
-            // `cx.data::<ParamRegistry>()`. `ParamRegistry` is a cheap handle (Arc internally),
-            // so the editor keeps a clone for flushing on parameter changes.
-            param_registry_for_build.clone().build(cx);
+                    let current_inner_window_size =
+                        EventContext::new(cx).cache.get_bounds(Entity::root());
+                    widgets::WindowModel {
+                        context: gui_context.clone(),
+                        vizia_state: vizia_state.clone(),
+                        last_inner_window_size: AtomicCell::new((
+                            current_inner_window_size.width() as u32,
+                            current_inner_window_size.height() as u32,
+                        )),
+                    }
+                    .build(cx);
 
-            // Any widget can change the parameters by emitting `ParamEvent` events. This model will
-            // handle them automatically.
-            widgets::ParamModel {
-                context: context.clone(),
-            }
-            .build(cx);
+                    app(cx, gui_context.clone());
+                })
+                .with_scale_policy(
+                    system_scaling_factor
+                        .map(WindowScalePolicy::ScaleFactor)
+                        .unwrap_or(WindowScalePolicy::SystemScaleFactor),
+                )
+                .inner_size((unscaled_width, unscaled_height))
+                .user_scale_factor(user_scale_factor)
+                .on_idle({
+                    let emit_parameters_changed_event = emit_parameters_changed_event.clone();
+                    let key_inject = key_inject.clone();
+                    let vizia_state = vizia_state_for_idle.clone();
+                    let applied_user_scale = Arc::new(AtomicCell::new(user_scale_factor));
+                    move |cx| {
+                        let requested_user_scale = vizia_state.user_scale_factor();
+                        let current_user_scale = applied_user_scale.load();
+                        if (requested_user_scale - current_user_scale).abs() > f64::EPSILON {
+                            cx.emit(WindowEvent::SetUserScale(requested_user_scale));
+                            applied_user_scale.store(requested_user_scale);
+                        }
 
-            // And we'll link `WindowEvent::ResizeWindow` and `WindowEvent::SetScale` events to our
-            // `ViziaState`. We'll notify the host when any of these change.
-            let current_inner_window_size = EventContext::new(cx).cache.get_bounds(Entity::root());
-            widgets::WindowModel {
-                context: context.clone(),
-                vizia_state: vizia_state.clone(),
-                last_inner_window_size: AtomicCell::new((
-                    current_inner_window_size.width() as u32,
-                    current_inner_window_size.height() as u32,
-                )),
-            }
-            .build(cx);
+                        if emit_parameters_changed_event
+                            .compare_exchange(true, false, Ordering::AcqRel, Ordering::Relaxed)
+                            .is_ok()
+                        {
+                            cx.emit_custom(
+                                Event::new(RawParamEvent::ParametersChanged)
+                                    .propagate(Propagation::Subtree),
+                            );
+                        }
 
-            app(cx, context.clone())
-        })
-        .with_scale_policy(
-            system_scaling_factor
-                .map(|factor| WindowScalePolicy::ScaleFactor(factor as f64))
-                .unwrap_or(WindowScalePolicy::SystemScaleFactor),
-        )
-        .inner_size((unscaled_width, unscaled_height))
-        .user_scale_factor(user_scale_factor)
-        .on_idle({
-            let emit_parameters_changed_event = self.emit_parameters_changed_event.clone();
-            let key_inject = self.key_inject.clone();
-            let vizia_state = self.vizia_state.clone();
-            let applied_user_scale = Arc::new(AtomicCell::new(user_scale_factor));
-            move |cx| {
-                let requested_user_scale = vizia_state.user_scale_factor();
-                let current_user_scale = applied_user_scale.load();
-                if (requested_user_scale - current_user_scale).abs() > f64::EPSILON {
-                    cx.emit(WindowEvent::SetUserScale(requested_user_scale));
-                    applied_user_scale.store(requested_user_scale);
-                }
+                        key_inject
+                            .text_focused
+                            .store(cx.focused_element() == Some("textbox"), Ordering::Release);
 
-                if emit_parameters_changed_event
-                    .compare_exchange(true, false, Ordering::AcqRel, Ordering::Relaxed)
-                    .is_ok()
-                {
-                    cx.emit_custom(
-                        Event::new(RawParamEvent::ParametersChanged)
-                            .propagate(Propagation::Subtree),
-                    );
-                }
-
-                // Keep `text_focused` in sync so the host-thread
-                // `on_virtual_key_from_host` callback can decide
-                // synchronously whether to claim a key. The element
-                // name `"textbox"` is set by
-                // `vizia::views::Textbox::element()`.
-                key_inject
-                    .text_focused
-                    .store(cx.focused_element() == Some("textbox"), Ordering::Release);
-
-                // Drain any keys queued by `on_virtual_key_from_host`
-                // and dispatch them to the focused view. Buffered
-                // inside a short-lived lock to keep the critical
-                // section bounded.
-                //
-                // `on_virtual_key_from_host` has already classified
-                // each item on the host thread using the VST3
-                // `key_code`, so the drain just mechanically
-                // dispatches each variant: chars via
-                // `TextEvent::InsertText`, control keys via
-                // `WindowEvent::KeyDown` so the focused view's own
-                // key handler (e.g. textbox's `KeyDown` match arm)
-                // runs.
-                let drained: Vec<KeyInject> = {
-                    let mut q = key_inject.pending.lock().unwrap_or_else(|e| e.into_inner());
-                    q.drain(..).collect()
-                };
-                if !drained.is_empty() {
-                    let mut ec = EventContext::new(cx);
-                    let target = ec.focused();
-                    for entry in drained {
-                        match entry {
-                            KeyInject::Char(c) => {
-                                ec.emit_to(target, TextEvent::InsertText(c.to_string()));
-                            }
-                            KeyInject::ControlKey(code, key) => {
-                                ec.emit_to(target, WindowEvent::KeyDown(code, Some(key)));
+                        let drained: Vec<KeyInject> = {
+                            let mut q =
+                                key_inject.pending.lock().unwrap_or_else(|e| e.into_inner());
+                            q.drain(..).collect()
+                        };
+                        if !drained.is_empty() {
+                            let mut ec = EventContext::new(cx);
+                            let target = ec.focused();
+                            for entry in drained {
+                                match entry {
+                                    KeyInject::Char(c) => {
+                                        ec.emit_to(target, TextEvent::InsertText(c.to_string()));
+                                    }
+                                    KeyInject::ControlKey(code, key) => {
+                                        ec.emit_to(target, WindowEvent::KeyDown(code, Some(key)));
+                                    }
+                                }
                             }
                         }
                     }
+                });
+
+                if theming == ViziaTheming::None {
+                    application = application.ignore_default_theme();
                 }
+
+                application
             }
-        });
+        };
 
-        // This way the plugin can decide to use none of the built in theming
-        if theming == ViziaTheming::None {
-            application = application.ignore_default_theme();
-        }
-
-        let window = application.open_parented(&parent);
+        let vizia_window = if let Some(parent) = parent {
+            let application = make_application();
+            let handle = application.open_parented(&Rwh05Parent(parent));
+            ViziaWindow {
+                inner: Arc::new(Mutex::new(Some(handle))),
+                open_parented_fn: Arc::new(Mutex::new(None)),
+                open_blocking_fn: Arc::new(Mutex::new(None)),
+            }
+        } else if wait_for_parent {
+            let open_fn = Box::new(move |parent: &Rwh05Parent| {
+                let application = make_application();
+                application.open_parented(parent)
+            });
+            ViziaWindow {
+                inner: Arc::new(Mutex::new(None)),
+                open_parented_fn: Arc::new(Mutex::new(Some(open_fn))),
+                open_blocking_fn: Arc::new(Mutex::new(None)),
+            }
+        } else {
+            let standalone_fn = Box::new(move || {
+                let application = make_application();
+                let _ = application.run();
+            });
+            ViziaWindow {
+                inner: Arc::new(Mutex::new(None)),
+                open_parented_fn: Arc::new(Mutex::new(None)),
+                open_blocking_fn: Arc::new(Mutex::new(Some(standalone_fn))),
+            }
+        };
 
         self.vizia_state.open.store(true, Ordering::Release);
-        Box::new(ViziaEditorHandle {
+
+        let handle = ViziaEditorHandle {
             vizia_state: self.vizia_state.clone(),
-            window,
-            param_registry,
+            window: vizia_window.clone(),
+            param_registry: self.param_registry.clone(),
+            emit_parameters_changed_event: self.emit_parameters_changed_event.clone(),
+            key_inject: self.key_inject.clone(),
+        };
+
+        Ok(SpawnedEditor {
+            handle,
+            window: vizia_window,
         })
     }
 
-    fn size(&self) -> (u32, u32) {
-        // This includes the user scale factor if set, but not any HiDPI scaling
-        self.vizia_state.scaled_logical_size()
-    }
-
-    fn set_size(&self, width: u32, height: u32) -> bool {
-        let (base_width, base_height) = self.vizia_state.inner_logical_size();
-        if width == 0 || height == 0 || base_width == 0 || base_height == 0 {
-            return false;
-        }
-
-        // Keep the complete UI visible when a host sends dimensions with a slightly
-        // different ratio. Resize hints ask hosts to preserve the original ratio.
-        let scale = (width as f64 / base_width as f64).min(height as f64 / base_height as f64);
-        if !scale.is_finite() || scale <= 0.0 {
-            return false;
-        }
-
-        self.vizia_state.set_user_scale_factor(scale);
-        true
+    fn size(&self) -> NativeSize<u32> {
+        let (width, height) = self.vizia_state.scaled_logical_size();
+        NativeSize::new(width, height)
     }
 
     fn resize_hint(&self) -> ResizeHint {
@@ -276,43 +285,90 @@ impl Editor for ViziaEditor {
             preserve_aspect_ratio: true,
             aspect_ratio_width: width.max(1),
             aspect_ratio_height: height.max(1),
+            size_constraints: SizeConstraints::default(),
         }
     }
+}
 
-    fn set_scale_factor(&self, factor: f32) -> bool {
-        // If the editor is currently open then the host must not change the current HiDPI scale as
-        // we don't have a way to handle that. Ableton Live does this.
-        if self.vizia_state.is_open() {
-            return false;
+pub struct ViziaEditorHandle {
+    pub(crate) vizia_state: Arc<ViziaState>,
+    pub(crate) window: ViziaWindow,
+    pub(crate) param_registry: ParamRegistry,
+    pub(crate) emit_parameters_changed_event: Arc<AtomicBool>,
+    pub(crate) key_inject: Arc<KeyInjectState>,
+}
+
+unsafe impl Send for ViziaEditorHandle {}
+
+impl EditorHandle for ViziaEditorHandle {
+    type Window = ViziaWindow;
+    type Error = ViziaEditorError;
+
+    fn run_until_closed(window: Self::Window) -> Result<(), Self::Error> {
+        let op = window.open_blocking_fn.lock().unwrap().take();
+        if let Some(f) = op {
+            f();
+        }
+        Ok(())
+    }
+
+    fn set_parent(
+        &self,
+        parent: ParentWindowHandle,
+        window: &Self::Window,
+    ) -> Result<(), Self::Error> {
+        let op = window.open_parented_fn.lock().unwrap().take();
+        if let Some(f) = op {
+            let handle = f(&Rwh05Parent(parent));
+            *window.inner.lock().unwrap() = Some(handle);
+        }
+        Ok(())
+    }
+
+    fn show(&self, _window: &Self::Window) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn hide(&self, _window: &Self::Window) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn set_size(
+        &self,
+        new_size: NativeSize<u32>,
+        _window: &Self::Window,
+    ) -> Result<(), Self::Error> {
+        let (base_width, base_height) = self.vizia_state.inner_logical_size();
+        if new_size.width == 0 || new_size.height == 0 || base_width == 0 || base_height == 0 {
+            return Ok(());
         }
 
-        // We're making things a bit more complicated by having both a system scale factor, which is
-        // used for HiDPI and also known to the host, and a user scale factor that the user can use
-        // to arbitrarily resize the GUI
-        self.scaling_factor.store(Some(factor));
-        true
+        let scale = (new_size.width as f64 / base_width as f64)
+            .min(new_size.height as f64 / base_height as f64);
+        if scale.is_finite() && scale > 0.0 {
+            self.vizia_state.set_user_scale_factor(scale);
+        }
+        Ok(())
     }
 
-    fn param_value_changed(&self, _id: &str, _normalized_value: f32) {
-        // Push the new value into the registry's signals — observers bound via `Binding::new`
-        // wake up and rebuild. Also flag a `ParametersChanged` idle event for any widgets that
-        // still rely on the older (pre-signal) notification path.
-        self.param_registry.flush_all();
-        self.emit_parameters_changed_event
-            .store(true, Ordering::Relaxed);
+    fn adjust_size(
+        &self,
+        new_size: NativeSize<u32>,
+        _window: &Self::Window,
+    ) -> Option<NativeSize<u32>> {
+        let (base_width, base_height) = self.vizia_state.inner_logical_size();
+        if base_width == 0 || base_height == 0 {
+            return Some(new_size);
+        }
+        let scale = (new_size.width as f64 / base_width as f64)
+            .min(new_size.height as f64 / base_height as f64);
+        Some(NativeSize::new(
+            (base_width as f64 * scale).round().max(1.0) as u32,
+            (base_height as f64 * scale).round().max(1.0) as u32,
+        ))
     }
 
-    fn param_modulation_changed(&self, _id: &str, _modulation_offset: f32) {
-        self.param_registry.flush_all();
-        self.emit_parameters_changed_event
-            .store(true, Ordering::Relaxed);
-    }
-
-    fn param_values_changed(&self) {
-        self.param_registry.flush_all();
-        self.emit_parameters_changed_event
-            .store(true, Ordering::Relaxed);
-    }
+    fn host_main_thread_callback(&self, _window: &Self::Window) {}
 
     fn on_virtual_key_from_host(
         &self,
@@ -320,38 +376,14 @@ impl Editor for ViziaEditor {
         is_down: bool,
         modifiers: Modifiers,
     ) -> bool {
-        // Called from the host's UI thread (e.g. REAPER dispatching
-        // `IPlugView::onKeyDown` / `onKeyUp`). Claim the key only when
-        // a textbox is currently focused; otherwise the host's
-        // accelerator (e.g. space -> transport) should run normally.
         if !self.key_inject.text_focused.load(Ordering::Acquire) {
             return false;
         }
 
-        // Modifier-held combinations (Cmd+A, Cmd+Left, Shift+Arrow,
-        // Option+Backspace, etc.) are claimed by the host or handled by
-        // AppKit's `keyDown:` + `doCommandBySelector:` path where
-        // vizia's textbox reads modifier state for line/word movement.
-        // Dispatching through our injection queue here would double-fire
-        // and lose modifier context. Return `false` so the host keeps
-        // the key and AppKit's normal path runs.
         if !modifiers.is_empty() {
             return false;
         }
 
-        // Classify the virtual key. The host hands us virtual keys that
-        // split into two groups vizia consumes differently:
-        //
-        // - Keys that represent a printable character (Space, numpad
-        //   digits/operators, `=`) go in as `TextEvent::InsertText`.
-        // - Named control keys (Backspace, Enter, arrows, F-keys,
-        //   etc.) go in as `WindowEvent::KeyDown(code, Some(key))` so
-        //   the focused view's own key handler (textbox's `KeyDown`
-        //   match arm for Backspace / Enter / arrows) runs.
-        //
-        // Keys we don't enumerate here (media / volume keys, Select,
-        // Print, modifier-only presses, Super) fall through to
-        // `return false` so the host's own binding runs.
         let inject = match key_code {
             VirtualKeyCode::Space => Some(KeyInject::Char(' ')),
             VirtualKeyCode::Numpad0 => Some(KeyInject::Char('0')),
@@ -418,11 +450,6 @@ impl Editor for ViziaEditor {
             return false;
         };
 
-        // Vizia's text-input model is press-driven: TextEvent::InsertText
-        // and the textbox's KeyDown handlers run on the press only. Push
-        // the queued event on key-down; on key-up, just claim the event
-        // so the host doesn't pick the release up as a separate
-        // accelerator (BillyDM's reasoning on nice-plug#9).
         if is_down {
             self.key_inject
                 .pending
@@ -432,24 +459,26 @@ impl Editor for ViziaEditor {
         }
         true
     }
-}
 
-/// The window handle used for [`ViziaEditor`].
-struct ViziaEditorHandle {
-    vizia_state: Arc<ViziaState>,
-    window: WindowHandle,
-    param_registry: ParamRegistry,
-}
+    fn param_value_changed(&self, _id: &str, _normalized_value: f32) {
+        self.param_registry.flush_all();
+        self.emit_parameters_changed_event
+            .store(true, Ordering::Relaxed);
+    }
 
-/// The window handle enum stored within 'WindowHandle' contains raw pointers. Is there a way around
-/// having this requirement?
-unsafe impl Send for ViziaEditorHandle {}
+    fn param_modulation_changed(&self, _id: &str, _modulation_offset: f32) {
+        self.param_registry.flush_all();
+        self.emit_parameters_changed_event
+            .store(true, Ordering::Relaxed);
+    }
+}
 
 impl Drop for ViziaEditorHandle {
     fn drop(&mut self) {
         self.vizia_state.open.store(false, Ordering::Release);
-        // XXX: This should automatically happen when the handle gets dropped, but apparently not
-        self.window.close();
+        if let Some(mut handle) = self.window.inner.lock().unwrap().take() {
+            handle.close();
+        }
         self.param_registry.clear_signals();
     }
 }

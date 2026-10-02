@@ -5,7 +5,6 @@
 
 use crossbeam::atomic::AtomicCell;
 use nice_plug_core::context::gui::GuiContext;
-use nice_plug_core::editor::Editor;
 use nice_plug_core::params::persist::PersistentField;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -41,23 +40,22 @@ use widgets::param_registry::ParamRegistry;
 /// also need to register those using the functions in
 /// [`vizia_plug::vizia_assets`][crate::vizia_assets].
 ///
-/// See [VIZIA](https://github.com/vizia/vizia)'s repository for examples on how to use this.
+pub use editor::ViziaEditor;
+
+/// Create an [`Editor`] instance using a [`vizia`][::vizia] GUI.
 pub fn create_vizia_editor<F>(
     vizia_state: Arc<ViziaState>,
     theming: ViziaTheming,
     app: F,
-) -> Option<Box<dyn Editor>>
+) -> Option<ViziaEditor>
 where
-    F: Fn(&mut Context, Arc<dyn GuiContext>) + 'static + Send + Sync,
+    F: Fn(&mut Context, GuiContext) + 'static + Send + Sync,
 {
-    Some(Box::new(editor::ViziaEditor {
+    Some(editor::ViziaEditor {
         vizia_state,
         app: Arc::new(app),
         theming,
 
-        // TODO: We can't get the size of the window when baseview does its own scaling, so if the
-        //       host does not set a scale factor on Windows or Linux we should just use a factor of
-        //       1. That may make the GUI tiny but it also prevents it from getting cut off.
         #[cfg(target_os = "macos")]
         scaling_factor: AtomicCell::new(None),
         #[cfg(not(target_os = "macos"))]
@@ -66,7 +64,7 @@ where
         emit_parameters_changed_event: Arc::new(AtomicBool::new(false)),
         param_registry: ParamRegistry::new(),
         key_inject: editor::KeyInjectState::new(),
-    }))
+    })
 }
 
 /// Controls what level of theming to apply to the editor.

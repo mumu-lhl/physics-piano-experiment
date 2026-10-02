@@ -2,9 +2,6 @@ use nice_plug::wrapper::standalone::nice_export_standalone_with_args;
 use physics_drum::nice_plugin::PhysicsDrum;
 
 fn main() {
-    // nice-plug enables trace logging for debug builds; keep standalone output at info.
-    let _ = nice_log::LoggerBuilder::new(log::LevelFilter::Info).build_global();
-
     let mut args: Vec<String> = std::env::args().collect();
     #[cfg(target_os = "linux")]
     {
