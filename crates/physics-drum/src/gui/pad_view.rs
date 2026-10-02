@@ -171,6 +171,7 @@ impl DrumPadWidget {
             held_mouse_note: None,
         }
         .build(cx, |_| {})
+        .focusable(true)
     }
 
     fn pad_at(&self, bounds: &BoundingBox, x: f32, y: f32) -> Option<(Pad, f32)> {
@@ -205,6 +206,7 @@ impl View for DrumPadWidget {
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
         event.map(|window_event, meta| match window_event {
             WindowEvent::MouseDown(MouseButton::Left) => {
+                cx.focus();
                 let bounds = cx.bounds();
                 if let Some((pad, norm_dist)) = self.pad_at(&bounds, cx.mouse().cursor_x, cx.mouse().cursor_y) {
                     // Radial sweet-spot velocity: center = 1.0 (accent strike), edge = 0.35 (ghost note/rim tap)

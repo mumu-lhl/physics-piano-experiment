@@ -567,6 +567,7 @@ pub fn create_vizia_drum_editor(
 
                 DrumPadWidget::new(cx, voice_energies, gui_tx, language_atom, pad_mask.clone())
                     .class("instrument-view")
+                    .focusable(true)
                     .width(Stretch(1.0))
                     .height(Pixels(350.0))
                     .overflow(Overflow::Hidden);

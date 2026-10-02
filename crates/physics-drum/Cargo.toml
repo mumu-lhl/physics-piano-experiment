@@ -18,6 +18,11 @@ path = "src/bin/cli.rs"
 name = "physics-drum-standalone"
 path = "src/bin/standalone.rs"
 
+[[bin]]
+name = "audit_voices"
+path = "src/bin/audit_voices.rs"
+
+
 [dependencies]
 physics-dsp = { path = "../physics-dsp" }
 physics-ui = { path = "../physics-ui" }

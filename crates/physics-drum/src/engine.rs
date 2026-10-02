@@ -155,7 +155,7 @@ impl DrumEngine {
             }
             44 => {
                 self.hats.choke(0.0);
-                self.hats.trigger(velocity * 0.72, 0.0);
+                self.hats.trigger(velocity * 0.92, 0.02);
             }
             46 => self.hats.trigger(velocity, self.hi_hat_open),
             49 => self.crash.trigger(velocity, 1.0),
@@ -184,25 +184,25 @@ impl DrumEngine {
         let hats = self.hats.step();
         let crash = self.crash.step();
         let ride = self.ride.step();
-        let left = (kick * 0.90
-            + snare * 0.88
+        let left = (kick * 0.88
+            + snare * 0.92
             + tom1 * 0.75
             + tom2 * 0.72
             + tom3 * 0.70
-            + hats * 0.45
-            + crash * 0.50
-            + ride * 0.46)
-            * 0.72
+            + hats * 0.72
+            + crash * 0.68
+            + ride * 0.68)
+            * 0.68
             * self.master_gain;
-        let right = (kick * 0.90
-            + snare * 0.85
+        let right = (kick * 0.88
+            + snare * 0.88
             + tom1 * 0.70
             + tom2 * 0.72
             + tom3 * 0.78
-            + hats * 0.40
-            + crash * 0.46
-            + ride * 0.50)
-            * 0.72
+            + hats * 0.66
+            + crash * 0.64
+            + ride * 0.72)
+            * 0.68
             * self.master_gain;
         (soft_limit(left), soft_limit(right))
     }
