@@ -226,11 +226,18 @@ impl DoubleHeadVoice {
         } else {
             5.2 * velocity.powf(1.2)
         };
-        self.exciter.trigger(
+        let phi_01 = self.top.modes[0].strike_shape;
+        let q_top_01 = (self.u_plus_q + self.u_minus_q) * (1.0 / SQRT_2);
+        let mut x_surf = q_top_01 * phi_01;
+        for mode in &self.top.modes[1..] {
+            x_surf += mode.q * mode.strike_shape;
+        }
+        self.exciter.trigger_at(
             strike_vel,
             mallet_mass,
             mallet_stiff + 2.0e6 * velocity,
             1.5,
+            x_surf,
         );
         self.active = true;
         self.tail_gain = 1.0;
@@ -523,11 +530,18 @@ impl SnareVoice {
         self.top.geometry_nonlinearity = 0.0;
         self.bottom.geometry_nonlinearity = 0.0;
         let strike_vel = 5.2 * velocity.powf(1.2);
-        self.exciter.trigger(
+        let phi_01 = self.top.modes[0].strike_shape;
+        let q_top_01 = (self.u_plus_q + self.u_minus_q) * (1.0 / SQRT_2);
+        let mut x_surf = q_top_01 * phi_01;
+        for mode in &self.top.modes[1..] {
+            x_surf += mode.q * mode.strike_shape;
+        }
+        self.exciter.trigger_at(
             strike_vel,
             0.022,
             1.2e7 + 2.5e6 * velocity,
             1.5,
+            x_surf,
         );
         self.active = true;
     }
@@ -884,10 +898,19 @@ impl CymbalVoice {
         self.update_decay();
         let velocity = velocity.clamp(0.001, 1.0);
 
+        let mut x_surf = 0.0;
         if !self.active {
             for mode in self.modes.iter_mut() {
                 mode.q = 0.0;
                 mode.v = 0.0;
+            }
+        } else {
+            // Wood stick tip contact damping on an already vibrating bronze plate:
+            // The physical contact momentarily absorbs plate energy upon re-strike.
+            for mode in self.modes.iter_mut() {
+                mode.q *= 0.88;
+                mode.v *= 0.88;
+                x_surf += mode.q * mode.strike_gain;
             }
         }
 
@@ -901,7 +924,7 @@ impl CymbalVoice {
             CymbalKind::Ride => (0.018, 2.2e7),
             CymbalKind::HiHat => (0.016, 1.8e7),
         };
-        self.exciter.trigger(strike_vel, mass, stiffness, 1.5);
+        self.exciter.trigger_at(strike_vel, mass, stiffness, 1.5, x_surf);
         self.active = true;
     }
 

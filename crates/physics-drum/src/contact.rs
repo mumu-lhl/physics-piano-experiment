@@ -9,6 +9,7 @@ pub struct HuntCrossleyExciter {
     pub exponent: f64,
     pub dissipation: f64,
     pub is_contacting: bool,
+    pub has_penetrated: bool,
     pub max_force: f64,
     pub sub_steps: usize,
 }
@@ -23,6 +24,7 @@ impl Default for HuntCrossleyExciter {
             exponent: 1.5,
             dissipation: 0.04,
             is_contacting: false,
+            has_penetrated: false,
             max_force: 10_000.0,
             sub_steps: 4,
         }
@@ -31,12 +33,30 @@ impl Default for HuntCrossleyExciter {
 
 impl HuntCrossleyExciter {
     pub fn trigger(&mut self, velocity: f64, mass: f64, stiffness: f64, exponent: f64) {
-        self.mallet_displacement = 0.0;
+        self.trigger_at(velocity, mass, stiffness, exponent, 0.0);
+    }
+
+    /// Triggers contact starting from the current surface displacement.
+    ///
+    /// Setting `mallet_displacement = surface_displacement` ensures zero artificial
+    /// penetration shock when striking a vibrating plate or membrane, while
+    /// `has_penetrated` ensures contact is not prematurely terminated before
+    /// compressive engagement occurs.
+    pub fn trigger_at(
+        &mut self,
+        velocity: f64,
+        mass: f64,
+        stiffness: f64,
+        exponent: f64,
+        surface_displacement: f64,
+    ) {
+        self.mallet_displacement = surface_displacement;
         self.mallet_velocity = velocity.clamp(0.01, 15.0);
         self.effective_mass = mass.max(1e-5);
         self.stiffness = stiffness.max(1.0);
         self.exponent = exponent.clamp(1.2, 2.5);
         self.is_contacting = true;
+        self.has_penetrated = false;
     }
 
     /// Symplectic 4x sub-stepped contact step.
@@ -58,6 +78,7 @@ impl HuntCrossleyExciter {
             let penetration = self.mallet_displacement - surface_displacement;
             let relative_velocity = self.mallet_velocity - surface_velocity;
             let force = if penetration > 0.0 {
+                self.has_penetrated = true;
                 let elastic = self.stiffness * penetration.powf(self.exponent);
                 let dissipative = self.dissipation * elastic * relative_velocity;
                 (elastic + dissipative).max(0.0).min(self.max_force)
@@ -69,7 +90,7 @@ impl HuntCrossleyExciter {
             self.mallet_velocity -= (force / self.effective_mass) * dt_sub;
             self.mallet_displacement += self.mallet_velocity * dt_sub;
 
-            if penetration <= 0.0 && self.mallet_velocity <= surface_velocity {
+            if self.has_penetrated && penetration <= 0.0 && self.mallet_velocity <= surface_velocity {
                 self.is_contacting = false;
             }
             force_sum += force;
