@@ -235,8 +235,8 @@ impl AcousticGuitarBody {
             wood_high: WoodDiffusionBank::new(sample_rate),
             dispersion1: AllpassDispersion::new(11, 0.35),
             dispersion2: AllpassDispersion::new(23, 0.30),
-            air_damping_l: BiquadFilter::lowpass(sample_rate, 5500.0, 0.7071),
-            air_damping_r: BiquadFilter::lowpass(sample_rate, 5500.0, 0.7071),
+            air_damping_l: BiquadFilter::lowpass(sample_rate, 5500.0, std::f64::consts::FRAC_1_SQRT_2),
+            air_damping_r: BiquadFilter::lowpass(sample_rate, 5500.0, std::f64::consts::FRAC_1_SQRT_2),
             resonance_gain: 1.0,
         }
     }

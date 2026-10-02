@@ -19,7 +19,7 @@ use physics_ui::{
     parameter_slider, preset_choices, preset_display_name, preset_panel, redraw_custom_view,
     set_param, setup_vizia_fonts, translate,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone)]
 struct DiscreteSelections {
@@ -89,6 +89,11 @@ struct GuitarUiState {
     can_redo: Signal<bool>,
     suppress_undo: Arc<AtomicU32>,
     discrete: DiscreteSelections,
+    gui_tx: Sender<GuiGuitarEvent>,
+    held_qwerty_keys: HashMap<Code, u8>,
+    held_string_keys: HashMap<Code, u8>,
+    held_nav_keys: HashSet<Code>,
+    octave_offset: i8,
 }
 
 #[derive(Debug)]
@@ -485,8 +490,8 @@ impl Model for GuitarUiState {
             }
         });
 
-        event.map(|window: &WindowEvent, _| {
-            if let WindowEvent::KeyDown(code, _) = window {
+        event.map(|window: &WindowEvent, meta| match window {
+            WindowEvent::KeyDown(code, _) => {
                 if cx.modifiers().command() {
                     if *code == Code::KeyZ && !cx.modifiers().shift() {
                         cx.emit(GuitarUiEvent::Undo);
@@ -494,8 +499,103 @@ impl Model for GuitarUiState {
                     {
                         cx.emit(GuitarUiEvent::Redo);
                     }
+                    meta.consume();
+                    return;
+                }
+                // Octave shifts with Z / X when not holding Command
+                if *code == Code::KeyZ || *code == Code::KeyX {
+                    if self.held_nav_keys.insert(*code) {
+                        if *code == Code::KeyZ && self.octave_offset > -24 {
+                            self.octave_offset -= 12;
+                        }
+                        if *code == Code::KeyX && self.octave_offset < 24 {
+                            self.octave_offset += 12;
+                        }
+                    }
+                    meta.consume();
+                    return;
+                }
+                // Number keys 1..=6: pluck open guitar strings 1..=6 directly
+                const STRING_KEYS: &[(Code, u8)] = &[
+                    (Code::Digit1, 1),
+                    (Code::Digit2, 2),
+                    (Code::Digit3, 3),
+                    (Code::Digit4, 4),
+                    (Code::Digit5, 5),
+                    (Code::Digit6, 6),
+                ];
+                if let Some((_, string_idx)) = STRING_KEYS.iter().find(|(k, _)| k == code) {
+                    if !self.held_string_keys.contains_key(code) {
+                        self.held_string_keys.insert(*code, *string_idx);
+                        let _ = self.gui_tx.send(GuiGuitarEvent::NoteOn {
+                            string_index: *string_idx,
+                            fret: 0,
+                            velocity: 0.88,
+                        });
+                        meta.consume();
+                        return;
+                    }
+                }
+                // Chromatic note keys: A-K (C4 base, shifted by octave_offset)
+                const KEY_MAP: &[(Code, u8)] = &[
+                    (Code::KeyA, 60),
+                    (Code::KeyW, 61),
+                    (Code::KeyS, 62),
+                    (Code::KeyE, 63),
+                    (Code::KeyD, 64),
+                    (Code::KeyF, 65),
+                    (Code::KeyT, 66),
+                    (Code::KeyG, 67),
+                    (Code::KeyY, 68),
+                    (Code::KeyH, 69),
+                    (Code::KeyU, 70),
+                    (Code::KeyJ, 71),
+                    (Code::KeyK, 72),
+                    (Code::KeyO, 73),
+                    (Code::KeyL, 74),
+                    (Code::KeyP, 75),
+                    (Code::Semicolon, 76),
+                    (Code::Quote, 77),
+                ];
+                if let Some((_, base)) = KEY_MAP.iter().find(|(key, _)| key == code) {
+                    if !self.held_qwerty_keys.contains_key(code) {
+                        let midi = (*base as i16 + self.octave_offset as i16).clamp(40, 88) as u8;
+                        self.held_qwerty_keys.insert(*code, midi);
+                        let _ = self.gui_tx.send(GuiGuitarEvent::MidiNoteOn {
+                            note: midi,
+                            velocity: 0.85,
+                        });
+                        meta.consume();
+                    }
                 }
             }
+            WindowEvent::KeyUp(code, _) => {
+                self.held_nav_keys.remove(code);
+                if let Some(string_idx) = self.held_string_keys.remove(code) {
+                    let _ = self.gui_tx.send(GuiGuitarEvent::NoteOff {
+                        string_index: string_idx,
+                        fret: 0,
+                    });
+                    meta.consume();
+                }
+                if let Some(midi) = self.held_qwerty_keys.remove(code) {
+                    let _ = self.gui_tx.send(GuiGuitarEvent::MidiNoteOff { note: midi });
+                    meta.consume();
+                }
+            }
+            WindowEvent::FocusOut => {
+                self.held_nav_keys.clear();
+                for (_, string_idx) in self.held_string_keys.drain() {
+                    let _ = self.gui_tx.send(GuiGuitarEvent::NoteOff {
+                        string_index: string_idx,
+                        fret: 0,
+                    });
+                }
+                for (_, midi) in self.held_qwerty_keys.drain() {
+                    let _ = self.gui_tx.send(GuiGuitarEvent::MidiNoteOff { note: midi });
+                }
+            }
+            _ => {}
         });
     }
 }
@@ -564,6 +664,11 @@ pub fn create_vizia_guitar_editor(
             can_redo,
             suppress_undo,
             discrete: discrete.clone(),
+            gui_tx: gui_tx.clone(),
+            held_qwerty_keys: HashMap::new(),
+            held_string_keys: HashMap::new(),
+            held_nav_keys: HashSet::new(),
+            octave_offset: 0,
         }
         .build(cx);
         let display_timer = cx.add_timer(std::time::Duration::from_millis(33), None, |cx, _| {
@@ -825,7 +930,7 @@ pub fn create_vizia_guitar_editor(
                     translate(
                         lang,
                         "guitar.fretboard_hint",
-                        "Interactive 6-String Fretboard (Click or Drag frets to play):",
+                        "Interactive 6-String Fretboard (Click/Drag strums · Keys 1-6 open strings · A-L notes · Z/X octaves):",
                     ),
                 )
                 .class("hint-text");

@@ -109,7 +109,7 @@ impl Default for PhysicsBassParams {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GuiBassEvent {
     NoteOn {
         string_index: u8,
@@ -118,6 +118,13 @@ pub enum GuiBassEvent {
     },
     NoteOff {
         string_index: u8,
+    },
+    MidiNoteOn {
+        note: u8,
+        velocity: f64,
+    },
+    MidiNoteOff {
+        note: u8,
     },
 }
 
@@ -304,6 +311,12 @@ impl Plugin for PhysicsBass {
                     .note_on_string(string_index as usize, fret, velocity),
                 GuiBassEvent::NoteOff { string_index } => {
                     self.engine.note_off_string(string_index as usize)
+                }
+                GuiBassEvent::MidiNoteOn { note, velocity } => {
+                    self.engine.note_on(note, velocity);
+                }
+                GuiBassEvent::MidiNoteOff { note } => {
+                    self.engine.note_off(note);
                 }
             }
         }

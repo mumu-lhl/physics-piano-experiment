@@ -22,10 +22,19 @@ pub struct GuitarFretboardWidget {
     string_energies: Arc<[AtomicU32; 6]>,
     gui_tx: Sender<GuiGuitarEvent>,
     held_mouse_pos: Option<(u8, u8)>, // (string_index 1..=6, fret 0..=24)
+    active_strum_frets: [Option<u8>; 6],
 }
 
 impl Drop for GuitarFretboardWidget {
     fn drop(&mut self) {
+        for s in 0..6 {
+            if let Some(fret) = self.active_strum_frets[s].take() {
+                let _ = self.gui_tx.send(GuiGuitarEvent::NoteOff {
+                    string_index: (s + 1) as u8,
+                    fret,
+                });
+            }
+        }
         if let Some((string_index, fret)) = self.held_mouse_pos.take() {
             let _ = self
                 .gui_tx
@@ -46,12 +55,32 @@ impl GuitarFretboardWidget {
             string_energies,
             gui_tx,
             held_mouse_pos: None,
+            active_strum_frets: [None; 6],
         }
         .build(cx, |_| {})
     }
 
-    /// Convert mouse position (x, y) into (string_index [1..=6], fret [0..=24])
-    fn find_string_and_fret(&self, bounds: &BoundingBox, mx: f32, my: f32) -> Option<(u8, u8)> {
+    fn release_all(&mut self, cx: &mut EventContext) {
+        for s in 0..6 {
+            if let Some(fret) = self.active_strum_frets[s].take() {
+                let _ = self.gui_tx.send(GuiGuitarEvent::NoteOff {
+                    string_index: (s + 1) as u8,
+                    fret,
+                });
+            }
+        }
+        if let Some((prev_str, prev_fret)) = self.held_mouse_pos.take() {
+            let _ = self.gui_tx.send(GuiGuitarEvent::NoteOff {
+                string_index: prev_str,
+                fret: prev_fret,
+            });
+        }
+        cx.release();
+        cx.needs_redraw();
+    }
+
+    /// Convert mouse position (x, y) into (string_index [1..=6], fret [0..=24], velocity [0.35..=1.0])
+    fn find_string_fret_vel(&self, bounds: &BoundingBox, mx: f32, my: f32) -> Option<(u8, u8, f32)> {
         if mx < bounds.x || mx > bounds.x + bounds.w || my < bounds.y || my > bounds.y + bounds.h {
             return None;
         }
@@ -60,13 +89,20 @@ impl GuitarFretboardWidget {
         let rel_y = my - bounds.y;
 
         // Vertical string detection (String 1 = high E at top, String 6 = low E at bottom)
-        let string_h = bounds.h / 6.0;
-        let str_idx = ((rel_y / string_h) as u8).clamp(0, 5) + 1;
+        // Strings are drawn at: base_y = bounds.y + (s + 1.0) * string_y_step, where string_y_step = bounds.h / 7.0
+        // Midpoint transitions between strings are exactly: (s + 0.5) * string_y_step
+        let string_y_step = bounds.h / 7.0;
+        let str_idx = ((rel_y / string_y_step - 0.5).floor() as i32).clamp(0, 5) as u8 + 1;
+
+        // Dynamic touch velocity: clicking dead-on string wire is ~0.95 forte, off-center approaches ~0.45 piano
+        let string_center_y = string_y_step * str_idx as f32;
+        let norm_dist = (rel_y - string_center_y).abs() / (0.5 * string_y_step);
+        let velocity = (0.95 - 0.45 * norm_dist.clamp(0.0, 1.0)).clamp(0.35, 1.0);
 
         // Horizontal fret detection
         let nut_w = 14.0;
         if rel_x < nut_w {
-            return Some((str_idx, 0)); // Open string
+            return Some((str_idx, 0, velocity)); // Open string
         }
 
         let playable_w = bounds.w - nut_w - 10.0;
@@ -84,11 +120,11 @@ impl GuitarFretboardWidget {
             let fret_right = nut_w + x_curr;
 
             if rel_x >= fret_left && rel_x < fret_right {
-                return Some((str_idx, fret));
+                return Some((str_idx, fret, velocity));
             }
         }
 
-        Some((str_idx, 24))
+        Some((str_idx, 24, velocity))
     }
 }
 
@@ -103,17 +139,14 @@ impl View for GuitarFretboardWidget {
                 let bounds = cx.bounds();
                 let mx = cx.mouse().cursor_x;
                 let my = cx.mouse().cursor_y;
-                if let Some((str_idx, fret)) = self.find_string_and_fret(&bounds, mx, my) {
-                    if let Some((prev_str, prev_fret)) = self.held_mouse_pos {
-                        let _ = self.gui_tx.send(GuiGuitarEvent::NoteOff {
-                            string_index: prev_str,
-                            fret: prev_fret,
-                        });
-                    }
+                if let Some((str_idx, fret, velocity)) = self.find_string_fret_vel(&bounds, mx, my) {
+                    self.release_all(cx);
                     self.held_mouse_pos = Some((str_idx, fret));
+                    self.active_strum_frets[(str_idx - 1) as usize] = Some(fret);
                     let _ = self.gui_tx.send(GuiGuitarEvent::NoteOn {
                         string_index: str_idx,
                         fret,
+                        velocity,
                     });
                     cx.capture();
                     cx.needs_redraw();
@@ -123,35 +156,45 @@ impl View for GuitarFretboardWidget {
             WindowEvent::MouseMove(x, y) => {
                 if self.held_mouse_pos.is_some() {
                     let bounds = cx.bounds();
-                    if let Some((str_idx, fret)) = self.find_string_and_fret(&bounds, *x, *y) {
+                    if let Some((str_idx, fret, velocity)) = self.find_string_fret_vel(&bounds, *x, *y) {
                         if self.held_mouse_pos != Some((str_idx, fret)) {
                             if let Some((prev_str, prev_fret)) = self.held_mouse_pos {
-                                let _ = self.gui_tx.send(GuiGuitarEvent::NoteOff {
-                                    string_index: prev_str,
-                                    fret: prev_fret,
-                                });
+                                if prev_str == str_idx {
+                                    // Sliding along the same string: release old fret
+                                    let _ = self.gui_tx.send(GuiGuitarEvent::NoteOff {
+                                        string_index: prev_str,
+                                        fret: prev_fret,
+                                    });
+                                }
+                                // Crossing strings (strumming): allow previous string to ring naturally
                             }
                             self.held_mouse_pos = Some((str_idx, fret));
+                            self.active_strum_frets[(str_idx - 1) as usize] = Some(fret);
                             let _ = self.gui_tx.send(GuiGuitarEvent::NoteOn {
                                 string_index: str_idx,
                                 fret,
+                                velocity,
                             });
                             cx.needs_redraw();
                         }
+                    } else {
+                        // Mouse moved out of bounds while dragging: release to avoid stuck notes
+                        self.release_all(cx);
                     }
                     meta.consume();
                 }
             }
             WindowEvent::MouseUp(MouseButton::Left) => {
-                if let Some((prev_str, prev_fret)) = self.held_mouse_pos.take() {
-                    let _ = self.gui_tx.send(GuiGuitarEvent::NoteOff {
-                        string_index: prev_str,
-                        fret: prev_fret,
-                    });
-                    cx.release();
-                    cx.needs_redraw();
+                if self.held_mouse_pos.is_some() || self.active_strum_frets.iter().any(|f| f.is_some()) {
+                    self.release_all(cx);
                     meta.consume();
                 }
+            }
+            WindowEvent::FocusOut
+                if self.held_mouse_pos.is_some()
+                    || self.active_strum_frets.iter().any(|f| f.is_some()) =>
+            {
+                self.release_all(cx);
             }
             _ => {}
         });
@@ -236,7 +279,9 @@ impl View for GuitarFretboardWidget {
             let gauge = string_gauges[s];
 
             let mut active_fret = self.active_frets[s].load(Ordering::Relaxed);
-            if let Some((held_string, held_fret)) = self.held_mouse_pos {
+            if let Some(held_fret) = self.active_strum_frets[s] {
+                active_fret = held_fret;
+            } else if let Some((held_string, held_fret)) = self.held_mouse_pos {
                 if held_string == (s + 1) as u8 {
                     active_fret = held_fret;
                 }

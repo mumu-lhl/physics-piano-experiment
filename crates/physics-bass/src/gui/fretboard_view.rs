@@ -84,7 +84,7 @@ impl BassFretboardWidget {
         Some(FRETS)
     }
 
-    fn target_at(&self, bounds: &BoundingBox, mouse_x: f32, mouse_y: f32) -> Option<(usize, u8)> {
+    fn target_at(&self, bounds: &BoundingBox, mouse_x: f32, mouse_y: f32) -> Option<(usize, u8, f64)> {
         if mouse_x < bounds.x
             || mouse_x > bounds.x + bounds.w
             || mouse_y < bounds.y
@@ -98,14 +98,18 @@ impl BassFretboardWidget {
         if string == 0 && !self.params.five_string.value() {
             return None;
         }
-        self.fret_at_x(bounds, mouse_x).map(|fret| (string, fret))
+        let string_center_y = bounds.y + row_height * (string as f32 + 0.5);
+        let norm_dist = (mouse_y - string_center_y).abs() / (0.5 * row_height);
+        let velocity = (0.98 - 0.50 * norm_dist.clamp(0.0, 1.0)).clamp(0.35, 1.0) as f64;
+
+        self.fret_at_x(bounds, mouse_x).map(|fret| (string, fret, velocity))
     }
 
-    fn emit_note_on(&self, target: (usize, u8)) {
+    fn emit_note_on(&self, target: (usize, u8, f64)) {
         let _ = self.gui_tx.try_send(GuiBassEvent::NoteOn {
             string_index: target.0 as u8,
             fret: target.1,
-            velocity: 0.86,
+            velocity: target.2,
         });
     }
 
@@ -134,11 +138,11 @@ impl View for BassFretboardWidget {
             WindowEvent::MouseDown(MouseButton::Left) => {
                 let bounds = cx.bounds();
                 let target = self.target_at(&bounds, cx.mouse().cursor_x, cx.mouse().cursor_y);
-                if let Some(target) = target {
-                    if let Some(previous) = self.held.replace(target) {
+                if let Some((str_idx, fret, vel)) = target {
+                    if let Some(previous) = self.held.replace((str_idx, fret)) {
                         self.emit_note_off(previous);
                     }
-                    self.emit_note_on(target);
+                    self.emit_note_on((str_idx, fret, vel));
                     cx.capture();
                     cx.needs_redraw();
                     meta.consume();
@@ -146,12 +150,12 @@ impl View for BassFretboardWidget {
             }
             WindowEvent::MouseMove(x, y) if self.held.is_some() => {
                 let bounds = cx.bounds();
-                if let Some(target) = self.target_at(&bounds, *x, *y) {
-                    if self.held != Some(target) {
-                        if let Some(previous) = self.held.replace(target) {
+                if let Some((str_idx, fret, vel)) = self.target_at(&bounds, *x, *y) {
+                    if self.held != Some((str_idx, fret)) {
+                        if let Some(previous) = self.held.replace((str_idx, fret)) {
                             self.emit_note_off(previous);
                         }
-                        self.emit_note_on(target);
+                        self.emit_note_on((str_idx, fret, vel));
                         cx.needs_redraw();
                     }
                 } else {

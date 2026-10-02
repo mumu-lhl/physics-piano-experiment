@@ -183,10 +183,24 @@ impl Default for PhysicsGuitarParams {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GuiGuitarEvent {
-    NoteOn { string_index: u8, fret: u8 },
-    NoteOff { string_index: u8, fret: u8 },
+    NoteOn {
+        string_index: u8,
+        fret: u8,
+        velocity: f32,
+    },
+    NoteOff {
+        string_index: u8,
+        fret: u8,
+    },
+    MidiNoteOn {
+        note: u8,
+        velocity: f32,
+    },
+    MidiNoteOff {
+        note: u8,
+    },
 }
 
 pub struct PhysicsGuitar {
@@ -309,7 +323,11 @@ impl Plugin for PhysicsGuitar {
         // 1. Process GUI manual fret events from lock-free queue
         while let Ok(event) = self.gui_event_rx.try_recv() {
             match event {
-                GuiGuitarEvent::NoteOn { string_index, fret } => {
+                GuiGuitarEvent::NoteOn {
+                    string_index,
+                    fret,
+                    velocity,
+                } => {
                     if (1..=6).contains(&string_index) {
                         let s_i = (string_index - 1) as usize;
                         let open_note = self.engine.router.open_notes[s_i];
@@ -318,7 +336,7 @@ impl Plugin for PhysicsGuitar {
                         self.engine.strings[s_i].pluck(
                             &self.engine.exciter,
                             self.engine.pluck_pos_ratio,
-                            0.85,
+                            velocity as f64,
                         );
                         self.engine.active_notes_on_string[s_i] = Some(midi_note);
                     }
@@ -327,6 +345,12 @@ impl Plugin for PhysicsGuitar {
                     if (1..=6).contains(&string_index) {
                         self.engine.release_string(string_index);
                     }
+                }
+                GuiGuitarEvent::MidiNoteOn { note, velocity } => {
+                    self.engine.note_on(0, note, velocity as f64);
+                }
+                GuiGuitarEvent::MidiNoteOff { note } => {
+                    self.engine.note_off(0, note);
                 }
             }
         }
@@ -495,6 +519,7 @@ mod no_alloc_regression_tests {
             .send(GuiGuitarEvent::NoteOn {
                 string_index: 0,
                 fret: 0,
+                velocity: 0.85,
             })
             .unwrap();
         let violations_before = violation_count();
@@ -504,7 +529,8 @@ mod no_alloc_regression_tests {
                 plugin.gui_event_rx.try_recv(),
                 Ok(GuiGuitarEvent::NoteOn {
                     string_index: 0,
-                    fret: 0
+                    fret: 0,
+                    velocity: _,
                 })
             ));
         });

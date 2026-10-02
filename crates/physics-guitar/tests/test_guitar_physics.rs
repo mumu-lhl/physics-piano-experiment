@@ -477,3 +477,36 @@ fn note_on_does_not_allocate_after_engine_initialization() {
         "guitar note-on must not allocate on the audio thread"
     );
 }
+
+#[test]
+fn test_gui_dynamic_velocity_and_keyboard_event_routing() {
+    let mut engine = GuitarEngine::new(
+        44100.0,
+        GuitarStringSetType::Electric010,
+        GuitarInstrumentMode::Electric,
+    );
+    let exciter = PluckExciter::new(PluckStyle::Plectrum);
+
+    // 1. Dynamic velocity alters pluck amplitude and energy
+    let mut string_soft = engine.strings[0].clone();
+    let mut string_hard = engine.strings[0].clone();
+    string_soft.pluck(&exciter, 0.7, 0.35);
+    string_hard.pluck(&exciter, 0.7, 0.95);
+    assert!(
+        string_hard.total_energy() > string_soft.total_energy() * 2.0,
+        "Hard pluck (vel=0.95) must produce significantly more energy than soft pluck (vel=0.35)"
+    );
+
+    // 2. MidiNoteOn / MidiNoteOff routing
+    engine.note_on(0, 60, 0.85);
+    assert!(
+        engine.active_notes_on_string.contains(&Some(60)),
+        "MidiNoteOn for 60 must be routed to active note on fretboard"
+    );
+
+    engine.note_off(0, 60);
+    assert!(
+        !engine.active_notes_on_string.contains(&Some(60)),
+        "MidiNoteOff for 60 must release note"
+    );
+}

@@ -16,10 +16,11 @@ use physics_ui::{
     add_base_theme, discrete_selector, map_param_history_event, parameter_slider, preset_choices,
     preset_display_name, preset_panel, redraw_custom_view, set_param, setup_vizia_fonts, translate,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use vizia_plug::vizia::prelude::*;
+use vizia_plug::widgets::util::ModifiersExt;
 use vizia_plug::widgets::{ParamButton, ParamButtonExt, RawParamEvent};
 use vizia_plug::{ViziaTheming, create_vizia_editor};
 
@@ -110,6 +111,11 @@ struct BassUiState {
     can_redo: Signal<bool>,
     suppress_undo: Arc<AtomicU32>,
     discrete: DiscreteSelections,
+    gui_tx: crossbeam_channel::Sender<GuiBassEvent>,
+    held_qwerty_keys: HashMap<Code, u8>,
+    held_string_keys: HashMap<Code, u8>,
+    held_nav_keys: HashSet<Code>,
+    octave_offset: i8,
 }
 
 impl BassUiState {
@@ -386,6 +392,116 @@ impl Model for BassUiState {
                 }
             }
         });
+
+        event.map(|window: &WindowEvent, meta| match window {
+            WindowEvent::KeyDown(code, _) => {
+                if cx.modifiers().command() {
+                    if *code == Code::KeyZ && !cx.modifiers().shift() {
+                        cx.emit(BassUiEvent::Undo);
+                    } else if *code == Code::KeyY || (*code == Code::KeyZ && cx.modifiers().shift())
+                    {
+                        cx.emit(BassUiEvent::Redo);
+                    }
+                    meta.consume();
+                    return;
+                }
+                // Octave shifts with Z / X when not holding Command
+                if *code == Code::KeyZ || *code == Code::KeyX {
+                    if self.held_nav_keys.insert(*code) {
+                        if *code == Code::KeyZ && self.octave_offset > -36 {
+                            self.octave_offset -= 12;
+                        }
+                        if *code == Code::KeyX && self.octave_offset < 0 {
+                            self.octave_offset += 12;
+                        }
+                    }
+                    meta.consume();
+                    return;
+                }
+                // Number keys 1..=5: pluck bass open strings directly
+                // 1 -> G2 (str 4), 2 -> D2 (str 3), 3 -> A1 (str 2), 4 -> E1 (str 1), 5 -> B0 (str 0)
+                const BASS_STRING_KEYS: &[(Code, u8)] = &[
+                    (Code::Digit1, 4),
+                    (Code::Digit2, 3),
+                    (Code::Digit3, 2),
+                    (Code::Digit4, 1),
+                    (Code::Digit5, 0),
+                ];
+                if let Some((_, string_idx)) = BASS_STRING_KEYS.iter().find(|(k, _)| k == code) {
+                    if *string_idx == 0 && !self.params.five_string.value() {
+                        return;
+                    }
+                    if !self.held_string_keys.contains_key(code) {
+                        self.held_string_keys.insert(*code, *string_idx);
+                        let _ = self.gui_tx.try_send(GuiBassEvent::NoteOn {
+                            string_index: *string_idx,
+                            fret: 0,
+                            velocity: 0.90,
+                        });
+                        meta.consume();
+                        return;
+                    }
+                }
+                // Chromatic note keys: A-K (C4 base, shifted by octave_offset, default -24 for C2)
+                const KEY_MAP: &[(Code, u8)] = &[
+                    (Code::KeyA, 60),
+                    (Code::KeyW, 61),
+                    (Code::KeyS, 62),
+                    (Code::KeyE, 63),
+                    (Code::KeyD, 64),
+                    (Code::KeyF, 65),
+                    (Code::KeyT, 66),
+                    (Code::KeyG, 67),
+                    (Code::KeyY, 68),
+                    (Code::KeyH, 69),
+                    (Code::KeyU, 70),
+                    (Code::KeyJ, 71),
+                    (Code::KeyK, 72),
+                    (Code::KeyO, 73),
+                    (Code::KeyL, 74),
+                    (Code::KeyP, 75),
+                    (Code::Semicolon, 76),
+                    (Code::Quote, 77),
+                ];
+                if let Some((_, base)) = KEY_MAP.iter().find(|(key, _)| key == code) {
+                    if !self.held_qwerty_keys.contains_key(code) {
+                        let min_note = if self.params.five_string.value() { 23 } else { 28 };
+                        let midi = (*base as i16 + self.octave_offset as i16).clamp(min_note, 72) as u8;
+                        self.held_qwerty_keys.insert(*code, midi);
+                        let _ = self.gui_tx.try_send(GuiBassEvent::MidiNoteOn {
+                            note: midi,
+                            velocity: 0.88,
+                        });
+                        meta.consume();
+                    }
+                }
+            }
+            WindowEvent::KeyUp(code, _) => {
+                self.held_nav_keys.remove(code);
+                if let Some(string_idx) = self.held_string_keys.remove(code) {
+                    let _ = self.gui_tx.try_send(GuiBassEvent::NoteOff {
+                        string_index: string_idx,
+                    });
+                    meta.consume();
+                }
+                if let Some(midi) = self.held_qwerty_keys.remove(code) {
+                    let _ = self.gui_tx.try_send(GuiBassEvent::MidiNoteOff { note: midi });
+                    meta.consume();
+                }
+            }
+            WindowEvent::FocusOut => {
+                self.held_nav_keys.clear();
+                for (_, string_idx) in self.held_string_keys.drain() {
+                    let _ = self.gui_tx.try_send(GuiBassEvent::NoteOff {
+                        string_index: string_idx,
+                    });
+                }
+                for (_, midi) in self.held_qwerty_keys.drain() {
+                    let _ = self.gui_tx.try_send(GuiBassEvent::MidiNoteOff { note: midi });
+                }
+            }
+            _ => {}
+        });
     }
 }
 
@@ -441,6 +557,11 @@ pub fn create_vizia_bass_editor(
             can_redo: can_redo.clone(),
             suppress_undo: Arc::new(AtomicU32::new(0)),
             discrete: discrete.clone(),
+            gui_tx: gui_tx.clone(),
+            held_qwerty_keys: HashMap::new(),
+            held_string_keys: HashMap::new(),
+            held_nav_keys: HashSet::new(),
+            octave_offset: -24,
         }
         .build(cx);
 
@@ -594,7 +715,7 @@ pub fn create_vizia_bass_editor(
                 .height(Pixels(145.0))
                 .horizontal_gap(Pixels(8.0));
 
-                Label::new(cx, translate(lang, "bass.fretboard_hint", "Open notes + 24 frets · MIDI pitch bend remains available")).class("hint-text");
+                Label::new(cx, translate(lang, "bass.fretboard_hint", "Open notes + 24 frets · Keys 1-5 open strings · A-L notes · Z/X octaves")).class("hint-text");
                 BassFretboardWidget::new(
                     cx,
                     params,

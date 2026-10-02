@@ -226,3 +226,27 @@ fn note_release_reduces_late_electric_string_energy() {
         "note-off should damp the late tail: held={held:.3e}, released={released:.3e}"
     );
 }
+
+#[test]
+fn test_gui_dynamic_velocity_and_midi_routing() {
+    let mut engine = BassEngine::new(SAMPLE_RATE, BassMode::Electric, true);
+
+    // 1. Dynamic velocity alters pluck attack level
+    let mut engine_soft = BassEngine::new(SAMPLE_RATE, BassMode::Electric, true);
+    let mut engine_hard = BassEngine::new(SAMPLE_RATE, BassMode::Electric, true);
+    engine_soft.note_on_string(1, 0, 0.35);
+    engine_hard.note_on_string(1, 0, 0.98);
+
+    let energy_soft = engine_soft.strings[1].string.energy();
+    let energy_hard = engine_hard.strings[1].string.energy();
+    assert!(
+        energy_hard > energy_soft * 2.0,
+        "Higher velocity pluck must yield higher string energy (hard={energy_hard}, soft={energy_soft})"
+    );
+
+    // 2. Midi note routing
+    engine.note_on(28, 0.88); // E1 (String index 1, fret 0)
+    assert!(engine.strings[1].current_note.is_some());
+    engine.note_off(28);
+    assert!(engine.strings[1].string.is_releasing);
+}
