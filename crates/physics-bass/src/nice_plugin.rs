@@ -1,9 +1,11 @@
 //! nice-plug adapter for the allocation-free bass engine.
 
 use crate::{
-    BassEngine, BassMode, PluckStyle, gui::create_vizia_bass_editor,
+    BassEngine, BassMode, PluckStyle,
+    gui::{EDITOR_HEIGHT, EDITOR_WIDTH, create_vizia_bass_editor},
     sanitize_floating_point_environment,
 };
+use atomic_float::AtomicF32;
 use nice_plug::prelude::*;
 use physics_presets::{PresetManager, UndoManager, bass_factory_presets};
 use std::num::NonZeroU32;
@@ -50,7 +52,7 @@ pub struct PhysicsBassParams {
 impl Default for PhysicsBassParams {
     fn default() -> Self {
         Self {
-            editor_state: ViziaState::new(|| (1120, 650)),
+            editor_state: ViziaState::new(|| (EDITOR_WIDTH, EDITOR_HEIGHT)),
             mode: IntParam::new("Mode", 0, IntRange::Linear { min: 0, max: 1 }),
             pluck_style: IntParam::new("Pluck Style", 0, IntRange::Linear { min: 0, max: 5 }),
             five_string: BoolParam::new("Five String", false),
@@ -143,6 +145,11 @@ pub struct PhysicsBass {
     pub active_frets_shared: Arc<[AtomicU8; 5]>,
     pub string_energies_shared: Arc<[AtomicU32; 5]>,
     pub string_profiles_shared: Arc<[[AtomicI32; 32]; 5]>,
+    // Stereo output peak for the VU meter (same smoothing as piano)
+    pub peak_l: Arc<AtomicF32>,
+    pub peak_r: Arc<AtomicF32>,
+    // Mono output history for the spectrum analyzer
+    pub sample_history: Arc<parking_lot::RwLock<Vec<f32>>>,
     pub gui_event_tx: crossbeam_channel::Sender<GuiBassEvent>,
     gui_event_rx: crossbeam_channel::Receiver<GuiBassEvent>,
     pub language: Arc<AtomicU8>,
@@ -179,6 +186,12 @@ impl Default for PhysicsBass {
             string_profiles_shared: Arc::new(std::array::from_fn(|_| {
                 std::array::from_fn(|_| AtomicI32::new(0))
             })),
+            peak_l: Arc::new(AtomicF32::new(0.0)),
+            peak_r: Arc::new(AtomicF32::new(0.0)),
+            sample_history: Arc::new(parking_lot::RwLock::new(vec![
+                0.0;
+                physics_ui::SPECTRUM_HISTORY_LEN
+            ])),
             gui_event_tx,
             gui_event_rx,
             language: Arc::new(AtomicU8::new(language)),
@@ -402,6 +415,8 @@ impl Plugin for PhysicsBass {
 
         self.sync_parameters();
         let mut next_event = context.next_event();
+        let mut max_l = 0.0f32;
+        let mut max_r = 0.0f32;
         for (sample_index, channel_samples) in buffer.iter_samples().enumerate() {
             while let Some(event) = next_event {
                 if event.timing() > sample_index as u32 {
@@ -440,6 +455,34 @@ impl Plugin for PhysicsBass {
             if let Some(channel) = channels.next() {
                 *channel = right as f32;
             }
+            max_l = max_l.max((left as f32).abs());
+            max_r = max_r.max((right as f32).abs());
+        }
+
+        // Update peak meter smoothly (same 0.92/0.08 smoothing as piano)
+        let prev_l = self.peak_l.load(Ordering::Relaxed);
+        let prev_r = self.peak_r.load(Ordering::Relaxed);
+        self.peak_l
+            .store(prev_l * 0.92 + max_l * 0.08, Ordering::Relaxed);
+        self.peak_r
+            .store(prev_r * 0.92 + max_r * 0.08, Ordering::Relaxed);
+
+        // Append mono output to the spectrum history (skip on contention).
+        if let Some(mut hist) = self.sample_history.try_write() {
+            let slices = buffer.as_slice();
+            if slices.len() >= 2 {
+                let n = num_samples.min(slices[0].len()).min(slices[1].len());
+                if hist.len() + n > physics_ui::SPECTRUM_HISTORY_LEN {
+                    let excess = hist.len() + n - physics_ui::SPECTRUM_HISTORY_LEN;
+                    hist.drain(..excess);
+                }
+                hist.extend(
+                    slices[0][..n]
+                        .iter()
+                        .zip(slices[1][..n].iter())
+                        .map(|(l, r)| (l + r) * 0.5),
+                );
+            }
         }
 
         let mut sample_buf = [0.0f32; 32];
@@ -469,6 +512,10 @@ impl Plugin for PhysicsBass {
             self.active_frets_shared.clone(),
             self.string_energies_shared.clone(),
             self.string_profiles_shared.clone(),
+            self.peak_l.clone(),
+            self.peak_r.clone(),
+            self.sample_history.clone(),
+            self.sample_rate as f32,
             self.gui_event_tx.clone(),
             self.language.clone(),
             self.preset_manager.clone(),

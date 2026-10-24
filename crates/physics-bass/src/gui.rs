@@ -12,9 +12,12 @@ use fretboard_view::BassFretboardWidget;
 use nice_plug::prelude::Param;
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
-    CancelParamGestureEvent, Language, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
-    add_base_theme, discrete_selector, map_param_history_event, parameter_slider, preset_choices,
-    preset_display_name, preset_panel, redraw_custom_view, set_param, setup_vizia_fonts, translate,
+    CancelParamGestureEvent, Language, PresetBrowserAction, PresetBrowserItem,
+    PresetBrowserSignals, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
+    SpectrumAnalyzerWidget, StereoVuMeterWidget, add_base_theme, discrete_selector,
+    filter_browser_items, map_param_history_event, parameter_knob, preset_browser,
+    preset_browser_categories, preset_browser_items, preset_choices, preset_display_name,
+    preset_panel, redraw_custom_view, set_param, setup_vizia_fonts, translate,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -25,7 +28,7 @@ use vizia_plug::widgets::{ParamButton, ParamButtonExt, RawParamEvent, zoom_contr
 use vizia_plug::{ViziaEditor, ViziaTheming, create_vizia_editor};
 
 pub const EDITOR_WIDTH: u32 = 1120;
-pub const EDITOR_HEIGHT: u32 = 650;
+pub const EDITOR_HEIGHT: u32 = 720;
 
 #[derive(Clone)]
 struct DiscreteSelections {
@@ -106,6 +109,12 @@ struct BassUiState {
     selected_name: Signal<String>,
     selected_id: Signal<String>,
     preset_choices: Signal<Vec<(String, String)>>,
+    browser_open: Signal<bool>,
+    browser_search: Signal<String>,
+    browser_category: Signal<Option<String>>,
+    browser_favorites_only: Signal<bool>,
+    browser_categories: Signal<Vec<String>>,
+    browser_filtered: Signal<Vec<PresetBrowserItem>>,
     language: Signal<Language>,
     language_atom: Arc<AtomicU8>,
     name_input: Signal<String>,
@@ -126,6 +135,23 @@ impl BassUiState {
         let undo = self.undo.read();
         self.can_undo.set(undo.can_undo());
         self.can_redo.set(undo.can_redo());
+    }
+
+    /// Refresh the preset dropdown rows and the browser rows/categories
+    /// after any preset list or filter change.
+    fn refresh_preset_signals(&self) {
+        let manager = self.manager.read();
+        let lang = self.language.get();
+        self.preset_choices.set(preset_choices(&manager, lang));
+        let items = preset_browser_items(&manager, lang);
+        self.browser_categories
+            .set(preset_browser_categories(&items));
+        self.browser_filtered.set(filter_browser_items(
+            &items,
+            &self.browser_search.get(),
+            self.browser_category.get().as_deref(),
+            self.browser_favorites_only.get(),
+        ));
     }
 
     fn apply_history(&mut self, cx: &mut EventContext, redo: bool) {
@@ -162,6 +188,32 @@ impl Model for BassUiState {
             PresetPanelAction::Redo => cx.emit(BassUiEvent::Redo),
         });
 
+        event.map(|action: &PresetBrowserAction, _| match action {
+            PresetBrowserAction::Open => self.browser_open.set(true),
+            PresetBrowserAction::Close => self.browser_open.set(false),
+            PresetBrowserAction::SetSearch(text) => {
+                self.browser_search.set(text.clone());
+                self.refresh_preset_signals();
+            }
+            PresetBrowserAction::SetCategory(category) => {
+                self.browser_category.set(category.clone());
+                self.refresh_preset_signals();
+            }
+            PresetBrowserAction::ToggleFavoritesOnly => {
+                let next = !self.browser_favorites_only.get();
+                self.browser_favorites_only.set(next);
+                self.refresh_preset_signals();
+            }
+            PresetBrowserAction::ToggleFavorite(id) => {
+                let _ = self.manager.write().toggle_favorite(id);
+                self.refresh_preset_signals();
+            }
+            PresetBrowserAction::Select(id) => {
+                cx.emit(BassUiEvent::SelectPreset(id.clone()));
+                self.browser_open.set(false);
+            }
+        });
+
         event.map(|action: &BassUiEvent, _| match action {
             BassUiEvent::RefreshDisplay => {
                 self.discrete.mode.set(self.params.mode.value());
@@ -169,6 +221,8 @@ impl Model for BassUiState {
                     .pluck_style
                     .set(self.params.pluck_style.value());
                 redraw_custom_view(cx, "bass-fretboard-widget");
+                redraw_custom_view(cx, "stereo-vu-meter-widget");
+                redraw_custom_view(cx, "spectrum-analyzer-widget");
             }
             BassUiEvent::PreviousPreset | BassUiEvent::NextPreset => {
                 let next = matches!(action, BassUiEvent::NextPreset);
@@ -217,8 +271,7 @@ impl Model for BassUiState {
                     self.name_input.set(display_name);
                     self.is_user_preset
                         .set(self.manager.read().is_user_preset(id));
-                    self.preset_choices
-                        .set(preset_choices(&self.manager.read(), self.language.get()));
+                    self.refresh_preset_signals();
                     self.update_history_state();
                 }
             }
@@ -232,8 +285,7 @@ impl Model for BassUiState {
                     self.selected_name.set(display_name.clone());
                     self.name_input.set(display_name);
                 }
-                self.preset_choices
-                    .set(preset_choices(&self.manager.read(), language));
+                self.refresh_preset_signals();
                 redraw_custom_view(cx, "bass-fretboard-widget");
             }
             BassUiEvent::SetName(name) => self.name_input.set(name.clone()),
@@ -267,8 +319,7 @@ impl Model for BassUiState {
                     self.selected_name.set(name.clone());
                     self.name_input.set(name);
                     self.is_user_preset.set(true);
-                    self.preset_choices
-                        .set(preset_choices(&self.manager.read(), self.language.get()));
+                    self.refresh_preset_signals();
                 }
             }
             BassUiEvent::Rename => {
@@ -282,8 +333,7 @@ impl Model for BassUiState {
                             .unwrap_or(false)
                     {
                         self.selected_name.set(name);
-                        self.preset_choices
-                            .set(preset_choices(&self.manager.read(), self.language.get()));
+                        self.refresh_preset_signals();
                     }
                 }
             }
@@ -303,8 +353,7 @@ impl Model for BassUiState {
                     .delete_user_preset(&id)
                     .unwrap_or(false)
                 {
-                    self.preset_choices
-                        .set(preset_choices(&self.manager.read(), self.language.get()));
+                    self.refresh_preset_signals();
                     cx.emit(BassUiEvent::SelectPreset("bass_finger_punch".to_string()));
                 }
             }
@@ -519,6 +568,10 @@ pub fn create_vizia_bass_editor(
     active_frets: Arc<[std::sync::atomic::AtomicU8; 5]>,
     string_energies: Arc<[std::sync::atomic::AtomicU32; 5]>,
     string_profiles: Arc<[[AtomicI32; 32]; 5]>,
+    peak_l: Arc<atomic_float::AtomicF32>,
+    peak_r: Arc<atomic_float::AtomicF32>,
+    sample_history: Arc<parking_lot::RwLock<Vec<f32>>>,
+    sample_rate: f32,
     gui_tx: crossbeam_channel::Sender<GuiBassEvent>,
     language_atom: Arc<AtomicU8>,
     preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
@@ -543,6 +596,13 @@ pub fn create_vizia_bass_editor(
         let selected_id_signal = Signal::new(selected_id.clone());
         let preset_choices_signal =
             Signal::new(preset_choices(&preset_manager.read(), language_initial));
+        let browser_items_initial = preset_browser_items(&preset_manager.read(), language_initial);
+        let browser_open = Signal::new(false);
+        let browser_search = Signal::new(String::new());
+        let browser_category = Signal::new(None);
+        let browser_favorites_only = Signal::new(false);
+        let browser_categories = Signal::new(preset_browser_categories(&browser_items_initial));
+        let browser_filtered = Signal::new(browser_items_initial);
         let language = Signal::new(language_initial);
         let name_input = Signal::new(selected_name.clone());
         let is_user_preset = Signal::new(false);
@@ -560,6 +620,12 @@ pub fn create_vizia_bass_editor(
             selected_name: selected_name_signal.clone(),
             selected_id: selected_id_signal,
             preset_choices: preset_choices_signal.clone(),
+            browser_open: browser_open.clone(),
+            browser_search: browser_search.clone(),
+            browser_category: browser_category.clone(),
+            browser_favorites_only: browser_favorites_only.clone(),
+            browser_categories: browser_categories.clone(),
+            browser_filtered: browser_filtered.clone(),
             language: language.clone(),
             language_atom: language_atom.clone(),
             name_input: name_input.clone(),
@@ -590,6 +656,12 @@ pub fn create_vizia_bass_editor(
         let gui_tx_ui = gui_tx.clone();
         let selected_name_ui = selected_name_signal;
         let preset_choices_ui = preset_choices_signal;
+        let browser_open_ui = browser_open.clone();
+        let browser_search_ui = browser_search.clone();
+        let browser_category_ui = browser_category.clone();
+        let browser_favorites_only_ui = browser_favorites_only.clone();
+        let browser_categories_ui = browser_categories.clone();
+        let browser_filtered_ui = browser_filtered.clone();
         let name_input_ui = name_input;
         let is_user_preset_ui = is_user_preset;
         let can_undo_ui = can_undo;
@@ -597,6 +669,9 @@ pub fn create_vizia_bass_editor(
         let discrete_ui = discrete;
         let language_atom_ui = language_atom.clone();
         let zoom_state_ui = zoom_state.clone();
+        let peak_l_ui = peak_l.clone();
+        let peak_r_ui = peak_r.clone();
+        let sample_history_ui = sample_history.clone();
 
         Binding::new(cx, language_ui, move |cx| {
             let lang = language_ui.get();
@@ -608,7 +683,16 @@ pub fn create_vizia_bass_editor(
             let string_profiles = string_profiles_ui.clone();
             let gui_tx = gui_tx_ui.clone();
             let language_atom = language_atom_ui.clone();
+            let browser_open = browser_open_ui.clone();
+            let browser_search = browser_search_ui.clone();
+            let browser_category = browser_category_ui.clone();
+            let browser_favorites_only = browser_favorites_only_ui.clone();
+            let browser_categories = browser_categories_ui.clone();
+            let browser_filtered = browser_filtered_ui.clone();
             let zoom_state = zoom_state_ui.clone();
+            let peak_l = peak_l_ui.clone();
+            let peak_r = peak_r_ui.clone();
+            let sample_history = sample_history_ui.clone();
             VStack::new(cx, move |cx| {
                 HStack::new(cx, |cx| {
                     VStack::new(cx, |cx| {
@@ -643,7 +727,12 @@ pub fn create_vizia_bass_editor(
                         delete_width: 48.0,
                     },
                     move |cx| {
-                        Label::new(cx, translate(lang, "bass.audition", "Click or drag the fretboard below to audition")).class("status");
+                        // The audition hint already shows in the header
+                        // above; repeating it here pushed the zoom
+                        // control off the right edge of the bar.
+                        StereoVuMeterWidget::new(cx, peak_l.clone(), peak_r.clone())
+                            .width(Pixels(70.0))
+                            .height(Pixels(24.0));
                         zoom_control(
                             cx,
                             zoom_state.clone(),
@@ -696,27 +785,41 @@ pub fn create_vizia_bass_editor(
 
                     VStack::new(cx, |cx| {
                         Label::new(cx, translate(lang, "bass.string_pickup", "STRING / PICKUP")).class("rack-title");
-                        parameter_slider(
-                            cx,
-                            translate(lang, "bass.pluck_position", "Pluck position"),
-                            &params.pluck_position,
-                            108.0,
-                        );
-                        parameter_slider(
-                            cx,
-                            translate(lang, "bass.pickup_position", "Pickup position"),
-                            &params.pickup_position,
-                            108.0,
-                        );
-                        parameter_slider(cx, translate(lang, "bass.tone", "Tone"), &params.tone, 108.0);
+                        HStack::new(cx, |cx| {
+                            parameter_knob(
+                                cx,
+                                translate(lang, "bass.pluck_position", "Pluck position"),
+                                &params.pluck_position,
+                                120.0,
+                            );
+                            parameter_knob(
+                                cx,
+                                translate(lang, "bass.pickup_position", "Pickup position"),
+                                &params.pickup_position,
+                                120.0,
+                            );
+                        })
+                        .horizontal_gap(Pixels(8.0));
+                        HStack::new(cx, |cx| {
+                            parameter_knob(
+                                cx,
+                                translate(lang, "bass.tone", "Tone"),
+                                &params.tone,
+                                120.0,
+                            );
+                        })
+                        .horizontal_gap(Pixels(8.0));
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
 
                     VStack::new(cx, |cx| {
                         Label::new(cx, translate(lang, "bass.contact_body", "CONTACT / BODY")).class("rack-title");
-                        parameter_slider(cx, translate(lang, "bass.fret_buzz", "Fret buzz"), &params.fret_buzz, 108.0);
-                        parameter_slider(cx, translate(lang, "bass.body_mix", "Body mix"), &params.body_mix, 108.0);
+                        HStack::new(cx, |cx| {
+                            parameter_knob(cx, translate(lang, "bass.fret_buzz", "Fret buzz"), &params.fret_buzz, 120.0);
+                            parameter_knob(cx, translate(lang, "bass.body_mix", "Body mix"), &params.body_mix, 120.0);
+                        })
+                        .horizontal_gap(Pixels(8.0));
                         Label::new(cx, translate(lang, "bass.slap_note", "Slap uses the same bounded contact state as the FDTD string")).class("small-note");
                     })
                     .class("rack-box")
@@ -724,8 +827,11 @@ pub fn create_vizia_bass_editor(
 
                     VStack::new(cx, |cx| {
                         Label::new(cx, translate(lang, "bass.output", "AMP & OUTPUT")).class("rack-title");
-                        parameter_slider(cx, translate(lang, "bass.drive", "Drive"), &params.drive, 108.0);
-                        parameter_slider(cx, translate(lang, "bass.master_gain", "Master gain"), &params.master_gain, 108.0);
+                        HStack::new(cx, |cx| {
+                            parameter_knob(cx, translate(lang, "bass.drive", "Drive"), &params.drive, 120.0);
+                            parameter_knob(cx, translate(lang, "bass.master_gain", "Master gain"), &params.master_gain, 120.0);
+                        })
+                        .horizontal_gap(Pixels(8.0));
                         Label::new(cx, translate(lang, "bass.output_note", "Electric: tube/FET drive & pickup · Acoustic: cavity")).class("small-note");
                     })
                     .class("rack-box")
@@ -750,10 +856,31 @@ pub fn create_vizia_bass_editor(
                 .width(Stretch(1.0))
                 .height(Pixels(300.0))
                 .overflow(Overflow::Hidden);
+                HStack::new(cx, |cx| {
+                    Label::new(cx, translate(lang, "gui.spectrum", "Spectrum")).class("hint-text");
+                    SpectrumAnalyzerWidget::new(cx, sample_history.clone(), sample_rate)
+                        .width(Stretch(1.0))
+                        .height(Pixels(56.0));
+                })
+                .height(Pixels(56.0))
+                .horizontal_gap(Pixels(8.0));
             })
             .class("root")
             .width(Stretch(1.0))
             .height(Stretch(1.0));
+
+            preset_browser(
+                cx,
+                lang,
+                PresetBrowserSignals {
+                    open: browser_open,
+                    search: browser_search,
+                    category: browser_category,
+                    favorites_only: browser_favorites_only,
+                    categories: browser_categories,
+                    filtered: browser_filtered,
+                },
+            );
         });
     })
 }
