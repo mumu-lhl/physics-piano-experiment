@@ -44,6 +44,10 @@ msgctxt "shared.redo"
 msgid "Redo"
 msgstr "Redo"
 
+msgctxt "gui.zoom"
+msgid "Zoom"
+msgstr "Zoom"
+
 msgctxt "preset.name.steinway_concert_d"
 msgid "Steinway D Concert Grand"
 msgstr "Steinway D Concert Grand"

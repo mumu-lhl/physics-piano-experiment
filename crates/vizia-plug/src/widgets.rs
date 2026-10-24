@@ -22,11 +22,13 @@ pub mod param_registry;
 mod param_slider;
 mod peak_meter;
 pub mod util;
+mod zoom_control;
 
 pub use generic_ui::GenericUi;
 pub use param_button::{ParamButton, ParamButtonExt};
 pub use param_slider::{ParamSlider, ParamSliderExt, ParamSliderStyle};
 pub use peak_meter::PeakMeter;
+pub use zoom_control::{ZOOM_FACTORS, zoom_control};
 
 /// Register the default theme for the widgets exported by this module. This is automatically called
 /// for you when using [`create_vizia_editor()`][super::create_vizia_editor()].

@@ -154,3 +154,38 @@ resize-handle:hover {
   opacity: 0.8;
   transition: opacity 100ms;
 }
+
+/* Zoom (UI scale) selector shown in the preset bar. Colors match the dark
+   editor theme used by the physics instruments. */
+.zoom-control {
+  gap: 4px;
+}
+
+.zoom-label {
+  font-size: 11.0;
+  color: #dce0f0;
+  alignment: center;
+}
+
+.btn-zoom {
+  font-size: 11.0;
+  width: 44px;
+  color: #dce0f0;
+  background-color: #242735;
+  border-color: #3d4256;
+  border-width: 1px;
+  border-radius: 4px;
+  child-space: 1s;
+}
+
+.btn-zoom:hover {
+  background-color: #32364a;
+  border-color: #555b74;
+}
+
+.zoom-value {
+  font-size: 11.0;
+  color: #ffd778;
+  alignment: center;
+}
+

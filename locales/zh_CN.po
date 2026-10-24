@@ -44,6 +44,10 @@ msgctxt "shared.redo"
 msgid "Redo"
 msgstr "重做"
 
+msgctxt "gui.zoom"
+msgid "Zoom"
+msgstr "缩放"
+
 msgctxt "preset.name.steinway_concert_d"
 msgid "Steinway D Concert Grand"
 msgstr "施坦威 D-274 音乐会三角琴"
