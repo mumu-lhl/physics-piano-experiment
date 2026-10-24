@@ -556,6 +556,7 @@ pub fn create_vizia_piano_editor(
     let language_initial = lang;
     let initial_id = "steinway_concert_d".to_string();
 
+    let zoom_state = editor_state.clone();
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
         // Signals need to belong to this Vizia tree's reactive scope.
         let preset_name = Signal::new(selected_name.clone());
@@ -618,6 +619,7 @@ pub fn create_vizia_piano_editor(
         let is_user_preset_controls = is_user_preset_ui.clone();
         let can_undo_controls = can_undo_ui.clone();
         let can_redo_controls = can_redo_ui.clone();
+        let zoom_state_ui = zoom_state.clone();
 
         Binding::new(cx, language_ui, move |cx| {
             let lang = language_ui.get();
@@ -637,6 +639,7 @@ pub fn create_vizia_piano_editor(
             let is_user_preset = is_user_preset_controls.clone();
             let can_undo = can_undo_controls.clone();
             let can_redo = can_redo_controls.clone();
+            let zoom_state = zoom_state_ui.clone();
             VStack::new(cx, move |cx| {
                 preset_panel(
                     cx,
@@ -670,6 +673,11 @@ pub fn create_vizia_piano_editor(
                             StereoVuMeterWidget::new(cx, peak_l.clone(), peak_r.clone())
                                 .width(Pixels(70.0))
                                 .height(Pixels(24.0));
+                            zoom_control(
+                                cx,
+                                zoom_state.clone(),
+                                translate(lang, "gui.zoom", "Zoom"),
+                            );
                         })
                         .horizontal_gap(Pixels(8.0));
                     },

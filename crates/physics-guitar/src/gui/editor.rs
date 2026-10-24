@@ -687,6 +687,7 @@ pub fn create_vizia_guitar_editor(
         .get_preset("strat_clean_chime")
         .map(|preset| preset_display_name(preset, lang))
         .unwrap_or_else(|| "Strat Clean Chime".to_string());
+    let zoom_state = editor_state.clone();
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
         // Signals must be created while Vizia is building this editor so their
         // scope remains alive for the lifetime of the view tree.
@@ -756,6 +757,7 @@ pub fn create_vizia_guitar_editor(
         let can_undo_controls = can_undo_ui.clone();
         let can_redo_controls = can_redo_ui.clone();
         let discrete_controls = discrete.clone();
+        let zoom_state_ui = zoom_state.clone();
 
         Binding::new(cx, language_ui, move |cx| {
             let lang = language_ui.get();
@@ -772,6 +774,7 @@ pub fn create_vizia_guitar_editor(
             let can_undo = can_undo_controls.clone();
             let can_redo = can_redo_controls.clone();
             let discrete = discrete_controls.clone();
+            let zoom_state = zoom_state_ui.clone();
             VStack::new(cx, move |cx| {
                 let mode_options = vec![
                     (
@@ -875,7 +878,13 @@ pub fn create_vizia_guitar_editor(
                         overwrite_width: 68.0,
                         delete_width: 48.0,
                     },
-                    |_| {},
+                    move |cx| {
+                        zoom_control(
+                            cx,
+                            zoom_state.clone(),
+                            translate(lang, "gui.zoom", "Zoom"),
+                        );
+                    },
                 );
 
                 HStack::new(cx, |cx| {
