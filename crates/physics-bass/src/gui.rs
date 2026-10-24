@@ -791,12 +791,14 @@ pub fn create_vizia_bass_editor(
                                 translate(lang, "bass.pluck_position", "Pluck position"),
                                 &params.pluck_position,
                                 120.0,
+                                translate(lang, "bass.tooltip.pluck_position", "Where the string is plucked, from bridge to neck."),
                             );
                             parameter_knob(
                                 cx,
                                 translate(lang, "bass.pickup_position", "Pickup position"),
                                 &params.pickup_position,
                                 120.0,
+                                translate(lang, "bass.tooltip.pickup_position", "Pickup position along the string."),
                             );
                         })
                         .horizontal_gap(Pixels(8.0));
@@ -806,6 +808,7 @@ pub fn create_vizia_bass_editor(
                                 translate(lang, "bass.tone", "Tone"),
                                 &params.tone,
                                 120.0,
+                                translate(lang, "bass.tooltip.tone", "Tone control: darker to brighter."),
                             );
                         })
                         .horizontal_gap(Pixels(8.0));
@@ -816,8 +819,8 @@ pub fn create_vizia_bass_editor(
                     VStack::new(cx, |cx| {
                         Label::new(cx, translate(lang, "bass.contact_body", "CONTACT / BODY")).class("rack-title");
                         HStack::new(cx, |cx| {
-                            parameter_knob(cx, translate(lang, "bass.fret_buzz", "Fret buzz"), &params.fret_buzz, 120.0);
-                            parameter_knob(cx, translate(lang, "bass.body_mix", "Body mix"), &params.body_mix, 120.0);
+                            parameter_knob(cx, translate(lang, "bass.fret_buzz", "Fret buzz"), &params.fret_buzz, 120.0, translate(lang, "bass.tooltip.fret_buzz", "Fret buzz amount."));
+                            parameter_knob(cx, translate(lang, "bass.body_mix", "Body mix"), &params.body_mix, 120.0, translate(lang, "bass.tooltip.body_mix", "Body resonance mix: how much of the instrument body sound is blended in."));
                         })
                         .horizontal_gap(Pixels(8.0));
                         Label::new(cx, translate(lang, "bass.slap_note", "Slap uses the same bounded contact state as the FDTD string")).class("small-note");
@@ -828,8 +831,8 @@ pub fn create_vizia_bass_editor(
                     VStack::new(cx, |cx| {
                         Label::new(cx, translate(lang, "bass.output", "AMP & OUTPUT")).class("rack-title");
                         HStack::new(cx, |cx| {
-                            parameter_knob(cx, translate(lang, "bass.drive", "Drive"), &params.drive, 120.0);
-                            parameter_knob(cx, translate(lang, "bass.master_gain", "Master gain"), &params.master_gain, 120.0);
+                            parameter_knob(cx, translate(lang, "bass.drive", "Drive"), &params.drive, 120.0, translate(lang, "bass.tooltip.drive", "Drive amount: tube/FET saturation."));
+                            parameter_knob(cx, translate(lang, "bass.master_gain", "Master gain"), &params.master_gain, 120.0, translate(lang, "bass.tooltip.master_gain", "Overall output volume."));
                         })
                         .horizontal_gap(Pixels(8.0));
                         Label::new(cx, translate(lang, "bass.output_note", "Electric: tube/FET drive & pickup · Acoustic: cavity")).class("small-note");
