@@ -46,8 +46,13 @@ enum DiscreteParam {
 pub const EDITOR_WIDTH: u32 = 1080;
 pub const EDITOR_HEIGHT: u32 = 635;
 
-fn knob<P: Param + 'static>(cx: &mut Context, label: &'static str, param: &P) {
-    parameter_knob(cx, label, param, 84.0);
+fn knob<P: Param + 'static>(
+    cx: &mut Context,
+    label: &'static str,
+    param: &P,
+    tooltip: &'static str,
+) {
+    parameter_knob(cx, label, param, 84.0, tooltip);
 }
 
 fn discrete_selector(
@@ -1026,16 +1031,19 @@ pub fn create_vizia_guitar_editor(
                                 cx,
                                 translate(lang, "guitar.tone_label", "Tone:"),
                                 &params.tone,
+                                translate(lang, "guitar.tooltip.tone", "Passive tone control: darker to brighter."),
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.palm_mute_label", "PalmMute:"),
                                 &params.palm_mute,
+                                translate(lang, "guitar.tooltip.palm_mute", "Palm muting depth on picked notes."),
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.pluck_pos_label", "PluckPos:"),
                                 &params.pluck_pos,
+                                translate(lang, "guitar.tooltip.pluck_pos", "Where the string is plucked, from bridge to neck."),
                             );
                         })
                         .horizontal_gap(Pixels(6.0));
@@ -1044,16 +1052,19 @@ pub fn create_vizia_guitar_editor(
                                 cx,
                                 translate(lang, "guitar.strum_speed_label", "Speed:"),
                                 &params.strum_speed,
+                                translate(lang, "guitar.tooltip.strum_speed", "Speed of the strum across the strings."),
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.fret_buzz_label", "Buzz:"),
                                 &params.fret_buzz,
+                                translate(lang, "guitar.tooltip.fret_buzz", "Fret buzz amount."),
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.finger_squeak_label", "Squeak:"),
                                 &params.finger_squeak,
+                                translate(lang, "guitar.tooltip.finger_squeak", "Finger squeak noise when shifting positions."),
                             );
                         })
                         .horizontal_gap(Pixels(6.0));
@@ -1070,16 +1081,19 @@ pub fn create_vizia_guitar_editor(
                                 cx,
                                 translate(lang, "guitar.amp_drive_label", "Drive:"),
                                 &params.amp_drive,
+                                translate(lang, "guitar.tooltip.amp_drive", "Amp overdrive amount."),
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.amp_bass_label", "Bass:"),
                                 &params.amp_bass,
+                                translate(lang, "guitar.tooltip.amp_bass", "Amp bass EQ."),
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.amp_middle_label", "Middle:"),
                                 &params.amp_middle,
+                                translate(lang, "guitar.tooltip.amp_middle", "Amp middle EQ."),
                             );
                         })
                         .horizontal_gap(Pixels(6.0));
@@ -1088,16 +1102,19 @@ pub fn create_vizia_guitar_editor(
                                 cx,
                                 translate(lang, "guitar.amp_treble_label", "Treble:"),
                                 &params.amp_treble,
+                                translate(lang, "guitar.tooltip.amp_treble", "Amp treble EQ."),
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.amp_presence_label", "Presence:"),
                                 &params.amp_presence,
+                                translate(lang, "guitar.tooltip.amp_presence", "Amp presence: high-frequency air and bite."),
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.amp_sag_label", "SAG:"),
                                 &params.amp_sag,
+                                translate(lang, "guitar.tooltip.amp_sag", "Power-supply sag: how much the amp compresses under load."),
                             );
                         })
                         .horizontal_gap(Pixels(6.0));
@@ -1146,11 +1163,13 @@ pub fn create_vizia_guitar_editor(
                                 cx,
                                 translate(lang, "guitar.bpm_label", "BPM:"),
                                 &params.groove_bpm,
+                                translate(lang, "guitar.tooltip.bpm", "Tempo for the groove pattern player."),
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.master_gain_label", "Volume:"),
                                 &params.master_gain,
+                                translate(lang, "guitar.tooltip.master_gain", "Overall output volume."),
                             );
                         })
                         .horizontal_gap(Pixels(6.0));
