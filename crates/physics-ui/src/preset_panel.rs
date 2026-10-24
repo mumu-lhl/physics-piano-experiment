@@ -116,6 +116,12 @@ pub fn preset_panel(
                 .class("btn-cycle")
                 .on_press(|cx| cx.emit(PresetPanelAction::Next))
                 .width(Pixels(28.0));
+            Button::new(cx, |cx| {
+                Label::new(cx, translate(lang, "gui.browse", "Browse"))
+            })
+            .class("btn-action")
+            .on_press(|cx| cx.emit(crate::PresetBrowserAction::Open))
+            .width(Pixels(64.0));
             let available_languages: Vec<_> = Language::available().collect();
             Dropdown::new(
                 cx,

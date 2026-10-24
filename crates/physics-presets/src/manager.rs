@@ -11,6 +11,10 @@ pub struct PresetManager {
     instrument: String,
     presets: Vec<Preset>,
     user_presets_dir: PathBuf,
+    /// IDs of presets the user starred in the preset browser. Persisted in
+    /// `favorites.json` next to the user presets, so factory presets can be
+    /// starred without touching their embedded definitions.
+    favorites: std::collections::HashSet<String>,
 }
 
 impl PresetManager {
@@ -28,10 +32,12 @@ impl PresetManager {
             instrument: instrument.to_string(),
             presets: factory_presets,
             user_presets_dir,
+            favorites: std::collections::HashSet::new(),
         };
 
         // Attempt to load existing user presets from disk
         let _ = mgr.load_user_presets();
+        mgr.load_favorites();
         mgr
     }
 
@@ -50,8 +56,10 @@ impl PresetManager {
             instrument: instrument.to_string(),
             presets: factory_presets,
             user_presets_dir: dir,
+            favorites: std::collections::HashSet::new(),
         };
         let _ = mgr.load_user_presets();
+        mgr.load_favorites();
         mgr
     }
 
@@ -68,6 +76,65 @@ impl PresetManager {
     /// Get preset by ID
     pub fn get_preset(&self, id: &str) -> Option<&Preset> {
         self.presets.iter().find(|p| p.id == id)
+    }
+
+    /// Path of the favorites file (a JSON array of preset IDs).
+    pub fn favorites_file(&self) -> PathBuf {
+        self.user_presets_dir.join("favorites.json")
+    }
+
+    /// Whether the given preset is starred. Unknown IDs are never favorites.
+    pub fn is_favorite(&self, id: &str) -> bool {
+        self.presets.iter().any(|p| p.id == id) && self.favorites.contains(id)
+    }
+
+    /// Starred preset IDs, in no particular order.
+    pub fn favorites(&self) -> Vec<String> {
+        self.favorites.iter().cloned().collect()
+    }
+
+    /// Load starred IDs from disk, silently keeping only IDs that still exist.
+    /// A missing or malformed file simply means "no favorites yet".
+    pub fn load_favorites(&mut self) {
+        let Ok(content) = fs::read_to_string(self.favorites_file()) else {
+            return;
+        };
+        let Ok(ids) = serde_json::from_str::<Vec<String>>(&content) else {
+            return;
+        };
+        self.favorites = ids
+            .into_iter()
+            .filter(|id| self.presets.iter().any(|p| &p.id == id))
+            .collect();
+    }
+
+    /// Persist the current starred IDs to disk.
+    pub fn save_favorites(&self) -> Result<(), std::io::Error> {
+        if !self.user_presets_dir.exists() {
+            fs::create_dir_all(&self.user_presets_dir)?;
+        }
+        let mut ids: Vec<&String> = self.favorites.iter().collect();
+        ids.sort();
+        let json = serde_json::to_string_pretty(&ids)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        fs::write(self.favorites_file(), json)
+    }
+
+    /// Toggle the starred state of a preset and persist it. Returns the new
+    /// state (`true` = starred). Unknown IDs are ignored and report `false`.
+    pub fn toggle_favorite(&mut self, id: &str) -> Result<bool, std::io::Error> {
+        if !self.presets.iter().any(|p| p.id == id) {
+            return Ok(false);
+        }
+        let starred = if self.favorites.contains(id) {
+            self.favorites.remove(id);
+            false
+        } else {
+            self.favorites.insert(id.to_string());
+            true
+        };
+        self.save_favorites()?;
+        Ok(starred)
     }
 
     /// Load or reload user presets from disk
@@ -245,4 +312,72 @@ fn default_user_presets_dir(instrument: &str) -> PathBuf {
         .join("physics-instruments")
         .join("presets")
         .join(instrument)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::preset::Preset;
+    use std::collections::HashMap;
+
+    struct TempDirGuard(PathBuf);
+
+    impl TempDirGuard {
+        fn new(tag: &str) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("ppe-fav-test-{}-{}", tag, std::process::id()));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir_all(&path).expect("tempdir");
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn test_manager(dir: &Path) -> PresetManager {
+        let mut params = HashMap::new();
+        params.insert("gain".to_string(), 0.5);
+        let factory = vec![
+            Preset::new("a", "Alpha", "piano", params.clone()),
+            Preset::new("b", "Beta", "piano", params),
+        ];
+        PresetManager::with_custom_dir("piano", factory, dir.to_path_buf())
+    }
+
+    fn factory_pair() -> Vec<Preset> {
+        vec![
+            Preset::new("a", "Alpha", "piano", HashMap::new()),
+            Preset::new("b", "Beta", "piano", HashMap::new()),
+        ]
+    }
+
+    #[test]
+    fn favorites_toggle_persists_and_reloads() {
+        let guard = TempDirGuard::new("reload");
+        let mut mgr = test_manager(&guard.0);
+        assert!(!mgr.is_favorite("a"));
+        assert_eq!(mgr.toggle_favorite("a").unwrap(), true);
+        assert!(mgr.is_favorite("a"));
+        // A fresh manager over the same dir picks the star back up.
+        let mgr2 = PresetManager::with_custom_dir("piano", factory_pair(), guard.0.clone());
+        assert!(mgr2.is_favorite("a"));
+        assert!(!mgr2.is_favorite("b"));
+        // Toggling off persists too.
+        let mut mgr3 = mgr2;
+        assert_eq!(mgr3.toggle_favorite("a").unwrap(), false);
+        assert!(!mgr3.is_favorite("a"));
+    }
+
+    #[test]
+    fn favorites_ignore_unknown_ids() {
+        let guard = TempDirGuard::new("unknown");
+        let mut mgr = test_manager(&guard.0);
+        assert_eq!(mgr.toggle_favorite("nope").unwrap(), false);
+        assert!(!mgr.is_favorite("nope"));
+        assert!(mgr.favorites().is_empty());
+    }
 }
