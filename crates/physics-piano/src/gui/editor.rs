@@ -15,16 +15,16 @@ use crate::gui::keyboard::PianoKeyboardWidget;
 use crate::gui::lid::PianoLidWidget;
 use crate::gui::mics::MicStageWidget;
 use crate::gui::scope::LissajousScopeWidget;
-use crate::nice_plugin::PhysicsPianoParams;
+use crate::nice_plugin::{PhysicsPianoParams, migrate_velocity_curve_params};
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::Language;
 use physics_ui::{
     CancelParamGestureEvent, PresetBrowserAction, PresetBrowserItem, PresetBrowserSignals,
     PresetPanelAction, PresetPanelLayout, PresetPanelSignals, SpectrumAnalyzerWidget,
-    StereoVuMeterWidget, add_base_theme, filter_browser_items, map_param_history_event,
-    parameter_knob, preset_browser, preset_browser_categories, preset_browser_items,
-    preset_choices, preset_display_name, preset_panel, redraw_custom_view, set_param,
-    setup_vizia_fonts, translate,
+    StereoVuMeterWidget, VelocityCurveEditorWidget, add_base_theme, filter_browser_items,
+    map_param_history_event, parameter_knob, preset_browser, preset_browser_categories,
+    preset_browser_items, preset_choices, preset_display_name, preset_panel, redraw_custom_view,
+    set_param, setup_vizia_fonts, translate,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -92,7 +92,9 @@ fn piano_value(params: &PhysicsPianoParams, id: &str) -> Option<f32> {
         "mic_player" => params.mic_player.value(),
         "mic_ambient" => params.mic_ambient.value(),
         "lid_angle" => params.lid_angle.value(),
-        "velocity_curve" => params.velocity_curve.value(),
+        "velocity_point_25" => params.velocity_point_25.value(),
+        "velocity_point_50" => params.velocity_point_50.value(),
+        "velocity_point_75" => params.velocity_point_75.value(),
         "sustain" => params.sustain_pedal.value(),
         "gain" => params.master_gain.value(),
         "unacorda" => f32::from(params.una_corda.value()),
@@ -113,7 +115,9 @@ fn set_piano_value(cx: &mut EventContext, params: &PhysicsPianoParams, id: &str,
         "mic_player" => set_param(cx, &params.mic_player, value),
         "mic_ambient" => set_param(cx, &params.mic_ambient, value),
         "lid_angle" => set_param(cx, &params.lid_angle, value),
-        "velocity_curve" => set_param(cx, &params.velocity_curve, value),
+        "velocity_point_25" => set_param(cx, &params.velocity_point_25, value),
+        "velocity_point_50" => set_param(cx, &params.velocity_point_50, value),
+        "velocity_point_75" => set_param(cx, &params.velocity_point_75, value),
         "sustain" => set_param(cx, &params.sustain_pedal, value),
         "gain" => set_param(cx, &params.master_gain, value),
         "unacorda" => set_param(cx, &params.una_corda, value >= 0.5),
@@ -134,7 +138,9 @@ fn piano_snapshot(params: &PhysicsPianoParams) -> HashMap<String, f32> {
         "mic_player",
         "mic_ambient",
         "lid_angle",
-        "velocity_curve",
+        "velocity_point_25",
+        "velocity_point_50",
+        "velocity_point_75",
         "sustain",
         "gain",
         "unacorda",
@@ -251,6 +257,7 @@ impl Model for PianoUiState {
                 redraw_custom_view(cx, "lissajous-scope-widget");
                 redraw_custom_view(cx, "stereo-vu-meter-widget");
                 redraw_custom_view(cx, "spectrum-analyzer-widget");
+                redraw_custom_view(cx, "velocity-curve-editor");
             }
             PianoUiEvent::PreviousPreset | PianoUiEvent::NextPreset => {
                 let next = matches!(event, PianoUiEvent::NextPreset);
@@ -275,7 +282,10 @@ impl Model for PianoUiState {
             }
             PianoUiEvent::SelectPreset(id) => {
                 let preset = self.manager.read().get_preset(id).cloned();
-                if let Some(preset) = preset {
+                if let Some(mut preset) = preset {
+                    // Old presets carry the legacy exponent entry; convert it
+                    // to curve points before applying so their touch is kept.
+                    migrate_velocity_curve_params(&mut preset.params);
                     let mut changes = Vec::new();
                     for (pid, value) in &preset.params {
                         if let Some(old) = piano_value(&self.params, pid) {
@@ -414,8 +424,12 @@ impl Model for PianoUiState {
                 "mic_ambient"
             } else if ptr == params.lid_angle.as_ptr() {
                 "lid_angle"
-            } else if ptr == params.velocity_curve.as_ptr() {
-                "velocity_curve"
+            } else if ptr == params.velocity_point_25.as_ptr() {
+                "velocity_point_25"
+            } else if ptr == params.velocity_point_50.as_ptr() {
+                "velocity_point_50"
+            } else if ptr == params.velocity_point_75.as_ptr() {
+                "velocity_point_75"
             } else if ptr == params.sustain_pedal.as_ptr() {
                 "sustain"
             } else if ptr == params.master_gain.as_ptr() {
@@ -466,8 +480,12 @@ impl Model for PianoUiState {
                 ("mic_ambient", params.mic_ambient.value())
             } else if ptr == params.lid_angle.as_ptr() {
                 ("lid_angle", params.lid_angle.value())
-            } else if ptr == params.velocity_curve.as_ptr() {
-                ("velocity_curve", params.velocity_curve.value())
+            } else if ptr == params.velocity_point_25.as_ptr() {
+                ("velocity_point_25", params.velocity_point_25.value())
+            } else if ptr == params.velocity_point_50.as_ptr() {
+                ("velocity_point_50", params.velocity_point_50.value())
+            } else if ptr == params.velocity_point_75.as_ptr() {
+                ("velocity_point_75", params.velocity_point_75.value())
             } else if ptr == params.sustain_pedal.as_ptr() {
                 ("sustain", params.sustain_pedal.value())
             } else if ptr == params.master_gain.as_ptr() {
@@ -883,11 +901,21 @@ pub fn create_vizia_piano_editor(
                                 translate(lang, "piano.master_gain", "Master Gain:"),
                                 &params.master_gain,
                             );
-                            knob(
-                                cx,
-                                translate(lang, "piano.velocity_curve", "Touch Curve:"),
-                                &params.velocity_curve,
-                            );
+                            VStack::new(cx, |cx| {
+                                let label = translate(lang, "piano.velocity_curve", "Touch Curve:");
+                                Label::new(cx, label.strip_suffix(':').unwrap_or(label))
+                                    .class("knob-label");
+                                VelocityCurveEditorWidget::new(
+                                    cx,
+                                    &params.velocity_point_25,
+                                    &params.velocity_point_50,
+                                    &params.velocity_point_75,
+                                )
+                                .width(Pixels(120.0))
+                                .height(Pixels(56.0));
+                            })
+                            .class("knob-cell")
+                            .width(Pixels(120.0));
                         })
                         .horizontal_gap(Pixels(8.0));
                         ParamButton::new(cx, &params.una_corda)
