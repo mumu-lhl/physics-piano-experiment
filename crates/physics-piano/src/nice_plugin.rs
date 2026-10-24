@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use vizia_plug::ViziaState;
 
-use crate::engine::{EngineEvent, EngineOutEvent, PianoEngine};
+use crate::engine::{EngineEvent, EngineOutEvent, PianoEngine, velocity_points_from_exponent};
 use crate::gui::{Language, create_vizia_piano_editor, default_vizia_state};
 use physics_presets::{PresetManager, UndoManager, piano_factory_presets};
 
@@ -73,9 +73,36 @@ pub struct PhysicsPianoParams {
     #[id = "gain"]
     pub master_gain: FloatParam,
 
-    /// Keyboard Velocity Touch Sensitivity [-1.0 (Soft) ~ +1.0 (Hard)]
-    #[id = "velocity_curve"]
-    pub velocity_curve: FloatParam,
+    /// Velocity curve point at 25% input velocity [0.0 ~ 1.0]
+    #[id = "velocity_point_25"]
+    pub velocity_point_25: FloatParam,
+
+    /// Velocity curve point at 50% input velocity [0.0 ~ 1.0]
+    #[id = "velocity_point_50"]
+    pub velocity_point_50: FloatParam,
+
+    /// Velocity curve point at 75% input velocity [0.0 ~ 1.0]
+    #[id = "velocity_point_75"]
+    pub velocity_point_75: FloatParam,
+}
+
+/// Migrates legacy velocity-curve preset entries to curve points. Old
+/// presets carry a single "velocity_curve" exponent; new presets carry the
+/// three interior point values. Points missing from the map are filled from
+/// the exponent conversion, then the legacy entry is dropped, so old presets
+/// keep their exact touch response.
+pub fn migrate_velocity_curve_params(params: &mut HashMap<String, f32>) {
+    if let Some(curve) = params.get("velocity_curve").copied() {
+        let points = velocity_points_from_exponent(curve as f64);
+        for (id, value) in [
+            ("velocity_point_25", points[1]),
+            ("velocity_point_50", points[2]),
+            ("velocity_point_75", points[3]),
+        ] {
+            params.entry(id.to_string()).or_insert(value as f32);
+        }
+        params.remove("velocity_curve");
+    }
 }
 
 impl Default for PhysicsPianoParams {
@@ -208,15 +235,25 @@ impl Default for PhysicsPianoParams {
             .with_value_to_string(formatters::v2s_f32_gain_to_db(1))
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
 
-            velocity_curve: FloatParam::new(
-                "Touch Curve",
-                0.0,
-                FloatRange::Linear {
-                    min: -1.0,
-                    max: 1.0,
-                },
+            velocity_point_25: FloatParam::new(
+                "Curve Point 25%",
+                0.25,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
             )
-            .with_unit("")
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            velocity_point_50: FloatParam::new(
+                "Curve Point 50%",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            velocity_point_75: FloatParam::new(
+                "Curve Point 75%",
+                0.75,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
             .with_value_to_string(formatters::v2s_f32_rounded(2)),
         }
     }
@@ -345,8 +382,13 @@ impl Plugin for PhysicsPiano {
             .set_unison_detuning(self.params.unison_detuning.value() as f64);
         self.engine
             .set_phantom_gain(self.params.phantom_gain.value() as f64);
-        self.engine
-            .set_velocity_curve(self.params.velocity_curve.value() as f64);
+        self.engine.set_velocity_curve_points([
+            0.0,
+            self.params.velocity_point_25.value() as f64,
+            self.params.velocity_point_50.value() as f64,
+            self.params.velocity_point_75.value() as f64,
+            1.0,
+        ]);
         self.engine
             .set_key_noise_gain(self.params.key_noise.value() as f64);
         self.engine
@@ -526,8 +568,13 @@ impl Plugin for PhysicsPiano {
             .set_unison_detuning(self.params.unison_detuning.value() as f64);
         self.engine
             .set_phantom_gain(self.params.phantom_gain.value() as f64);
-        self.engine
-            .set_velocity_curve(self.params.velocity_curve.value() as f64);
+        self.engine.set_velocity_curve_points([
+            0.0,
+            self.params.velocity_point_25.value() as f64,
+            self.params.velocity_point_50.value() as f64,
+            self.params.velocity_point_75.value() as f64,
+            1.0,
+        ]);
 
         // Tier 6: Micro-mechanical noise gains
         self.engine
@@ -719,5 +766,60 @@ mod no_alloc_regression_tests {
         });
 
         assert_eq!(violation_count(), violations_before);
+    }
+}
+
+#[cfg(test)]
+mod velocity_curve_migration_tests {
+    use super::*;
+
+    fn params_with(pairs: &[(&str, f32)]) -> HashMap<String, f32> {
+        pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+    }
+
+    #[test]
+    fn legacy_exponent_converts_to_points() {
+        let mut params = params_with(&[("velocity_curve", -0.2), ("gain", 0.5)]);
+        migrate_velocity_curve_params(&mut params);
+        assert!(!params.contains_key("velocity_curve"));
+        assert_eq!(params["gain"], 0.5);
+        // 2^(-0.16) ≈ 0.895; 0.25^0.895 ≈ 0.289, 0.5^0.895 ≈ 0.538,
+        // 0.75^0.895 ≈ 0.773.
+        assert!((params["velocity_point_25"] - 0.289).abs() < 0.005);
+        assert!((params["velocity_point_50"] - 0.538).abs() < 0.005);
+        assert!((params["velocity_point_75"] - 0.773).abs() < 0.005);
+    }
+
+    #[test]
+    fn new_format_points_win_and_legacy_entry_drops() {
+        let mut params = params_with(&[
+            ("velocity_curve", -0.3),
+            ("velocity_point_25", 0.1),
+            ("velocity_point_50", 0.6),
+            ("velocity_point_75", 0.9),
+        ]);
+        migrate_velocity_curve_params(&mut params);
+        assert!(!params.contains_key("velocity_curve"));
+        assert_eq!(params["velocity_point_25"], 0.1);
+        assert_eq!(params["velocity_point_50"], 0.6);
+        assert_eq!(params["velocity_point_75"], 0.9);
+    }
+
+    #[test]
+    fn partial_points_are_filled_from_exponent() {
+        let mut params = params_with(&[("velocity_curve", 0.0), ("velocity_point_50", 0.4)]);
+        migrate_velocity_curve_params(&mut params);
+        assert!(!params.contains_key("velocity_curve"));
+        assert_eq!(params["velocity_point_25"], 0.25);
+        assert_eq!(params["velocity_point_50"], 0.4);
+        assert_eq!(params["velocity_point_75"], 0.75);
+    }
+
+    #[test]
+    fn no_legacy_entry_leaves_params_untouched() {
+        let mut params = params_with(&[("velocity_point_25", 0.2)]);
+        migrate_velocity_curve_params(&mut params);
+        assert_eq!(params.len(), 1);
+        assert_eq!(params["velocity_point_25"], 0.2);
     }
 }
