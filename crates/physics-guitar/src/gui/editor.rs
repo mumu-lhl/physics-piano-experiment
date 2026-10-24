@@ -14,10 +14,12 @@ use crate::nice_plugin::{GuiGuitarEvent, PhysicsGuitarParams};
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::Language;
 use physics_ui::{
-    CancelParamGestureEvent, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
-    add_base_theme, discrete_selector as shared_discrete_selector, map_param_history_event,
-    parameter_slider, preset_choices, preset_display_name, preset_panel, redraw_custom_view,
-    set_param, setup_vizia_fonts, translate,
+    CancelParamGestureEvent, PresetBrowserAction, PresetBrowserItem, PresetBrowserSignals,
+    PresetPanelAction, PresetPanelLayout, PresetPanelSignals, SpectrumAnalyzerWidget,
+    StereoVuMeterWidget, add_base_theme, discrete_selector as shared_discrete_selector,
+    filter_browser_items, map_param_history_event, parameter_knob, preset_browser,
+    preset_browser_categories, preset_browser_items, preset_choices, preset_display_name,
+    preset_panel, redraw_custom_view, set_param, setup_vizia_fonts, translate,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -42,10 +44,10 @@ enum DiscreteParam {
 }
 
 pub const EDITOR_WIDTH: u32 = 1080;
-pub const EDITOR_HEIGHT: u32 = 620;
+pub const EDITOR_HEIGHT: u32 = 635;
 
-fn slider<P: Param + 'static>(cx: &mut Context, label: &'static str, param: &P) {
-    parameter_slider(cx, label, param, 92.0);
+fn knob<P: Param + 'static>(cx: &mut Context, label: &'static str, param: &P) {
+    parameter_knob(cx, label, param, 84.0);
 }
 
 fn discrete_selector(
@@ -84,6 +86,12 @@ struct GuitarUiState {
     selected_name: Signal<String>,
     selected_id: Signal<String>,
     preset_choices: Signal<Vec<(String, String)>>,
+    browser_open: Signal<bool>,
+    browser_search: Signal<String>,
+    browser_category: Signal<Option<String>>,
+    browser_favorites_only: Signal<bool>,
+    browser_categories: Signal<Vec<String>>,
+    browser_filtered: Signal<Vec<PresetBrowserItem>>,
     language: Signal<Language>,
     language_atom: Arc<AtomicU8>,
     name_input: Signal<String>,
@@ -220,6 +228,23 @@ impl GuitarUiState {
         self.can_redo.set(undo.can_redo());
     }
 
+    /// Refresh the preset dropdown rows and the browser rows/categories
+    /// after any preset list or filter change.
+    fn refresh_preset_signals(&self) {
+        let manager = self.manager.read();
+        let lang = self.language.get();
+        self.preset_choices.set(preset_choices(&manager, lang));
+        let items = preset_browser_items(&manager, lang);
+        self.browser_categories
+            .set(preset_browser_categories(&items));
+        self.browser_filtered.set(filter_browser_items(
+            &items,
+            &self.browser_search.get(),
+            self.browser_category.get().as_deref(),
+            self.browser_favorites_only.get(),
+        ));
+    }
+
     fn apply_history(&mut self, cx: &mut EventContext, redo: bool) {
         let changes = if redo {
             self.undo.write().redo()
@@ -253,6 +278,32 @@ impl Model for GuitarUiState {
             PresetPanelAction::Undo => cx.emit(GuitarUiEvent::Undo),
             PresetPanelAction::Redo => cx.emit(GuitarUiEvent::Redo),
         });
+        event.map(|action: &PresetBrowserAction, _| match action {
+            PresetBrowserAction::Open => self.browser_open.set(true),
+            PresetBrowserAction::Close => self.browser_open.set(false),
+            PresetBrowserAction::SetSearch(text) => {
+                self.browser_search.set(text.clone());
+                self.refresh_preset_signals();
+            }
+            PresetBrowserAction::SetCategory(category) => {
+                self.browser_category.set(category.clone());
+                self.refresh_preset_signals();
+            }
+            PresetBrowserAction::ToggleFavoritesOnly => {
+                let next = !self.browser_favorites_only.get();
+                self.browser_favorites_only.set(next);
+                self.refresh_preset_signals();
+            }
+            PresetBrowserAction::ToggleFavorite(id) => {
+                let _ = self.manager.write().toggle_favorite(id);
+                self.refresh_preset_signals();
+            }
+            PresetBrowserAction::Select(id) => {
+                cx.emit(GuitarUiEvent::SelectPreset(id.clone()));
+                self.browser_open.set(false);
+            }
+        });
+
         event.map(|event, _| match event {
             GuitarUiEvent::RefreshDisplay => {
                 self.discrete.mode.set(self.params.mode.value());
@@ -270,6 +321,8 @@ impl Model for GuitarUiState {
                     .groove_pattern
                     .set(self.params.groove_pattern.value());
                 redraw_custom_view(cx, "guitar-fretboard-widget");
+                redraw_custom_view(cx, "stereo-vu-meter-widget");
+                redraw_custom_view(cx, "spectrum-analyzer-widget");
             }
             GuitarUiEvent::PreviousPreset | GuitarUiEvent::NextPreset => {
                 let next = matches!(event, GuitarUiEvent::NextPreset);
@@ -318,8 +371,7 @@ impl Model for GuitarUiState {
                     self.name_input.set(display_name);
                     self.is_user_preset
                         .set(self.manager.read().is_user_preset(id));
-                    self.preset_choices
-                        .set(preset_choices(&self.manager.read(), self.language.get()));
+                    self.refresh_preset_signals();
                     self.update_history_state();
                 }
             }
@@ -327,8 +379,7 @@ impl Model for GuitarUiState {
                 let lang = *lang;
                 self.language.set(lang);
                 self.language_atom.store(lang.index(), Ordering::Relaxed);
-                self.preset_choices
-                    .set(preset_choices(&self.manager.read(), lang));
+                self.refresh_preset_signals();
                 if let Some(preset) = self.manager.read().get_preset(&self.selected_id.get()) {
                     let display = preset_display_name(preset, lang);
                     self.selected_name.set(display.clone());
@@ -367,8 +418,7 @@ impl Model for GuitarUiState {
                     self.selected_name.set(name.clone());
                     self.name_input.set(name);
                     self.is_user_preset.set(true);
-                    self.preset_choices
-                        .set(preset_choices(&self.manager.read(), self.language.get()));
+                    self.refresh_preset_signals();
                 }
             }
             GuitarUiEvent::Rename => {
@@ -382,8 +432,7 @@ impl Model for GuitarUiState {
                             .unwrap_or(false)
                     {
                         self.selected_name.set(name);
-                        self.preset_choices
-                            .set(preset_choices(&self.manager.read(), self.language.get()));
+                        self.refresh_preset_signals();
                     }
                 }
             }
@@ -403,8 +452,7 @@ impl Model for GuitarUiState {
                     .delete_user_preset(&id)
                     .unwrap_or(false)
                 {
-                    self.preset_choices
-                        .set(preset_choices(&self.manager.read(), self.language.get()));
+                    self.refresh_preset_signals();
                     cx.emit(GuitarUiEvent::SelectPreset("strat_clean_chime".to_string()));
                 }
             }
@@ -675,6 +723,10 @@ pub fn create_vizia_guitar_editor(
     active_frets_shared: Arc<[AtomicU8; 6]>,
     string_energies_shared: Arc<[AtomicU32; 6]>,
     string_profiles_shared: Arc<[[AtomicI32; 16]; 6]>,
+    peak_l: Arc<atomic_float::AtomicF32>,
+    peak_r: Arc<atomic_float::AtomicF32>,
+    sample_history: Arc<parking_lot::RwLock<Vec<f32>>>,
+    sample_rate: f32,
     language_atom: Arc<AtomicU8>,
     gui_tx: Sender<GuiGuitarEvent>,
     preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
@@ -694,6 +746,13 @@ pub fn create_vizia_guitar_editor(
         let preset_name = Signal::new(selected_name.clone());
         let preset_id = Signal::new("strat_clean_chime".to_string());
         let preset_choices = Signal::new(preset_choices(&preset_manager.read(), lang));
+        let browser_items_initial = preset_browser_items(&preset_manager.read(), lang);
+        let browser_open = Signal::new(false);
+        let browser_search = Signal::new(String::new());
+        let browser_category = Signal::new(None);
+        let browser_favorites_only = Signal::new(false);
+        let browser_categories = Signal::new(preset_browser_categories(&browser_items_initial));
+        let browser_filtered = Signal::new(browser_items_initial);
         let language = Signal::new(lang);
         let language_view = language.clone();
         let language_ui = language.clone();
@@ -724,6 +783,12 @@ pub fn create_vizia_guitar_editor(
             selected_name: preset_name.clone(),
             selected_id: preset_id,
             preset_choices: preset_choices.clone(),
+            browser_open: browser_open.clone(),
+            browser_search: browser_search.clone(),
+            browser_category: browser_category.clone(),
+            browser_favorites_only: browser_favorites_only.clone(),
+            browser_categories: browser_categories.clone(),
+            browser_filtered: browser_filtered.clone(),
             language,
             language_atom: language_atom.clone(),
             name_input: name_input.clone(),
@@ -752,12 +817,21 @@ pub fn create_vizia_guitar_editor(
         let name_input_ui = name_input.clone();
         let preset_name_ui = preset_name.clone();
         let preset_choices_ui = preset_choices.clone();
+        let browser_open_ui = browser_open.clone();
+        let browser_search_ui = browser_search.clone();
+        let browser_category_ui = browser_category.clone();
+        let browser_favorites_only_ui = browser_favorites_only.clone();
+        let browser_categories_ui = browser_categories.clone();
+        let browser_filtered_ui = browser_filtered.clone();
         let language_view_ui = language_view.clone();
         let is_user_preset_controls = is_user_preset_ui.clone();
         let can_undo_controls = can_undo_ui.clone();
         let can_redo_controls = can_redo_ui.clone();
         let discrete_controls = discrete.clone();
         let zoom_state_ui = zoom_state.clone();
+        let peak_l_ui = peak_l.clone();
+        let peak_r_ui = peak_r.clone();
+        let sample_history_ui = sample_history.clone();
 
         Binding::new(cx, language_ui, move |cx| {
             let lang = language_ui.get();
@@ -768,6 +842,12 @@ pub fn create_vizia_guitar_editor(
             let string_profiles_shared = string_profiles_ui.clone();
             let initial_preset_name = preset_name_ui.clone();
             let preset_choices = preset_choices_ui.clone();
+            let browser_open = browser_open_ui.clone();
+            let browser_search = browser_search_ui.clone();
+            let browser_category = browser_category_ui.clone();
+            let browser_favorites_only = browser_favorites_only_ui.clone();
+            let browser_categories = browser_categories_ui.clone();
+            let browser_filtered = browser_filtered_ui.clone();
             let name_input = name_input_ui.clone();
             let language_view = language_view_ui.clone();
             let is_user_preset = is_user_preset_controls.clone();
@@ -775,6 +855,9 @@ pub fn create_vizia_guitar_editor(
             let can_redo = can_redo_controls.clone();
             let discrete = discrete_controls.clone();
             let zoom_state = zoom_state_ui.clone();
+            let peak_l = peak_l_ui.clone();
+            let peak_r = peak_r_ui.clone();
+            let sample_history = sample_history_ui.clone();
             VStack::new(cx, move |cx| {
                 let mode_options = vec![
                     (
@@ -872,13 +955,16 @@ pub fn create_vizia_guitar_editor(
                     PresetPanelLayout {
                         preset_label: Some(translate(lang, "guitar.preset_label", "Preset:")),
                         preset_width: 180.0,
-                        name_width: 130.0,
+                        name_width: 170.0,
                         save_as_width: 64.0,
                         rename_width: 58.0,
                         overwrite_width: 68.0,
                         delete_width: 48.0,
                     },
                     move |cx| {
+                        StereoVuMeterWidget::new(cx, peak_l.clone(), peak_r.clone())
+                            .width(Pixels(70.0))
+                            .height(Pixels(24.0));
                         zoom_control(
                             cx,
                             zoom_state.clone(),
@@ -935,36 +1021,42 @@ pub fn create_vizia_guitar_editor(
                             translate(lang, "guitar.rack_stompbox", "STOMPBOX & EXPRESSION"),
                         )
                         .class("rack-title");
-                        slider(
-                            cx,
-                            translate(lang, "guitar.tone_label", "Tone:"),
-                            &params.tone,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "guitar.palm_mute_label", "PalmMute:"),
-                            &params.palm_mute,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "guitar.pluck_pos_label", "PluckPos:"),
-                            &params.pluck_pos,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "guitar.strum_speed_label", "Speed:"),
-                            &params.strum_speed,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "guitar.fret_buzz_label", "Buzz:"),
-                            &params.fret_buzz,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "guitar.finger_squeak_label", "Squeak:"),
-                            &params.finger_squeak,
-                        );
+                        HStack::new(cx, |cx| {
+                            knob(
+                                cx,
+                                translate(lang, "guitar.tone_label", "Tone:"),
+                                &params.tone,
+                            );
+                            knob(
+                                cx,
+                                translate(lang, "guitar.palm_mute_label", "PalmMute:"),
+                                &params.palm_mute,
+                            );
+                            knob(
+                                cx,
+                                translate(lang, "guitar.pluck_pos_label", "PluckPos:"),
+                                &params.pluck_pos,
+                            );
+                        })
+                        .horizontal_gap(Pixels(6.0));
+                        HStack::new(cx, |cx| {
+                            knob(
+                                cx,
+                                translate(lang, "guitar.strum_speed_label", "Speed:"),
+                                &params.strum_speed,
+                            );
+                            knob(
+                                cx,
+                                translate(lang, "guitar.fret_buzz_label", "Buzz:"),
+                                &params.fret_buzz,
+                            );
+                            knob(
+                                cx,
+                                translate(lang, "guitar.finger_squeak_label", "Squeak:"),
+                                &params.finger_squeak,
+                            );
+                        })
+                        .horizontal_gap(Pixels(6.0));
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
@@ -973,36 +1065,42 @@ pub fn create_vizia_guitar_editor(
                     VStack::new(cx, |cx| {
                         Label::new(cx, translate(lang, "guitar.rack_amp", "VINTAGE AMP HEAD"))
                             .class("rack-title");
-                        slider(
-                            cx,
-                            translate(lang, "guitar.amp_drive_label", "Drive:"),
-                            &params.amp_drive,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "guitar.amp_bass_label", "Bass:"),
-                            &params.amp_bass,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "guitar.amp_middle_label", "Middle:"),
-                            &params.amp_middle,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "guitar.amp_treble_label", "Treble:"),
-                            &params.amp_treble,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "guitar.amp_presence_label", "Presence:"),
-                            &params.amp_presence,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "guitar.amp_sag_label", "SAG:"),
-                            &params.amp_sag,
-                        );
+                        HStack::new(cx, |cx| {
+                            knob(
+                                cx,
+                                translate(lang, "guitar.amp_drive_label", "Drive:"),
+                                &params.amp_drive,
+                            );
+                            knob(
+                                cx,
+                                translate(lang, "guitar.amp_bass_label", "Bass:"),
+                                &params.amp_bass,
+                            );
+                            knob(
+                                cx,
+                                translate(lang, "guitar.amp_middle_label", "Middle:"),
+                                &params.amp_middle,
+                            );
+                        })
+                        .horizontal_gap(Pixels(6.0));
+                        HStack::new(cx, |cx| {
+                            knob(
+                                cx,
+                                translate(lang, "guitar.amp_treble_label", "Treble:"),
+                                &params.amp_treble,
+                            );
+                            knob(
+                                cx,
+                                translate(lang, "guitar.amp_presence_label", "Presence:"),
+                                &params.amp_presence,
+                            );
+                            knob(
+                                cx,
+                                translate(lang, "guitar.amp_sag_label", "SAG:"),
+                                &params.amp_sag,
+                            );
+                        })
+                        .horizontal_gap(Pixels(6.0));
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
@@ -1043,21 +1141,24 @@ pub fn create_vizia_guitar_editor(
                             params.clone(),
                             DiscreteParam::GroovePattern,
                         );
-                        slider(
-                            cx,
-                            translate(lang, "guitar.bpm_label", "BPM:"),
-                            &params.groove_bpm,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "guitar.master_gain_label", "Volume:"),
-                            &params.master_gain,
-                        );
+                        HStack::new(cx, |cx| {
+                            knob(
+                                cx,
+                                translate(lang, "guitar.bpm_label", "BPM:"),
+                                &params.groove_bpm,
+                            );
+                            knob(
+                                cx,
+                                translate(lang, "guitar.master_gain_label", "Volume:"),
+                                &params.master_gain,
+                            );
+                        })
+                        .horizontal_gap(Pixels(6.0));
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
                 })
-                .height(Pixels(185.0))
+                .height(Pixels(200.0))
                 .horizontal_gap(Pixels(8.0));
 
                 GuitarFretboardWidget::new(
@@ -1078,7 +1179,28 @@ pub fn create_vizia_guitar_editor(
                     ),
                 )
                 .class("hint-text");
+                HStack::new(cx, |cx| {
+                    Label::new(cx, translate(lang, "gui.spectrum", "Spectrum")).class("hint-text");
+                    SpectrumAnalyzerWidget::new(cx, sample_history.clone(), sample_rate)
+                        .width(Stretch(1.0))
+                        .height(Pixels(56.0));
+                })
+                .height(Pixels(56.0))
+                .horizontal_gap(Pixels(8.0));
             });
+
+            preset_browser(
+                cx,
+                lang,
+                PresetBrowserSignals {
+                    open: browser_open,
+                    search: browser_search,
+                    category: browser_category,
+                    favorites_only: browser_favorites_only,
+                    categories: browser_categories,
+                    filtered: browser_filtered,
+                },
+            );
         });
     })
 }

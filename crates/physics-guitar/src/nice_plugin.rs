@@ -1,5 +1,6 @@
 //! Native CLAP plugin and standalone synthesizer built with nice-plug and Vizia for Physics Guitar.
 
+use atomic_float::AtomicF32;
 use nice_plug::prelude::*;
 use physics_presets::{PresetManager, UndoManager, guitar_factory_presets};
 use std::sync::Arc;
@@ -267,6 +268,11 @@ pub struct PhysicsGuitar {
     pub active_frets_shared: Arc<[AtomicU8; 6]>,
     pub string_energies_shared: Arc<[AtomicU32; 6]>,
     pub string_profiles_shared: Arc<[[AtomicI32; 16]; 6]>,
+    // Stereo output peak for the VU meter (same smoothing as piano)
+    pub peak_l: Arc<AtomicF32>,
+    pub peak_r: Arc<AtomicF32>,
+    // Mono output history for the spectrum analyzer
+    pub sample_history: Arc<parking_lot::RwLock<Vec<f32>>>,
     // Lock-free event queue from GUI clicks/releases into audio engine
     pub gui_event_tx: crossbeam_channel::Sender<GuiGuitarEvent>,
     pub gui_event_rx: crossbeam_channel::Receiver<GuiGuitarEvent>,
@@ -312,6 +318,13 @@ impl Default for PhysicsGuitar {
             std::array::from_fn(|_| AtomicI32::new(0))
         }));
 
+        let peak_l = Arc::new(AtomicF32::new(0.0));
+        let peak_r = Arc::new(AtomicF32::new(0.0));
+        let sample_history = Arc::new(parking_lot::RwLock::new(vec![
+            0.0;
+            physics_ui::SPECTRUM_HISTORY_LEN
+        ]));
+
         let (gui_event_tx, gui_event_rx) = crossbeam_channel::bounded(256);
 
         Self {
@@ -321,6 +334,9 @@ impl Default for PhysicsGuitar {
             active_frets_shared,
             string_energies_shared,
             string_profiles_shared,
+            peak_l,
+            peak_r,
+            sample_history,
             gui_event_tx,
             gui_event_rx,
             language: Arc::new(AtomicU8::new(lang_code)),
@@ -550,6 +566,8 @@ impl Plugin for PhysicsGuitar {
 
         // 3. Sample-accurate MIDI / MPE dispatch
         let mut next_event = context.next_event();
+        let mut max_l = 0.0f32;
+        let mut max_r = 0.0f32;
         for (sample_idx, channel_samples) in buffer.iter_samples().enumerate() {
             while let Some(event) = next_event {
                 if event.timing() > sample_idx as u32 {
@@ -592,9 +610,36 @@ impl Plugin for PhysicsGuitar {
             if let Some(right) = channels.next() {
                 *right = sr as f32;
             }
+            max_l = max_l.max((sl as f32).abs());
+            max_r = max_r.max((sr as f32).abs());
         }
 
         // 4. Update atomic shared states for GUI visualization
+        // Update peak meter smoothly (same 0.92/0.08 smoothing as piano)
+        let prev_l = self.peak_l.load(Ordering::Relaxed);
+        let prev_r = self.peak_r.load(Ordering::Relaxed);
+        self.peak_l
+            .store(prev_l * 0.92 + max_l * 0.08, Ordering::Relaxed);
+        self.peak_r
+            .store(prev_r * 0.92 + max_r * 0.08, Ordering::Relaxed);
+
+        // Append mono output to the spectrum history (skip on contention).
+        if let Some(mut hist) = self.sample_history.try_write() {
+            let slices = buffer.as_slice();
+            if slices.len() >= 2 {
+                let n = num_samples.min(slices[0].len()).min(slices[1].len());
+                if hist.len() + n > physics_ui::SPECTRUM_HISTORY_LEN {
+                    let excess = hist.len() + n - physics_ui::SPECTRUM_HISTORY_LEN;
+                    hist.drain(..excess);
+                }
+                hist.extend(
+                    slices[0][..n]
+                        .iter()
+                        .zip(slices[1][..n].iter())
+                        .map(|(l, r)| (l + r) * 0.5),
+                );
+            }
+        }
         let mut profile_buf = [0.0f32; 16];
         for i in 0..6 {
             let string = &self.engine.strings[i];
@@ -624,6 +669,10 @@ impl Plugin for PhysicsGuitar {
             self.active_frets_shared.clone(),
             self.string_energies_shared.clone(),
             self.string_profiles_shared.clone(),
+            self.peak_l.clone(),
+            self.peak_r.clone(),
+            self.sample_history.clone(),
+            self.sample_rate,
             self.language.clone(),
             self.gui_event_tx.clone(),
             self.preset_manager.clone(),
