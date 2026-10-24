@@ -48,6 +48,34 @@ msgctxt "gui.zoom"
 msgid "Zoom"
 msgstr "缩放"
 
+msgctxt "gui.browse"
+msgid "Browse"
+msgstr "浏览"
+
+msgctxt "gui.preset-browser"
+msgid "Preset Browser"
+msgstr "预设浏览器"
+
+msgctxt "gui.search-presets"
+msgid "Search presets…"
+msgstr "搜索预设…"
+
+msgctxt "gui.all"
+msgid "All"
+msgstr "全部"
+
+msgctxt "gui.favorites"
+msgid "Favorites"
+msgstr "收藏"
+
+msgctxt "gui.spectrum"
+msgid "Spectrum"
+msgstr "频谱"
+
+msgctxt "gui.no-presets-match"
+msgid "No presets match"
+msgstr "没有匹配的预设"
+
 msgctxt "preset.name.steinway_concert_d"
 msgid "Steinway D Concert Grand"
 msgstr "施坦威 D-274 音乐会三角琴"

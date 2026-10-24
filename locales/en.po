@@ -48,6 +48,34 @@ msgctxt "gui.zoom"
 msgid "Zoom"
 msgstr "Zoom"
 
+msgctxt "gui.browse"
+msgid "Browse"
+msgstr "Browse"
+
+msgctxt "gui.preset-browser"
+msgid "Preset Browser"
+msgstr "Preset Browser"
+
+msgctxt "gui.search-presets"
+msgid "Search presets…"
+msgstr "Search presets…"
+
+msgctxt "gui.all"
+msgid "All"
+msgstr "All"
+
+msgctxt "gui.favorites"
+msgid "Favorites"
+msgstr "Favorites"
+
+msgctxt "gui.spectrum"
+msgid "Spectrum"
+msgstr "Spectrum"
+
+msgctxt "gui.no-presets-match"
+msgid "No presets match"
+msgstr "No presets match"
+
 msgctxt "preset.name.steinway_concert_d"
 msgid "Steinway D Concert Grand"
 msgstr "Steinway D Concert Grand"
