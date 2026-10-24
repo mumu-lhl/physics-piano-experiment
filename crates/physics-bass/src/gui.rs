@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 use vizia_plug::vizia::prelude::*;
 use vizia_plug::widgets::util::ModifiersExt;
-use vizia_plug::widgets::{ParamButton, ParamButtonExt, RawParamEvent};
+use vizia_plug::widgets::{ParamButton, ParamButtonExt, RawParamEvent, zoom_control};
 use vizia_plug::{ViziaEditor, ViziaTheming, create_vizia_editor};
 
 pub const EDITOR_WIDTH: u32 = 1120;
@@ -533,6 +533,7 @@ pub fn create_vizia_bass_editor(
         .unwrap_or_else(|| "Finger Punch".to_string());
 
     let editor_state = params.editor_state.clone();
+    let zoom_state = editor_state.clone();
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
         setup_vizia_fonts(cx);
         if let Err(error) = add_base_theme(cx) {
@@ -595,6 +596,7 @@ pub fn create_vizia_bass_editor(
         let can_redo_ui = can_redo;
         let discrete_ui = discrete;
         let language_atom_ui = language_atom.clone();
+        let zoom_state_ui = zoom_state.clone();
 
         Binding::new(cx, language_ui, move |cx| {
             let lang = language_ui.get();
@@ -606,6 +608,7 @@ pub fn create_vizia_bass_editor(
             let string_profiles = string_profiles_ui.clone();
             let gui_tx = gui_tx_ui.clone();
             let language_atom = language_atom_ui.clone();
+            let zoom_state = zoom_state_ui.clone();
             VStack::new(cx, move |cx| {
                 HStack::new(cx, |cx| {
                     VStack::new(cx, |cx| {
@@ -641,6 +644,11 @@ pub fn create_vizia_bass_editor(
                     },
                     move |cx| {
                         Label::new(cx, translate(lang, "bass.audition", "Click or drag the fretboard below to audition")).class("status");
+                        zoom_control(
+                            cx,
+                            zoom_state.clone(),
+                            translate(lang, "gui.zoom", "Zoom"),
+                        );
                     },
                 );
 
