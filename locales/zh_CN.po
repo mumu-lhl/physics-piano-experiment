@@ -784,3 +784,147 @@ msgstr "35/36 底鼓 · 38 军鼓 · 41–51 套鼓"
 #~ msgctxt "piano.title"
 #~ msgid "PHYSICS PIANO"
 #~ msgstr "物理建模钢琴"
+
+msgctxt "piano.tooltip.sustain"
+msgid "How much the sustain pedal holds notes after you lift the keys."
+msgstr "踏板踩下后，松开琴键音符仍延续的程度。"
+
+msgctxt "piano.tooltip.key_action"
+msgid "Loudness of keybed thumps and escapement clicks."
+msgstr "琴键底部撞击与擒纵机构咔哒声的音量。"
+
+msgctxt "piano.tooltip.damper_noise"
+msgid "Noise of dampers lifting off and landing on the strings."
+msgstr "制音器抬起与落回琴弦时的噪声。"
+
+msgctxt "piano.tooltip.pedal_shock"
+msgid "Thump from the pedal mechanism itself."
+msgstr "踏板机械本身的撞击声。"
+
+msgctxt "piano.tooltip.inharmonicity"
+msgid "String stiffness (B factor): higher values push upper partials sharper."
+msgstr "琴弦刚性（B 值）：越高，泛音偏离谐波越明显。"
+
+msgctxt "piano.tooltip.hammer_hardness"
+msgid "Hammer felt hardness: harder hammers sound brighter and more aggressive."
+msgstr "击槌呢毡硬度：越硬音色越亮、攻击性越强。"
+
+msgctxt "piano.tooltip.unison_detune"
+msgid "Detuning spread between the strings of each note's trichord."
+msgstr "每个音的三根弦之间的失谐幅度。"
+
+msgctxt "piano.tooltip.phantom_partials"
+msgid "Longitudinal phantom partials: extra high shimmer from string vibration."
+msgstr "纵向幻泛音：琴弦纵向振动带来的额外高频闪烁感。"
+
+msgctxt "piano.tooltip.mic_close"
+msgid "Close microphone pair over the bridges: direct, detailed sound."
+msgstr "琴桥上方的近场话筒对：直接、细节丰富的声音。"
+
+msgctxt "piano.tooltip.mic_player"
+msgid "Microphones at the player's seat: what the pianist hears."
+msgstr "演奏者座位处的话筒：钢琴家听到的声音。"
+
+msgctxt "piano.tooltip.mic_ambient"
+msgid "Hall microphones in the room: spacious, reverberant sound."
+msgstr "厅堂中的氛围话筒：开阔、带混响的声音。"
+
+msgctxt "piano.tooltip.lid_angle"
+msgid "Grand lid opening angle: wider sounds louder and brighter."
+msgstr "三角琴盖开合角度：开得越大声音越响亮。"
+
+msgctxt "piano.tooltip.master_gain"
+msgid "Overall output volume."
+msgstr "总输出音量。"
+
+msgctxt "guitar.tooltip.tone"
+msgid "Passive tone control: darker to brighter."
+msgstr "被动音色控制：从暗到亮。"
+
+msgctxt "guitar.tooltip.palm_mute"
+msgid "Palm muting depth on picked notes."
+msgstr "拨弦时手掌闷音的深度。"
+
+msgctxt "guitar.tooltip.pluck_pos"
+msgid "Where the string is plucked, from bridge to neck."
+msgstr "拨弦位置，从琴桥到琴颈。"
+
+msgctxt "guitar.tooltip.strum_speed"
+msgid "Speed of the strum across the strings."
+msgstr "扫弦划过琴弦的速度。"
+
+msgctxt "guitar.tooltip.fret_buzz"
+msgid "Fret buzz amount."
+msgstr "打品杂音的量。"
+
+msgctxt "guitar.tooltip.finger_squeak"
+msgid "Finger squeak noise when shifting positions."
+msgstr "换把位时手指摩擦弦的杂音。"
+
+msgctxt "guitar.tooltip.amp_drive"
+msgid "Amp overdrive amount."
+msgstr "音箱过载程度。"
+
+msgctxt "guitar.tooltip.amp_bass"
+msgid "Amp bass EQ."
+msgstr "音箱低频均衡。"
+
+msgctxt "guitar.tooltip.amp_middle"
+msgid "Amp middle EQ."
+msgstr "音箱中频均衡。"
+
+msgctxt "guitar.tooltip.amp_treble"
+msgid "Amp treble EQ."
+msgstr "音箱高频均衡。"
+
+msgctxt "guitar.tooltip.amp_presence"
+msgid "Amp presence: high-frequency air and bite."
+msgstr "音箱临场感：高频空气感与咬合力。"
+
+msgctxt "guitar.tooltip.amp_sag"
+msgid "Power-supply sag: how much the amp compresses under load."
+msgstr "电源塌陷：音箱在大动态下压缩的程度。"
+
+msgctxt "guitar.tooltip.bpm"
+msgid "Tempo for the groove pattern player."
+msgstr "律动型播放器的速度。"
+
+msgctxt "guitar.tooltip.master_gain"
+msgid "Overall output volume."
+msgstr "总输出音量。"
+
+msgctxt "bass.tooltip.pluck_position"
+msgid "Where the string is plucked, from bridge to neck."
+msgstr "拨弦位置，从琴桥到琴颈。"
+
+msgctxt "bass.tooltip.pickup_position"
+msgid "Pickup position along the string."
+msgstr "拾音器在弦上的位置。"
+
+msgctxt "bass.tooltip.tone"
+msgid "Tone control: darker to brighter."
+msgstr "音色控制：从暗到亮。"
+
+msgctxt "bass.tooltip.fret_buzz"
+msgid "Fret buzz amount."
+msgstr "打品杂音的量。"
+
+msgctxt "bass.tooltip.body_mix"
+msgid "Body resonance mix: how much of the instrument body sound is blended in."
+msgstr "琴体共鸣混合量：混入多少琴体本身的声音。"
+
+msgctxt "bass.tooltip.drive"
+msgid "Drive amount: tube/FET saturation."
+msgstr "驱动量：电子管/场效应管饱和度。"
+
+msgctxt "bass.tooltip.master_gain"
+msgid "Overall output volume."
+msgstr "总输出音量。"
+
+msgctxt "piano.tooltip.velocity_curve"
+msgid "Drag points to shape velocity. Double-click / right-click resets a point."
+msgstr "拖动圆点改变力度曲线；双击或右键可复位圆点。"
+
+msgctxt "piano.tooltip.lid"
+msgid "Drag to open or close the lid."
+msgstr "拖动开合琴盖。"

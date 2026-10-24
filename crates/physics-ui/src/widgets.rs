@@ -220,6 +220,7 @@ pub fn parameter_knob<P: Param + 'static>(
     label: &'static str,
     param: &P,
     cell_width: f32,
+    tooltip: &'static str,
 ) {
     let param_base = ParamWidgetBase::new(cx, param);
     let unmodulated = param_base.unmodulated_signal(cx);
@@ -248,7 +249,15 @@ pub fn parameter_knob<P: Param + 'static>(
         .height(Pixels(14.0));
     })
     .class("knob-cell")
-    .width(Pixels(cell_width));
+    .width(Pixels(cell_width))
+    .tooltip(move |cx| {
+        Tooltip::new(cx, |cx| {
+            // Fixed width so long descriptions wrap: Vizia's tooltip placement
+            // measures the box before unwrapped text lays out, and an
+            // unconstrained label overflows the window edge on right-side cells.
+            Label::new(cx, tooltip).width(Pixels(240.0));
+        })
+    });
 }
 
 fn apply_wheel_step(param_ptr: ParamPtr, current_normalized: &mut f32, requested_normalized: f32) {

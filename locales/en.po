@@ -784,3 +784,147 @@ msgstr "35/36 kick · 38 snare · 41–51 kit"
 #~ msgctxt "piano.title"
 #~ msgid "PHYSICS PIANO"
 #~ msgstr "PHYSICS PIANO"
+
+msgctxt "piano.tooltip.sustain"
+msgid "How much the sustain pedal holds notes after you lift the keys."
+msgstr "How much the sustain pedal holds notes after you lift the keys."
+
+msgctxt "piano.tooltip.key_action"
+msgid "Loudness of keybed thumps and escapement clicks."
+msgstr "Loudness of keybed thumps and escapement clicks."
+
+msgctxt "piano.tooltip.damper_noise"
+msgid "Noise of dampers lifting off and landing on the strings."
+msgstr "Noise of dampers lifting off and landing on the strings."
+
+msgctxt "piano.tooltip.pedal_shock"
+msgid "Thump from the pedal mechanism itself."
+msgstr "Thump from the pedal mechanism itself."
+
+msgctxt "piano.tooltip.inharmonicity"
+msgid "String stiffness (B factor): higher values push upper partials sharper."
+msgstr "String stiffness (B factor): higher values push upper partials sharper."
+
+msgctxt "piano.tooltip.hammer_hardness"
+msgid "Hammer felt hardness: harder hammers sound brighter and more aggressive."
+msgstr "Hammer felt hardness: harder hammers sound brighter and more aggressive."
+
+msgctxt "piano.tooltip.unison_detune"
+msgid "Detuning spread between the strings of each note's trichord."
+msgstr "Detuning spread between the strings of each note's trichord."
+
+msgctxt "piano.tooltip.phantom_partials"
+msgid "Longitudinal phantom partials: extra high shimmer from string vibration."
+msgstr "Longitudinal phantom partials: extra high shimmer from string vibration."
+
+msgctxt "piano.tooltip.mic_close"
+msgid "Close microphone pair over the bridges: direct, detailed sound."
+msgstr "Close microphone pair over the bridges: direct, detailed sound."
+
+msgctxt "piano.tooltip.mic_player"
+msgid "Microphones at the player's seat: what the pianist hears."
+msgstr "Microphones at the player's seat: what the pianist hears."
+
+msgctxt "piano.tooltip.mic_ambient"
+msgid "Hall microphones in the room: spacious, reverberant sound."
+msgstr "Hall microphones in the room: spacious, reverberant sound."
+
+msgctxt "piano.tooltip.lid_angle"
+msgid "Grand lid opening angle: wider sounds louder and brighter."
+msgstr "Grand lid opening angle: wider sounds louder and brighter."
+
+msgctxt "piano.tooltip.master_gain"
+msgid "Overall output volume."
+msgstr "Overall output volume."
+
+msgctxt "guitar.tooltip.tone"
+msgid "Passive tone control: darker to brighter."
+msgstr "Passive tone control: darker to brighter."
+
+msgctxt "guitar.tooltip.palm_mute"
+msgid "Palm muting depth on picked notes."
+msgstr "Palm muting depth on picked notes."
+
+msgctxt "guitar.tooltip.pluck_pos"
+msgid "Where the string is plucked, from bridge to neck."
+msgstr "Where the string is plucked, from bridge to neck."
+
+msgctxt "guitar.tooltip.strum_speed"
+msgid "Speed of the strum across the strings."
+msgstr "Speed of the strum across the strings."
+
+msgctxt "guitar.tooltip.fret_buzz"
+msgid "Fret buzz amount."
+msgstr "Fret buzz amount."
+
+msgctxt "guitar.tooltip.finger_squeak"
+msgid "Finger squeak noise when shifting positions."
+msgstr "Finger squeak noise when shifting positions."
+
+msgctxt "guitar.tooltip.amp_drive"
+msgid "Amp overdrive amount."
+msgstr "Amp overdrive amount."
+
+msgctxt "guitar.tooltip.amp_bass"
+msgid "Amp bass EQ."
+msgstr "Amp bass EQ."
+
+msgctxt "guitar.tooltip.amp_middle"
+msgid "Amp middle EQ."
+msgstr "Amp middle EQ."
+
+msgctxt "guitar.tooltip.amp_treble"
+msgid "Amp treble EQ."
+msgstr "Amp treble EQ."
+
+msgctxt "guitar.tooltip.amp_presence"
+msgid "Amp presence: high-frequency air and bite."
+msgstr "Amp presence: high-frequency air and bite."
+
+msgctxt "guitar.tooltip.amp_sag"
+msgid "Power-supply sag: how much the amp compresses under load."
+msgstr "Power-supply sag: how much the amp compresses under load."
+
+msgctxt "guitar.tooltip.bpm"
+msgid "Tempo for the groove pattern player."
+msgstr "Tempo for the groove pattern player."
+
+msgctxt "guitar.tooltip.master_gain"
+msgid "Overall output volume."
+msgstr "Overall output volume."
+
+msgctxt "bass.tooltip.pluck_position"
+msgid "Where the string is plucked, from bridge to neck."
+msgstr "Where the string is plucked, from bridge to neck."
+
+msgctxt "bass.tooltip.pickup_position"
+msgid "Pickup position along the string."
+msgstr "Pickup position along the string."
+
+msgctxt "bass.tooltip.tone"
+msgid "Tone control: darker to brighter."
+msgstr "Tone control: darker to brighter."
+
+msgctxt "bass.tooltip.fret_buzz"
+msgid "Fret buzz amount."
+msgstr "Fret buzz amount."
+
+msgctxt "bass.tooltip.body_mix"
+msgid "Body resonance mix: how much of the instrument body sound is blended in."
+msgstr "Body resonance mix: how much of the instrument body sound is blended in."
+
+msgctxt "bass.tooltip.drive"
+msgid "Drive amount: tube/FET saturation."
+msgstr "Drive amount: tube/FET saturation."
+
+msgctxt "bass.tooltip.master_gain"
+msgid "Overall output volume."
+msgstr "Overall output volume."
+
+msgctxt "piano.tooltip.velocity_curve"
+msgid "Drag points to shape velocity. Double-click / right-click resets a point."
+msgstr "Drag points to shape velocity. Double-click / right-click resets a point."
+
+msgctxt "piano.tooltip.lid"
+msgid "Drag to open or close the lid."
+msgstr "Drag to open or close the lid."
