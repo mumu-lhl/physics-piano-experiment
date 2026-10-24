@@ -586,25 +586,27 @@ fn test_piano_pitch_bend_and_expression() {
 
 #[test]
 fn test_piano_velocity_curve_calibration() {
-    use physics_piano::engine::PianoEngine;
+    use physics_piano::engine::{PianoEngine, velocity_points_from_exponent};
 
     let sample_rate = 44100.0;
     let mut engine = PianoEngine::new(sample_rate, 15, false);
 
     let vel = 0.5;
 
-    // Soft curve (-1.0): easier to play loudly, effective vel > 0.5
-    engine.set_velocity_curve(-1.0);
+    // Soft curve (legacy exponent -1.0): easier to play loudly,
+    // effective vel > 0.5
+    engine.set_velocity_curve_points(velocity_points_from_exponent(-1.0));
     engine.note_on(60, vel);
     let energy_soft = engine.get_voice(60).unwrap().get_energy();
 
-    // Standard Linear curve (0.0): effective vel == 0.5
-    engine.set_velocity_curve(0.0);
+    // Standard Linear curve (legacy exponent 0.0): effective vel == 0.5
+    engine.set_velocity_curve_points(velocity_points_from_exponent(0.0));
     engine.note_on(62, vel);
     let energy_linear = engine.get_voice(62).unwrap().get_energy();
 
-    // Hard curve (+1.0): requires harder playing, effective vel < 0.5
-    engine.set_velocity_curve(1.0);
+    // Hard curve (legacy exponent +1.0): requires harder playing,
+    // effective vel < 0.5
+    engine.set_velocity_curve_points(velocity_points_from_exponent(1.0));
     engine.note_on(64, vel);
     let energy_hard = engine.get_voice(64).unwrap().get_energy();
 
