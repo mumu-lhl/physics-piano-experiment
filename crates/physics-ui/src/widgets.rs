@@ -2,6 +2,7 @@ use nice_plug::prelude::{Param, ParamPtr};
 use physics_presets::{Preset, PresetManager};
 use std::sync::Arc;
 use vizia_plug::vizia::prelude::*;
+use vizia_plug::widgets::param_base::ParamWidgetBase;
 use vizia_plug::widgets::*;
 
 use crate::{Language, translate};
@@ -208,6 +209,46 @@ pub fn parameter_slider<P: Param + 'static>(
     })
     .height(Pixels(23.0))
     .horizontal_gap(Pixels(6.0));
+}
+
+/// Builds a compact rotary parameter control: label above, knob, formatted
+/// value readout below. The knob itself is 40px; `cell_width` sets the cell
+/// (piano/bass groups use 120px for two cells per row, guitar uses 84px for
+/// three). Right-click restore (as on sliders) is not wired here yet.
+pub fn parameter_knob<P: Param + 'static>(
+    cx: &mut Context,
+    label: &'static str,
+    param: &P,
+    cell_width: f32,
+) {
+    let param_base = ParamWidgetBase::new(cx, param);
+    let unmodulated = param_base.unmodulated_signal(cx);
+    let display_value: Memo<String> = Memo::new(move |_| {
+        let current = unmodulated.get();
+        param_base.normalized_value_to_string(current, true)
+    });
+    // Knob labels sit above the knob with the value below, so the trailing
+    // colon the slider rows used as a separator is dropped for display.
+    let label = label.strip_suffix(':').unwrap_or(label);
+    VStack::new(cx, move |cx| {
+        Label::new(cx, label).class("knob-label");
+        ParamKnob::new(cx, param)
+            .width(Pixels(40.0))
+            .height(Pixels(40.0));
+        // The readout lives in a fixed-height box instead of directly in
+        // the cell: a Memo-bound label can measure as zero-height in
+        // flow layout, which let the next knob row start too high and
+        // overlap the readout. The box reserves the row's height no
+        // matter what the label measures.
+        VStack::new(cx, |cx| {
+            Label::new(cx, display_value).class("knob-value");
+        })
+        .class("knob-value-box")
+        .width(Stretch(1.0))
+        .height(Pixels(14.0));
+    })
+    .class("knob-cell")
+    .width(Pixels(cell_width));
 }
 
 fn apply_wheel_step(param_ptr: ParamPtr, current_normalized: &mut f32, requested_normalized: f32) {

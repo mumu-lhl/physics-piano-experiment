@@ -189,3 +189,18 @@ resize-handle:hover {
   alignment: center;
 }
 
+/* Rotary parameter knobs: gold arc and tick on the dark panel theme. */
+
+param-knob knob .knob-track {
+  color: #e5b842;
+}
+
+param-knob knob .knob-head {
+  background-color: #242735;
+  border-width: 2px;
+  border-color: #555b74;
+}
+
+param-knob knob .knob-tick {
+  background-color: #ffd778;
+}
