@@ -2779,8 +2779,9 @@ dependencies = [
 
 [[package]]
 name = "physics-bass"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
+ "atomic_float",
  "crossbeam-channel",
  "hound",
  "nice-assert-no-alloc",
@@ -2795,7 +2796,7 @@ dependencies = [
 
 [[package]]
 name = "physics-drum"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "crossbeam-channel",
  "hound",
@@ -2810,12 +2811,13 @@ dependencies = [
 
 [[package]]
 name = "physics-dsp"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "physics-guitar"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
+ "atomic_float",
  "clap-sys",
  "crossbeam-channel",
  "hound",
@@ -2834,7 +2836,7 @@ dependencies = [
 
 [[package]]
 name = "physics-piano"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "atomic_float",
  "clap-sys",
@@ -2865,11 +2867,14 @@ dependencies = [
 
 [[package]]
 name = "physics-ui"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
+ "atomic_float",
  "nice-plug",
+ "num-complex",
  "parking_lot",
  "physics-presets",
+ "realfft",
  "vizia_plug",
 ]
 
