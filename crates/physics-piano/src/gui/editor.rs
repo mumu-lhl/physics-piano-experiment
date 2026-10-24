@@ -32,8 +32,13 @@ use std::sync::atomic::{AtomicU32, Ordering};
 pub const EDITOR_WIDTH: u32 = 1080;
 pub const EDITOR_HEIGHT: u32 = 620;
 
-fn knob<P: Param + 'static>(cx: &mut Context, label: &'static str, param: &P) {
-    parameter_knob(cx, label, param, 120.0);
+fn knob<P: Param + 'static>(
+    cx: &mut Context,
+    label: &'static str,
+    param: &P,
+    tooltip: &'static str,
+) {
+    parameter_knob(cx, label, param, 120.0, tooltip);
 }
 
 struct PianoUiState {
@@ -781,7 +786,20 @@ pub fn create_vizia_piano_editor(
                     PianoLidWidget::new(cx, params.clone(), lang)
                         .width(Stretch(1.0))
                         .height(Pixels(150.0))
-                        .overflow(Overflow::Hidden);
+                        .overflow(Overflow::Hidden)
+                        .tooltip(move |cx| {
+                            Tooltip::new(cx, |cx| {
+                                Label::new(
+                                    cx,
+                                    translate(
+                                        lang,
+                                        "piano.tooltip.lid",
+                                        "Drag to open or close the lid.",
+                                    ),
+                                )
+                                .width(Pixels(240.0));
+                            })
+                        });
                     MicStageWidget::new(cx, params.clone(), lang)
                         .width(Stretch(1.0))
                         .height(Pixels(150.0));
@@ -801,11 +819,13 @@ pub fn create_vizia_piano_editor(
                                 cx,
                                 translate(lang, "piano.sustain", "Sustain:"),
                                 &params.sustain_pedal,
+                                translate(lang, "piano.tooltip.sustain", "How much the sustain pedal holds notes after you lift the keys."),
                             );
                             knob(
                                 cx,
                                 translate(lang, "piano.key_action", "Key Action:"),
                                 &params.key_noise,
+                                translate(lang, "piano.tooltip.key_action", "Loudness of keybed thumps and escapement clicks."),
                             );
                         })
                         .horizontal_gap(Pixels(8.0));
@@ -814,11 +834,13 @@ pub fn create_vizia_piano_editor(
                                 cx,
                                 translate(lang, "piano.damper_noise", "Damper Noise:"),
                                 &params.damper_noise,
+                                translate(lang, "piano.tooltip.damper_noise", "Noise of dampers lifting off and landing on the strings."),
                             );
                             knob(
                                 cx,
                                 translate(lang, "piano.pedal_shock", "Pedal Shock:"),
                                 &params.pedal_noise,
+                                translate(lang, "piano.tooltip.pedal_shock", "Thump from the pedal mechanism itself."),
                             );
                         })
                         .horizontal_gap(Pixels(8.0));
@@ -833,11 +855,13 @@ pub fn create_vizia_piano_editor(
                                 cx,
                                 translate(lang, "piano.inharmonicity", "Inharmonicity B:"),
                                 &params.inharmonicity_scale,
+                                translate(lang, "piano.tooltip.inharmonicity", "String stiffness (B factor): higher values push upper partials sharper."),
                             );
                             knob(
                                 cx,
                                 translate(lang, "piano.hammer_hardness", "Hammer Hardness:"),
                                 &params.hammer_hardness,
+                                translate(lang, "piano.tooltip.hammer_hardness", "Hammer felt hardness: harder hammers sound brighter and more aggressive."),
                             );
                         })
                         .horizontal_gap(Pixels(8.0));
@@ -846,11 +870,13 @@ pub fn create_vizia_piano_editor(
                                 cx,
                                 translate(lang, "piano.unison_detune", "Unison Detune:"),
                                 &params.unison_detuning,
+                                translate(lang, "piano.tooltip.unison_detune", "Detuning spread between the strings of each note's trichord."),
                             );
                             knob(
                                 cx,
                                 translate(lang, "piano.phantom_partials", "Phantom Partials:"),
                                 &params.phantom_gain,
+                                translate(lang, "piano.tooltip.phantom_partials", "Longitudinal phantom partials: extra high shimmer from string vibration."),
                             );
                         })
                         .horizontal_gap(Pixels(8.0));
@@ -868,11 +894,13 @@ pub fn create_vizia_piano_editor(
                                 cx,
                                 translate(lang, "piano.mic_close", "Close Mic:"),
                                 &params.mic_close,
+                                translate(lang, "piano.tooltip.mic_close", "Close microphone pair over the bridges: direct, detailed sound."),
                             );
                             knob(
                                 cx,
                                 translate(lang, "piano.mic_player", "Player Mic:"),
                                 &params.mic_player,
+                                translate(lang, "piano.tooltip.mic_player", "Microphones at the player's seat: what the pianist hears."),
                             );
                         })
                         .horizontal_gap(Pixels(8.0));
@@ -881,11 +909,13 @@ pub fn create_vizia_piano_editor(
                                 cx,
                                 translate(lang, "piano.mic_ambient", "Ambient Mic:"),
                                 &params.mic_ambient,
+                                translate(lang, "piano.tooltip.mic_ambient", "Hall microphones in the room: spacious, reverberant sound."),
                             );
                             knob(
                                 cx,
                                 translate(lang, "piano.lid_angle", "Lid Angle:"),
                                 &params.lid_angle,
+                                translate(lang, "piano.tooltip.lid_angle", "Grand lid opening angle: wider sounds louder and brighter."),
                             );
                         })
                         .horizontal_gap(Pixels(8.0));
@@ -900,6 +930,7 @@ pub fn create_vizia_piano_editor(
                                 cx,
                                 translate(lang, "piano.master_gain", "Master Gain:"),
                                 &params.master_gain,
+                                translate(lang, "piano.tooltip.master_gain", "Overall output volume."),
                             );
                             VStack::new(cx, |cx| {
                                 let label = translate(lang, "piano.velocity_curve", "Touch Curve:");
@@ -915,7 +946,23 @@ pub fn create_vizia_piano_editor(
                                 .height(Pixels(56.0));
                             })
                             .class("knob-cell")
-                            .width(Pixels(120.0));
+                            .width(Pixels(120.0))
+                            .tooltip(move |cx| {
+                                // Narrow label: this cell sits at the window's right edge,
+                                // where a centered tooltip wider than ~130px would overflow
+                                // (Vizia's auto-shift does not re-run once laid out).
+                                Tooltip::new(cx, |cx| {
+                                    Label::new(
+                                        cx,
+                                        translate(
+                                            lang,
+                                            "piano.tooltip.velocity_curve",
+                                            "Drag points to shape velocity. Double-click / right-click resets a point.",
+                                        ),
+                                    )
+                                    .width(Pixels(110.0));
+                                })
+                            });
                         })
                         .horizontal_gap(Pixels(8.0));
                         ParamButton::new(cx, &params.una_corda)
