@@ -14,14 +14,17 @@ use crate::engine::EngineEvent;
 use crate::gui::keyboard::PianoKeyboardWidget;
 use crate::gui::lid::PianoLidWidget;
 use crate::gui::mics::MicStageWidget;
-use crate::gui::scope::{LissajousScopeWidget, StereoVuMeterWidget};
+use crate::gui::scope::LissajousScopeWidget;
 use crate::nice_plugin::PhysicsPianoParams;
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::Language;
 use physics_ui::{
-    CancelParamGestureEvent, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
-    add_base_theme, map_param_history_event, parameter_slider, preset_choices, preset_display_name,
-    preset_panel, redraw_custom_view, set_param, setup_vizia_fonts, translate,
+    CancelParamGestureEvent, PresetBrowserAction, PresetBrowserItem, PresetBrowserSignals,
+    PresetPanelAction, PresetPanelLayout, PresetPanelSignals, SpectrumAnalyzerWidget,
+    StereoVuMeterWidget, add_base_theme, filter_browser_items, map_param_history_event,
+    parameter_knob, preset_browser, preset_browser_categories, preset_browser_items,
+    preset_choices, preset_display_name, preset_panel, redraw_custom_view, set_param,
+    setup_vizia_fonts, translate,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -29,8 +32,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 pub const EDITOR_WIDTH: u32 = 1080;
 pub const EDITOR_HEIGHT: u32 = 620;
 
-fn slider<P: Param + 'static>(cx: &mut Context, label: &'static str, param: &P) {
-    parameter_slider(cx, label, param, 104.0);
+fn knob<P: Param + 'static>(cx: &mut Context, label: &'static str, param: &P) {
+    parameter_knob(cx, label, param, 120.0);
 }
 
 struct PianoUiState {
@@ -40,6 +43,12 @@ struct PianoUiState {
     selected_name: Signal<String>,
     selected_id: Signal<String>,
     preset_choices: Signal<Vec<(String, String)>>,
+    browser_open: Signal<bool>,
+    browser_search: Signal<String>,
+    browser_category: Signal<Option<String>>,
+    browser_favorites_only: Signal<bool>,
+    browser_categories: Signal<Vec<String>>,
+    browser_filtered: Signal<Vec<PresetBrowserItem>>,
     language: Signal<Language>,
     language_atom: Arc<AtomicU8>,
     name_input: Signal<String>,
@@ -161,6 +170,23 @@ impl PianoUiState {
         self.can_redo.set(undo.can_redo());
     }
 
+    /// Refresh the preset dropdown rows and the browser rows/categories
+    /// after any preset list or filter change.
+    fn refresh_preset_signals(&self) {
+        let manager = self.manager.read();
+        let lang = self.language.get();
+        self.preset_choices.set(preset_choices(&manager, lang));
+        let items = preset_browser_items(&manager, lang);
+        self.browser_categories
+            .set(preset_browser_categories(&items));
+        self.browser_filtered.set(filter_browser_items(
+            &items,
+            &self.browser_search.get(),
+            self.browser_category.get().as_deref(),
+            self.browser_favorites_only.get(),
+        ));
+    }
+
     fn apply_history(&mut self, cx: &mut EventContext, redo: bool) {
         let changes = if redo {
             self.undo.write().redo()
@@ -194,11 +220,37 @@ impl Model for PianoUiState {
             PresetPanelAction::Undo => cx.emit(PianoUiEvent::Undo),
             PresetPanelAction::Redo => cx.emit(PianoUiEvent::Redo),
         });
+        event.map(|action: &PresetBrowserAction, _| match action {
+            PresetBrowserAction::Open => self.browser_open.set(true),
+            PresetBrowserAction::Close => self.browser_open.set(false),
+            PresetBrowserAction::SetSearch(text) => {
+                self.browser_search.set(text.clone());
+                self.refresh_preset_signals();
+            }
+            PresetBrowserAction::SetCategory(category) => {
+                self.browser_category.set(category.clone());
+                self.refresh_preset_signals();
+            }
+            PresetBrowserAction::ToggleFavoritesOnly => {
+                let next = !self.browser_favorites_only.get();
+                self.browser_favorites_only.set(next);
+                self.refresh_preset_signals();
+            }
+            PresetBrowserAction::ToggleFavorite(id) => {
+                let _ = self.manager.write().toggle_favorite(id);
+                self.refresh_preset_signals();
+            }
+            PresetBrowserAction::Select(id) => {
+                cx.emit(PianoUiEvent::SelectPreset(id.clone()));
+                self.browser_open.set(false);
+            }
+        });
         event.map(|event, _| match event {
             PianoUiEvent::RefreshDisplay => {
                 redraw_custom_view(cx, "piano-keyboard-widget");
                 redraw_custom_view(cx, "lissajous-scope-widget");
                 redraw_custom_view(cx, "stereo-vu-meter-widget");
+                redraw_custom_view(cx, "spectrum-analyzer-widget");
             }
             PianoUiEvent::PreviousPreset | PianoUiEvent::NextPreset => {
                 let next = matches!(event, PianoUiEvent::NextPreset);
@@ -247,8 +299,7 @@ impl Model for PianoUiState {
                     self.name_input.set(display_name);
                     self.is_user_preset
                         .set(self.manager.read().is_user_preset(id));
-                    self.preset_choices
-                        .set(preset_choices(&self.manager.read(), self.language.get()));
+                    self.refresh_preset_signals();
                     self.set_undo_state();
                 }
             }
@@ -261,8 +312,7 @@ impl Model for PianoUiState {
                     self.selected_name.set(display_name.clone());
                     self.name_input.set(display_name);
                 }
-                self.preset_choices
-                    .set(preset_choices(&self.manager.read(), lang));
+                self.refresh_preset_signals();
                 redraw_custom_view(cx, "piano-lid-widget");
                 redraw_custom_view(cx, "mic-stage-widget");
             }
@@ -299,8 +349,7 @@ impl Model for PianoUiState {
                     self.selected_name.set(name.clone());
                     self.name_input.set(name);
                     self.is_user_preset.set(true);
-                    self.preset_choices
-                        .set(preset_choices(&self.manager.read(), self.language.get()));
+                    self.refresh_preset_signals();
                 }
             }
             PianoUiEvent::Rename => {
@@ -314,8 +363,7 @@ impl Model for PianoUiState {
                             .unwrap_or(false)
                     {
                         self.selected_name.set(name);
-                        self.preset_choices
-                            .set(preset_choices(&self.manager.read(), self.language.get()));
+                        self.refresh_preset_signals();
                     }
                 }
             }
@@ -335,8 +383,7 @@ impl Model for PianoUiState {
                     .delete_user_preset(&id)
                     .unwrap_or(false)
                 {
-                    self.preset_choices
-                        .set(preset_choices(&self.manager.read(), self.language.get()));
+                    self.refresh_preset_signals();
                     cx.emit(PianoUiEvent::SelectPreset("steinway_concert_d".to_string()));
                 }
             }
@@ -540,6 +587,8 @@ pub fn create_vizia_piano_editor(
     key_velocities: Arc<parking_lot::RwLock<[f32; 88]>>,
     recent_orbit_t: Arc<parking_lot::RwLock<Vec<f32>>>,
     recent_orbit_p: Arc<parking_lot::RwLock<Vec<f32>>>,
+    sample_history: Arc<parking_lot::RwLock<Vec<f32>>>,
+    sample_rate: f32,
     language_atom: Arc<AtomicU8>,
     gui_tx: Sender<EngineEvent>,
     preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
@@ -562,6 +611,13 @@ pub fn create_vizia_piano_editor(
         let preset_name = Signal::new(selected_name.clone());
         let preset_id = Signal::new(initial_id.clone());
         let preset_choices = Signal::new(preset_choices(&manager.read(), language_initial));
+        let browser_items_initial = preset_browser_items(&manager.read(), language_initial);
+        let browser_open = Signal::new(false);
+        let browser_search = Signal::new(String::new());
+        let browser_category = Signal::new(None);
+        let browser_favorites_only = Signal::new(false);
+        let browser_categories = Signal::new(preset_browser_categories(&browser_items_initial));
+        let browser_filtered = Signal::new(browser_items_initial);
         let language = Signal::new(language_initial);
         let language_view = language.clone();
         let language_ui = language.clone();
@@ -584,6 +640,12 @@ pub fn create_vizia_piano_editor(
             selected_name: preset_name.clone(),
             selected_id: preset_id,
             preset_choices: preset_choices.clone(),
+            browser_open: browser_open.clone(),
+            browser_search: browser_search.clone(),
+            browser_category: browser_category.clone(),
+            browser_favorites_only: browser_favorites_only.clone(),
+            browser_categories: browser_categories.clone(),
+            browser_filtered: browser_filtered.clone(),
             language,
             language_atom: language_atom.clone(),
             name_input: name_input.clone(),
@@ -611,10 +673,17 @@ pub fn create_vizia_piano_editor(
         let key_velocities_ui = key_velocities.clone();
         let recent_orbit_t_ui = recent_orbit_t.clone();
         let recent_orbit_p_ui = recent_orbit_p.clone();
+        let sample_history_ui = sample_history.clone();
         let gui_tx_ui = gui_tx.clone();
         let name_input_ui = name_input.clone();
         let preset_name_ui = preset_name.clone();
         let preset_choices_ui = preset_choices.clone();
+        let browser_open_ui = browser_open.clone();
+        let browser_search_ui = browser_search.clone();
+        let browser_category_ui = browser_category.clone();
+        let browser_favorites_only_ui = browser_favorites_only.clone();
+        let browser_categories_ui = browser_categories.clone();
+        let browser_filtered_ui = browser_filtered.clone();
         let language_view_ui = language_view.clone();
         let is_user_preset_controls = is_user_preset_ui.clone();
         let can_undo_controls = can_undo_ui.clone();
@@ -631,9 +700,16 @@ pub fn create_vizia_piano_editor(
             let key_velocities = key_velocities_ui.clone();
             let recent_orbit_t = recent_orbit_t_ui.clone();
             let recent_orbit_p = recent_orbit_p_ui.clone();
+            let sample_history = sample_history_ui.clone();
             let gui_tx = gui_tx_ui.clone();
             let initial_preset_name = preset_name_ui.clone();
             let preset_choices = preset_choices_ui.clone();
+            let browser_open = browser_open_ui.clone();
+            let browser_search = browser_search_ui.clone();
+            let browser_category = browser_category_ui.clone();
+            let browser_favorites_only = browser_favorites_only_ui.clone();
+            let browser_categories = browser_categories_ui.clone();
+            let browser_filtered = browser_filtered_ui.clone();
             let name_input = name_input_ui.clone();
             let language_view = language_view_ui.clone();
             let is_user_preset = is_user_preset_controls.clone();
@@ -656,7 +732,7 @@ pub fn create_vizia_piano_editor(
                     PresetPanelLayout {
                         preset_label: None,
                         preset_width: 190.0,
-                        name_width: 120.0,
+                        name_width: 220.0,
                         save_as_width: 60.0,
                         rename_width: 54.0,
                         overwrite_width: 64.0,
@@ -702,52 +778,64 @@ pub fn create_vizia_piano_editor(
                             translate(lang, "piano.rack_pedals", "PEDALS & MECHANICS"),
                         )
                         .class("rack-title");
-                        slider(
-                            cx,
-                            translate(lang, "piano.sustain", "Sustain:"),
-                            &params.sustain_pedal,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "piano.key_action", "Key Action:"),
-                            &params.key_noise,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "piano.damper_noise", "Damper Noise:"),
-                            &params.damper_noise,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "piano.pedal_shock", "Pedal Shock:"),
-                            &params.pedal_noise,
-                        );
+                        HStack::new(cx, |cx| {
+                            knob(
+                                cx,
+                                translate(lang, "piano.sustain", "Sustain:"),
+                                &params.sustain_pedal,
+                            );
+                            knob(
+                                cx,
+                                translate(lang, "piano.key_action", "Key Action:"),
+                                &params.key_noise,
+                            );
+                        })
+                        .horizontal_gap(Pixels(8.0));
+                        HStack::new(cx, |cx| {
+                            knob(
+                                cx,
+                                translate(lang, "piano.damper_noise", "Damper Noise:"),
+                                &params.damper_noise,
+                            );
+                            knob(
+                                cx,
+                                translate(lang, "piano.pedal_shock", "Pedal Shock:"),
+                                &params.pedal_noise,
+                            );
+                        })
+                        .horizontal_gap(Pixels(8.0));
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
                     VStack::new(cx, |cx| {
                         Label::new(cx, translate(lang, "piano.rack_string", "STRING & HAMMER"))
                             .class("rack-title");
-                        slider(
-                            cx,
-                            translate(lang, "piano.inharmonicity", "Inharmonicity B:"),
-                            &params.inharmonicity_scale,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "piano.hammer_hardness", "Hammer Hardness:"),
-                            &params.hammer_hardness,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "piano.unison_detune", "Unison Detune:"),
-                            &params.unison_detuning,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "piano.phantom_partials", "Phantom Partials:"),
-                            &params.phantom_gain,
-                        );
+                        HStack::new(cx, |cx| {
+                            knob(
+                                cx,
+                                translate(lang, "piano.inharmonicity", "Inharmonicity B:"),
+                                &params.inharmonicity_scale,
+                            );
+                            knob(
+                                cx,
+                                translate(lang, "piano.hammer_hardness", "Hammer Hardness:"),
+                                &params.hammer_hardness,
+                            );
+                        })
+                        .horizontal_gap(Pixels(8.0));
+                        HStack::new(cx, |cx| {
+                            knob(
+                                cx,
+                                translate(lang, "piano.unison_detune", "Unison Detune:"),
+                                &params.unison_detuning,
+                            );
+                            knob(
+                                cx,
+                                translate(lang, "piano.phantom_partials", "Phantom Partials:"),
+                                &params.phantom_gain,
+                            );
+                        })
+                        .horizontal_gap(Pixels(8.0));
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
@@ -757,47 +845,58 @@ pub fn create_vizia_piano_editor(
                             translate(lang, "piano.rack_spatial", "SPATIAL MICS & LID"),
                         )
                         .class("rack-title");
-                        slider(
-                            cx,
-                            translate(lang, "piano.mic_close", "Close Mic:"),
-                            &params.mic_close,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "piano.mic_player", "Player Mic:"),
-                            &params.mic_player,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "piano.mic_ambient", "Ambient Mic:"),
-                            &params.mic_ambient,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "piano.lid_angle", "Lid Angle:"),
-                            &params.lid_angle,
-                        );
+                        HStack::new(cx, |cx| {
+                            knob(
+                                cx,
+                                translate(lang, "piano.mic_close", "Close Mic:"),
+                                &params.mic_close,
+                            );
+                            knob(
+                                cx,
+                                translate(lang, "piano.mic_player", "Player Mic:"),
+                                &params.mic_player,
+                            );
+                        })
+                        .horizontal_gap(Pixels(8.0));
+                        HStack::new(cx, |cx| {
+                            knob(
+                                cx,
+                                translate(lang, "piano.mic_ambient", "Ambient Mic:"),
+                                &params.mic_ambient,
+                            );
+                            knob(
+                                cx,
+                                translate(lang, "piano.lid_angle", "Lid Angle:"),
+                                &params.lid_angle,
+                            );
+                        })
+                        .horizontal_gap(Pixels(8.0));
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
                     VStack::new(cx, |cx| {
                         Label::new(cx, translate(lang, "piano.rack_output", "OUTPUT"))
                             .class("rack-title");
-                        slider(
-                            cx,
-                            translate(lang, "piano.master_gain", "Master Gain:"),
-                            &params.master_gain,
-                        );
-                        slider(
-                            cx,
-                            translate(lang, "piano.velocity_curve", "Touch Curve:"),
-                            &params.velocity_curve,
-                        );
-                        ParamButton::new(cx, &params.una_corda).with_label(translate(
-                            lang,
-                            "piano.una_corda",
-                            "Una Corda",
-                        ));
+                        HStack::new(cx, |cx| {
+                            knob(
+                                cx,
+                                translate(lang, "piano.master_gain", "Master Gain:"),
+                                &params.master_gain,
+                            );
+                            knob(
+                                cx,
+                                translate(lang, "piano.velocity_curve", "Touch Curve:"),
+                                &params.velocity_curve,
+                            );
+                        })
+                        .horizontal_gap(Pixels(8.0));
+                        ParamButton::new(cx, &params.una_corda)
+                            .with_label(translate(
+                                lang,
+                                "piano.una_corda",
+                                "Una Corda",
+                            ))
+                            .width(Stretch(1.0));
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
@@ -816,7 +915,28 @@ pub fn create_vizia_piano_editor(
                 .height(Pixels(130.0))
                 .width(Stretch(1.0));
                 Label::new(cx, translate(lang, "piano.keyboard_hint", "Virtual 88-Key Keyboard (A0-C8) | Play via mouse or QWERTY keys (A-K / W,E,T,Y,U), Z/X to shift octave")).class("hint-text");
+                HStack::new(cx, |cx| {
+                    Label::new(cx, translate(lang, "gui.spectrum", "Spectrum")).class("hint-text");
+                    SpectrumAnalyzerWidget::new(cx, sample_history.clone(), sample_rate)
+                        .width(Stretch(1.0))
+                        .height(Pixels(56.0));
+                })
+                .height(Pixels(56.0))
+                .horizontal_gap(Pixels(8.0));
             });
+
+            preset_browser(
+                cx,
+                lang,
+                PresetBrowserSignals {
+                    open: browser_open,
+                    search: browser_search,
+                    category: browser_category,
+                    favorites_only: browser_favorites_only,
+                    categories: browser_categories,
+                    filtered: browser_filtered,
+                },
+            );
         });
     })
 }

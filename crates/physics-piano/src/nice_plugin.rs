@@ -238,6 +238,8 @@ pub struct PhysicsPiano {
     key_velocities: Arc<parking_lot::RwLock<[f32; 88]>>,
     recent_orbit_t: Arc<parking_lot::RwLock<Vec<f32>>>,
     recent_orbit_p: Arc<parking_lot::RwLock<Vec<f32>>>,
+    // Mono output history for the spectrum analyzer (same try-lock pattern)
+    sample_history: Arc<parking_lot::RwLock<Vec<f32>>>,
     language: Arc<AtomicU8>, // 0: English, 1: SimplifiedChinese
     preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
@@ -274,6 +276,10 @@ impl Default for PhysicsPiano {
             key_velocities: Arc::new(parking_lot::RwLock::new([0.0; 88])),
             recent_orbit_t: Arc::new(parking_lot::RwLock::new(vec![0.0; 64])),
             recent_orbit_p: Arc::new(parking_lot::RwLock::new(vec![0.0; 64])),
+            sample_history: Arc::new(parking_lot::RwLock::new(vec![
+                0.0;
+                physics_ui::SPECTRUM_HISTORY_LEN
+            ])),
             language: Arc::new(AtomicU8::new(lang_code)),
             preset_manager: Arc::new(parking_lot::RwLock::new(PresetManager::new(
                 "piano",
@@ -593,6 +599,20 @@ impl Plugin for PhysicsPiano {
             std::sync::atomic::Ordering::Relaxed,
         );
 
+        // Append mono output to the spectrum history (skip on contention).
+        if let Some(mut hist) = self.sample_history.try_write() {
+            if hist.len() + num_samples > physics_ui::SPECTRUM_HISTORY_LEN {
+                let excess = hist.len() + num_samples - physics_ui::SPECTRUM_HISTORY_LEN;
+                hist.drain(..excess);
+            }
+            hist.extend(
+                left_out[..num_samples]
+                    .iter()
+                    .zip(right_out[..num_samples].iter())
+                    .map(|(l, r)| (l + r) * 0.5),
+            );
+        }
+
         // Sync physically depressed keys for GUI keyboard visualization using lock-free atomics
         let mut low_mask = 0u64;
         let mut high_mask = 0u64;
@@ -641,6 +661,8 @@ impl Plugin for PhysicsPiano {
             self.key_velocities.clone(),
             self.recent_orbit_t.clone(),
             self.recent_orbit_p.clone(),
+            self.sample_history.clone(),
+            self.engine.sample_rate as f32,
             self.language.clone(),
             self.gui_event_tx.clone(),
             self.preset_manager.clone(),

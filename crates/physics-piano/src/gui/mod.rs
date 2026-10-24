@@ -12,4 +12,4 @@ pub use keyboard::PianoKeyboardWidget;
 pub use lid::PianoLidWidget;
 pub use mics::MicStageWidget;
 pub use physics_ui::Language;
-pub use scope::{LissajousScopeWidget, StereoVuMeterWidget};
+pub use scope::LissajousScopeWidget;
