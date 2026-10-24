@@ -7,18 +7,73 @@
 //! 3. Ambient Hall Decca Tree Mics (positioned into the room space for diffuse hall reflections)
 //! Each microphone features an acoustic sensitivity halo whose glowing radius and brightness
 //! dynamically scale with that perspective's gain level.
+//!
+//! Drag any microphone up or down to adjust its gain: the close pair shares one
+//! gain, the player mic has its own, and the Decca tree shares one. Each drag is
+//! one bracketed gesture, so it undoes in a single step.
 
 use super::skia_compat as vg;
 use super::skia_compat::CanvasExt;
 use physics_ui::{translate, translate_format};
 use std::sync::Arc;
 use vizia_plug::vizia::prelude::*;
+use vizia_plug::widgets::param_base::ParamWidgetBase;
 
 use crate::nice_plugin::PhysicsPianoParams;
 use physics_ui::Language;
 
+/// Which gain a grabbed microphone controls.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MicGroup {
+    Close,
+    Player,
+    Ambient,
+}
+
+/// Microphone capsule positions in window coordinates, computed from the widget
+/// bounds. Single source of truth for both drawing and drag hit-testing.
+struct MicPoints {
+    close_l: (f32, f32),
+    close_r: (f32, f32),
+    player: (f32, f32),
+    amb_l: (f32, f32),
+    amb_r: (f32, f32),
+    amb_c: (f32, f32),
+}
+
+fn mic_points(x: f32, y: f32, w: f32, h: f32) -> MicPoints {
+    let pw = w * 0.44;
+    let ph = h * 0.70;
+    let px = x + w * 0.08;
+    let py = y + h * 0.20;
+    let room_center_x = x + w * 0.76;
+    let room_center_y = y + h * 0.52;
+    MicPoints {
+        close_l: (px + pw * 0.32, py + ph * 0.50),
+        close_r: (px + pw * 0.62, py + ph * 0.40),
+        player: (px + pw * 0.50, py + ph + h * 0.08),
+        amb_l: (room_center_x - 18.0, room_center_y + 12.0),
+        amb_r: (room_center_x + 18.0, room_center_y + 12.0),
+        amb_c: (room_center_x, room_center_y - 18.0),
+    }
+}
+
+/// Grab radius around each capsule, generous enough to catch the 3.5px dot.
+const GRAB_RADIUS: f32 = 14.0;
+
+/// Gain change per pixel of vertical drag, matching the knob drag feel.
+const DRAG_SENSITIVITY: f32 = 0.0042;
+
+/// Mic gains span -60 dB to +6 dB.
+const GAIN_MIN_DB: f32 = -60.0;
+const GAIN_SPAN_DB: f32 = 66.0;
+
 pub struct MicStageWidget {
     params: Arc<PhysicsPianoParams>,
+    close_base: ParamWidgetBase,
+    player_base: ParamWidgetBase,
+    amb_base: ParamWidgetBase,
+    drag: Option<(MicGroup, f32, f32)>,
     language: Language,
 }
 
@@ -28,13 +83,90 @@ impl MicStageWidget {
         params: Arc<PhysicsPianoParams>,
         language: Language,
     ) -> Handle<'_, Self> {
-        Self { params, language }.build(cx, |_| {})
+        let close_base = ParamWidgetBase::new(cx, &params.mic_close);
+        let player_base = ParamWidgetBase::new(cx, &params.mic_player);
+        let amb_base = ParamWidgetBase::new(cx, &params.mic_ambient);
+        Self {
+            params,
+            close_base,
+            player_base,
+            amb_base,
+            drag: None,
+            language,
+        }
+        .build(cx, |_| {})
+    }
+
+    fn base_for(&self, group: MicGroup) -> ParamWidgetBase {
+        match group {
+            MicGroup::Close => self.close_base,
+            MicGroup::Player => self.player_base,
+            MicGroup::Ambient => self.amb_base,
+        }
+    }
+
+    fn gain_norm(&self, group: MicGroup) -> f32 {
+        let db = match group {
+            MicGroup::Close => self.params.mic_close.value(),
+            MicGroup::Player => self.params.mic_player.value(),
+            MicGroup::Ambient => self.params.mic_ambient.value(),
+        };
+        (db - GAIN_MIN_DB) / GAIN_SPAN_DB
     }
 }
 
 impl View for MicStageWidget {
     fn element(&self) -> Option<&'static str> {
         Some("mic-stage-widget")
+    }
+
+    fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
+        event.map(|window_event, meta| match window_event {
+            WindowEvent::MouseDown(MouseButton::Left) => {
+                let bounds = cx.bounds();
+                let (mx, my) = (cx.mouse().cursor_x, cx.mouse().cursor_y);
+                let pts = mic_points(bounds.x, bounds.y, bounds.w, bounds.h);
+                let candidates = [
+                    (MicGroup::Close, pts.close_l),
+                    (MicGroup::Close, pts.close_r),
+                    (MicGroup::Player, pts.player),
+                    (MicGroup::Ambient, pts.amb_l),
+                    (MicGroup::Ambient, pts.amb_r),
+                    (MicGroup::Ambient, pts.amb_c),
+                ];
+                let mut hit = None;
+                for (group, (x, y)) in candidates {
+                    let dx = mx - x;
+                    let dy = my - y;
+                    if dx * dx + dy * dy <= GRAB_RADIUS * GRAB_RADIUS {
+                        hit = Some(group);
+                        break;
+                    }
+                }
+                if let Some(group) = hit {
+                    self.drag = Some((group, self.gain_norm(group), my));
+                    cx.capture();
+                    self.base_for(group).begin_set_parameter(cx);
+                    meta.consume();
+                }
+            }
+            WindowEvent::MouseUp(MouseButton::Left) => {
+                if let Some((group, _, _)) = self.drag.take() {
+                    cx.release();
+                    self.base_for(group).end_set_parameter(cx);
+                    meta.consume();
+                }
+            }
+            WindowEvent::MouseMove(_x, y) => {
+                if let Some((group, start_norm, start_y)) = self.drag {
+                    let norm =
+                        (start_norm + (start_y - *y) * DRAG_SENSITIVITY).clamp(0.0, 1.0);
+                    self.base_for(group).set_normalized_value(cx, norm);
+                    meta.consume();
+                }
+            }
+            _ => {}
+        });
     }
 
     fn draw(&self, cx: &mut DrawContext, canvas: &Canvas) {
@@ -108,10 +240,9 @@ impl View for MicStageWidget {
         let g_amb = norm_gain(amb_db);
 
         // A. Close Stereo Pair (over the bridge)
-        let close_l_x = px + pw * 0.32;
-        let close_l_y = py + ph * 0.50;
-        let close_r_x = px + pw * 0.62;
-        let close_r_y = py + ph * 0.40;
+        let pts = mic_points(bounds.x, bounds.y, bounds.w, bounds.h);
+        let (close_l_x, close_l_y) = pts.close_l;
+        let (close_r_x, close_r_y) = pts.close_r;
 
         let draw_mic = |canvas: &Canvas,
                         mx: f32,
@@ -163,8 +294,7 @@ impl View for MicStageWidget {
         );
 
         // B. Player Seated Binaural Mics (in front of keyboard)
-        let player_x = px + pw * 0.50;
-        let player_y = py + ph + bounds.h * 0.08;
+        let (player_x, player_y) = pts.player;
         draw_mic(
             canvas,
             player_x,
@@ -177,12 +307,9 @@ impl View for MicStageWidget {
         // C. Ambient Decca Tree Mics (in the room on the right side)
         let room_center_x = bounds.x + bounds.w * 0.76;
         let room_center_y = bounds.y + bounds.h * 0.52;
-        let amb_tree_l_x = room_center_x - 18.0;
-        let amb_tree_l_y = room_center_y + 12.0;
-        let amb_tree_r_x = room_center_x + 18.0;
-        let amb_tree_r_y = room_center_y + 12.0;
-        let amb_tree_c_x = room_center_x;
-        let amb_tree_c_y = room_center_y - 18.0;
+        let (amb_tree_l_x, amb_tree_l_y) = pts.amb_l;
+        let (amb_tree_r_x, amb_tree_r_y) = pts.amb_r;
+        let (amb_tree_c_x, amb_tree_c_y) = pts.amb_c;
 
         // Decca Tree connection lines
         let mut tree_lines = vg::Path::new();

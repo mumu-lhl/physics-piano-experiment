@@ -928,3 +928,7 @@ msgstr "Drag points to shape velocity. Double-click / right-click resets a point
 msgctxt "piano.tooltip.lid"
 msgid "Drag to open or close the lid."
 msgstr "Drag to open or close the lid."
+
+msgctxt "piano.tooltip.mic_stage"
+msgid "Drag a mic up or down to change its gain."
+msgstr "Drag a mic up or down to change its gain."

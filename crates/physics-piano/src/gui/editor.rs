@@ -802,7 +802,20 @@ pub fn create_vizia_piano_editor(
                         });
                     MicStageWidget::new(cx, params.clone(), lang)
                         .width(Stretch(1.0))
-                        .height(Pixels(150.0));
+                        .height(Pixels(150.0))
+                        .tooltip(move |cx| {
+                            Tooltip::new(cx, |cx| {
+                                Label::new(
+                                    cx,
+                                    translate(
+                                        lang,
+                                        "piano.tooltip.mic_stage",
+                                        "Drag a mic up or down to change its gain.",
+                                    ),
+                                )
+                                .width(Pixels(240.0));
+                            })
+                        });
                 })
                 .height(Pixels(154.0))
                 .horizontal_gap(Pixels(8.0));

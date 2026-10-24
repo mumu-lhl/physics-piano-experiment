@@ -928,3 +928,7 @@ msgstr "拖动圆点改变力度曲线；双击或右键可复位圆点。"
 msgctxt "piano.tooltip.lid"
 msgid "Drag to open or close the lid."
 msgstr "拖动开合琴盖。"
+
+msgctxt "piano.tooltip.mic_stage"
+msgid "Drag a mic up or down to change its gain."
+msgstr "上下拖动话筒可改变其增益。"
