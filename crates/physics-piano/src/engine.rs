@@ -26,6 +26,36 @@ pub enum EngineOutEvent {
     NoteEnd { time: usize, key: u8 },
 }
 
+/// Fixed input abscissae of the velocity curve. The editor's curve points
+/// sit at these x positions; only their y values move.
+pub const VELOCITY_CURVE_X: [f64; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
+
+/// Converts a legacy exponent-style touch curve (-1..1) to the five curve
+/// points, so old presets keep exactly their touch response: each point is
+/// the old formula `v^(2^(curve*0.8))` evaluated at its abscissa.
+pub fn velocity_points_from_exponent(curve: f64) -> [f64; 5] {
+    let exponent = 2.0_f64.powf(curve.clamp(-1.0, 1.0) * 0.8);
+    let mut points = [0.0; 5];
+    for (i, x) in VELOCITY_CURVE_X.iter().enumerate() {
+        points[i] = x.powf(exponent);
+    }
+    points
+}
+
+/// Piecewise-linear velocity mapping through five curve points (kept as a
+/// free function so it can be tested without constructing an engine).
+pub fn map_velocity_through_points(points: &[f64; 5], velocity: f64) -> f64 {
+    let v = velocity.clamp(0.001, 1.0);
+    let mut i = 0;
+    while i < 4 && v > VELOCITY_CURVE_X[i + 1] {
+        i += 1;
+    }
+    let x0 = VELOCITY_CURVE_X[i];
+    let x1 = VELOCITY_CURVE_X[i + 1];
+    let t = if x1 > x0 { (v - x0) / (x1 - x0) } else { 0.0 };
+    (points[i] + t * (points[i + 1] - points[i])).clamp(0.001, 1.0)
+}
+
 pub struct PianoEngine {
     pub sample_rate: f64,
     pub dt: f64,
@@ -55,7 +85,10 @@ pub struct PianoEngine {
     pub pitch_bend_cents: f64,
     pub note_tuning_cents: [Option<f64>; 88],
     pub expression_gain: f64,
-    pub velocity_curve: f64,
+    /// Velocity-curve output values at the five fixed input abscissae
+    /// ([`VELOCITY_CURVE_X`]); the three interior points are user-draggable,
+    /// the endpoints are always 0 and 1.
+    pub velocity_curve_points: [f64; 5],
 
     // Tier 6: Micro-Mechanical Action Noise Generators
     pub action_noise: KeyActionNoise,
@@ -117,7 +150,7 @@ impl PianoEngine {
             pitch_bend_cents: 0.0,
             note_tuning_cents: [None; 88],
             expression_gain: 1.0,
-            velocity_curve: 0.0,
+            velocity_curve_points: [0.0, 0.25, 0.5, 0.75, 1.0],
             action_noise,
             damper_whoosh,
             plate_shock,
@@ -145,8 +178,15 @@ impl PianoEngine {
         self.expression_gain = gain.clamp(0.0, 2.0);
     }
 
-    pub fn set_velocity_curve(&mut self, curve: f64) {
-        self.velocity_curve = curve.clamp(-1.0, 1.0);
+    pub fn set_velocity_curve_points(&mut self, points: [f64; 5]) {
+        for (i, p) in points.iter().enumerate() {
+            self.velocity_curve_points[i] = p.clamp(0.0, 1.0);
+        }
+    }
+
+    /// Maps an input velocity through the piecewise-linear curve points.
+    pub fn map_velocity(&self, velocity: f64) -> f64 {
+        map_velocity_through_points(&self.velocity_curve_points, velocity)
     }
 
     pub fn set_inharmonicity_scale(&mut self, scale: f64) {
@@ -319,12 +359,7 @@ impl PianoEngine {
         if self.active_keys.len() >= self.max_active_voices && !self.active_keys.contains(&key) {
             self.steal_voice();
         }
-        let effective_vel = if self.velocity_curve.abs() > 1e-4 {
-            let exponent = 2.0_f64.powf(self.velocity_curve * 0.8);
-            velocity.clamp(0.001, 1.0).powf(exponent).clamp(0.001, 1.0)
-        } else {
-            velocity.clamp(0.001, 1.0)
-        };
+        let effective_vel = self.map_velocity(velocity);
 
         self.action_noise.trigger_note_on(key, effective_vel);
         let unison_detuning = self.unison_detuning;
@@ -605,5 +640,60 @@ impl PianoEngine {
         self.damper_whoosh = DamperWhoosh::new(self.sample_rate);
         self.plate_shock = PlateShock::new(self.sample_rate);
         self.restrike_buzz = RestrikeBuzz::new(self.sample_rate);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linear_curve_is_identity() {
+        let points = [0.0, 0.25, 0.5, 0.75, 1.0];
+        for v in [0.1, 0.25, 0.4, 0.5, 0.625, 0.9] {
+            assert!(
+                (map_velocity_through_points(&points, v) - v).abs() < 1e-9,
+                "v={v}"
+            );
+        }
+    }
+
+    #[test]
+    fn piecewise_segments_interpolate() {
+        let points = [0.0, 0.5, 0.5, 0.5, 1.0];
+        assert!((map_velocity_through_points(&points, 0.125) - 0.25).abs() < 1e-9);
+        assert!((map_velocity_through_points(&points, 0.375) - 0.5).abs() < 1e-9);
+        assert!((map_velocity_through_points(&points, 0.875) - 0.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn velocity_mapping_clamps() {
+        let points = [0.0, 0.25, 0.5, 0.75, 1.0];
+        assert!((map_velocity_through_points(&points, 0.0) - 0.001).abs() < 1e-9);
+        assert!((map_velocity_through_points(&points, 2.0) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn exponent_conversion_preserves_old_formula() {
+        // Legacy exponent 0 is linear.
+        assert_eq!(
+            velocity_points_from_exponent(0.0),
+            [0.0, 0.25, 0.5, 0.75, 1.0]
+        );
+        // A soft (negative) curve lifts low velocities; endpoints stay 0/1.
+        let soft = velocity_points_from_exponent(-0.3);
+        assert_eq!(soft[0], 0.0);
+        assert_eq!(soft[4], 1.0);
+        assert!(soft[1] > 0.25 && soft[1] < 0.5);
+        assert!((soft[1] - 0.3097).abs() < 0.005);
+        // A hard (positive) curve suppresses low velocities.
+        let hard = velocity_points_from_exponent(0.3);
+        assert!(hard[1] < 0.25 && hard[1] > 0.0);
+        // Points stay strictly increasing, so the curve is a valid function.
+        for pts in [soft, hard] {
+            for w in pts.windows(2) {
+                assert!(w[0] < w[1]);
+            }
+        }
     }
 }
