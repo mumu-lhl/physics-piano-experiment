@@ -1,5 +1,6 @@
 //! Shared GUI support and theming for all physical instrument plugins.
 
+mod curve_editor;
 mod language;
 mod preset_browser;
 mod preset_panel;
@@ -9,6 +10,7 @@ mod theme;
 mod vu_meter;
 mod widgets;
 
+pub use curve_editor::VelocityCurveEditorWidget;
 pub use language::{Language, setup_vizia_fonts, translate, translate_format};
 pub use preset_browser::{
     PresetBrowserAction, PresetBrowserItem, PresetBrowserSignals, filter_browser_items,
