@@ -893,6 +893,58 @@ msgctxt "guitar.tooltip.master_gain"
 msgid "Overall output volume."
 msgstr "总输出音量。"
 
+msgctxt "guitar.chord.rack"
+msgid "CHORDS"
+msgstr "和弦"
+
+msgctxt "guitar.chord.root_label"
+msgid "Root:"
+msgstr "根音："
+
+msgctxt "guitar.chord.quality_label"
+msgid "Chord:"
+msgstr "和弦："
+
+msgctxt "guitar.chord.direction_label"
+msgid "Strum:"
+msgstr "扫弦："
+
+msgctxt "guitar.chord.strum"
+msgid "Strum"
+msgstr "扫弦"
+
+msgctxt "guitar.chord.quality.major"
+msgid "Major"
+msgstr "大三"
+
+msgctxt "guitar.chord.quality.minor"
+msgid "Minor"
+msgstr "小三"
+
+msgctxt "guitar.chord.quality.dom7"
+msgid "7"
+msgstr "属七"
+
+msgctxt "guitar.chord.quality.maj7"
+msgid "Maj7"
+msgstr "大七"
+
+msgctxt "guitar.chord.quality.min7"
+msgid "Min7"
+msgstr "小七"
+
+msgctxt "guitar.chord.direction.auto"
+msgid "Auto"
+msgstr "自动"
+
+msgctxt "guitar.chord.direction.down"
+msgid "Down"
+msgstr "下扫"
+
+msgctxt "guitar.chord.direction.up"
+msgid "Up"
+msgstr "上扫"
+
 msgctxt "bass.tooltip.pluck_position"
 msgid "Where the string is plucked, from bridge to neck."
 msgstr "拨弦位置，从琴桥到琴颈。"

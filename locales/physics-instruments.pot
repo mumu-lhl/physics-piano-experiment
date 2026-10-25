@@ -565,6 +565,71 @@ msgctxt "guitar.factory-preset.5"
 msgid "Heavy Metal Chug"
 msgstr ""
 
+#: crates/physics-guitar/src/gui/editor.rs:1292
+msgctxt "guitar.chord.rack"
+msgid "CHORDS"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1300
+msgctxt "guitar.chord.root_label"
+msgid "Root:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1318
+msgctxt "guitar.chord.quality_label"
+msgid "Chord:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1323
+msgctxt "guitar.chord.quality.major"
+msgid "Major"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1328
+msgctxt "guitar.chord.quality.minor"
+msgid "Minor"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1333
+msgctxt "guitar.chord.quality.dom7"
+msgid "7"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1337
+msgctxt "guitar.chord.quality.maj7"
+msgid "Maj7"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1342
+msgctxt "guitar.chord.quality.min7"
+msgid "Min7"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1355
+msgctxt "guitar.chord.direction_label"
+msgid "Strum:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1360
+msgctxt "guitar.chord.direction.auto"
+msgid "Auto"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1365
+msgctxt "guitar.chord.direction.down"
+msgid "Down"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1370
+msgctxt "guitar.chord.direction.up"
+msgid "Up"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1383
+msgctxt "guitar.chord.strum"
+msgid "Strum"
+msgstr ""
+
 #: crates/physics-bass/src/gui.rs:237
 msgctxt "bass.preset.default-name"
 msgid "Custom Bass"
