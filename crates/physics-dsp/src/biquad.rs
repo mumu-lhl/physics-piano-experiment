@@ -156,6 +156,26 @@ impl Biquad {
         )
     }
 
+    /// Second-order low-shelf filter with slope 1 (Q ~= 0.707).
+    /// Mirrors [`Self::high_shelf`] with the RBJ low-shelf coefficients.
+    pub fn low_shelf(sample_rate: f64, frequency: f64, gain_db: f64) -> Self {
+        let a = 10.0f64.powf(gain_db / 40.0);
+        let w0 = Self::angular_frequency(sample_rate, frequency);
+        let cos_w0 = w0.cos();
+        let sin_w0 = w0.sin();
+        let alpha = sin_w0 / 2.0 * (2.0f64).sqrt();
+        let two_sqrt_a_alpha = 2.0 * a.sqrt() * alpha;
+
+        let a0 = (a + 1.0) + (a - 1.0) * cos_w0 + two_sqrt_a_alpha;
+        let b0 = a * ((a + 1.0) - (a - 1.0) * cos_w0 + two_sqrt_a_alpha);
+        let b1 = 2.0 * a * ((a - 1.0) - (a + 1.0) * cos_w0);
+        let b2 = a * ((a + 1.0) - (a - 1.0) * cos_w0 - two_sqrt_a_alpha);
+        let a1 = -2.0 * ((a - 1.0) + (a + 1.0) * cos_w0);
+        let a2 = (a + 1.0) + (a - 1.0) * cos_w0 - two_sqrt_a_alpha;
+
+        Self::from_coefficients(b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0)
+    }
+
     /// Second-order high-shelf filter with slope 1 (Q ~= 0.707).
     pub fn high_shelf(sample_rate: f64, frequency: f64, gain_db: f64) -> Self {
         let a = 10.0f64.powf(gain_db / 40.0);
@@ -198,6 +218,10 @@ impl Biquad {
 
     pub fn set_peaking(&mut self, sample_rate: f64, frequency: f64, q: f64, gain_db: f64) {
         self.replace_coefficients(Self::peaking(sample_rate, frequency, q, gain_db));
+    }
+
+    pub fn set_low_shelf(&mut self, sample_rate: f64, frequency: f64, gain_db: f64) {
+        self.replace_coefficients(Self::low_shelf(sample_rate, frequency, gain_db));
     }
 
     pub fn set_high_shelf(&mut self, sample_rate: f64, frequency: f64, gain_db: f64) {
