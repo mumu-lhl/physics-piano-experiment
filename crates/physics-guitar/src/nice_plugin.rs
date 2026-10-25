@@ -2,6 +2,7 @@
 
 use atomic_float::AtomicF32;
 use nice_plug::prelude::*;
+use physics_dsp::FxChain;
 use physics_presets::{PresetManager, UndoManager, guitar_factory_presets};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
@@ -106,6 +107,26 @@ pub struct PhysicsGuitarParams {
     /// Master Output Gain [-30 dB ~ +6 dB]
     #[id = "gain"]
     pub master_gain: FloatParam,
+
+    /// FX: low-shelf EQ gain at 120 Hz [-12 dB ~ +12 dB]
+    #[id = "fx_eq_low"]
+    pub fx_eq_low: FloatParam,
+
+    /// FX: peaking EQ gain at 1 kHz [-12 dB ~ +12 dB]
+    #[id = "fx_eq_mid"]
+    pub fx_eq_mid: FloatParam,
+
+    /// FX: high-shelf EQ gain at 8 kHz [-12 dB ~ +12 dB]
+    #[id = "fx_eq_high"]
+    pub fx_eq_high: FloatParam,
+
+    /// FX: reverb dry/wet mix [0.0 ~ 1.0], 0 = dry
+    #[id = "fx_reverb_mix"]
+    pub fx_reverb_mix: FloatParam,
+
+    /// FX: reverb decay [0.0 ~ 1.0], higher = longer tail
+    #[id = "fx_reverb_decay"]
+    pub fx_reverb_decay: FloatParam,
 }
 
 impl Default for PhysicsGuitarParams {
@@ -235,6 +256,53 @@ impl Default for PhysicsGuitarParams {
             .with_unit(" dB")
             .with_value_to_string(formatters::v2s_f32_gain_to_db(1))
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
+
+            fx_eq_low: FloatParam::new(
+                "EQ Low",
+                0.0,
+                FloatRange::Linear {
+                    min: -12.0,
+                    max: 12.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            fx_eq_mid: FloatParam::new(
+                "EQ Mid",
+                0.0,
+                FloatRange::Linear {
+                    min: -12.0,
+                    max: 12.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            fx_eq_high: FloatParam::new(
+                "EQ High",
+                0.0,
+                FloatRange::Linear {
+                    min: -12.0,
+                    max: 12.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            fx_reverb_mix: FloatParam::new(
+                "Reverb Mix",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            fx_reverb_decay: FloatParam::new(
+                "Reverb Decay",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
         }
     }
 }
@@ -263,6 +331,9 @@ pub struct PhysicsGuitar {
     pub params: Arc<PhysicsGuitarParams>,
     pub engine: GuitarEngine,
     pub sample_rate: f32,
+
+    // Insert FX (3-band EQ + reverb) applied to the engine output
+    pub fx: FxChain,
 
     // Shared state for GUI animation (atomic / lock-free)
     pub active_frets_shared: Arc<[AtomicU8; 6]>,
@@ -331,6 +402,7 @@ impl Default for PhysicsGuitar {
             params: Arc::new(PhysicsGuitarParams::default()),
             engine,
             sample_rate: sample_rate as f32,
+            fx: FxChain::new(sample_rate),
             active_frets_shared,
             string_energies_shared,
             string_profiles_shared,
@@ -396,6 +468,7 @@ impl Plugin for PhysicsGuitar {
             )
         };
         self.engine = GuitarEngine::new(self.sample_rate as f64, initial_set, initial_mode);
+        self.fx = FxChain::new(buffer_config.sample_rate as f64);
         true
     }
 
@@ -564,6 +637,19 @@ impl Plugin for PhysicsGuitar {
         self.engine.pluck_pos_ratio = self.params.pluck_pos.value() as f64;
         self.engine.master_volume = self.params.master_gain.value() as f64;
 
+        // Insert FX (3-band EQ + reverb) on the engine output. Neutral by
+        // default (0 dB EQ, dry mix), so existing presets sound unchanged
+        // until FX is dialed in. EQ and reverb are linear, so placing FX
+        // after the master volume is equivalent to placing it before.
+        self.fx.set_sample_rate(self.sample_rate as f64);
+        self.fx.set_params(
+            self.params.fx_eq_low.value() as f64,
+            self.params.fx_eq_mid.value() as f64,
+            self.params.fx_eq_high.value() as f64,
+            self.params.fx_reverb_mix.value() as f64,
+            self.params.fx_reverb_decay.value() as f64,
+        );
+
         // 3. Sample-accurate MIDI / MPE dispatch
         let mut next_event = context.next_event();
         let mut max_l = 0.0f32;
@@ -603,6 +689,7 @@ impl Plugin for PhysicsGuitar {
             }
 
             let (sl, sr) = self.engine.process_sample();
+            let (sl, sr) = self.fx.process_sample(sl, sr);
             let mut channels = channel_samples.into_iter();
             if let Some(left) = channels.next() {
                 *left = sl as f32;

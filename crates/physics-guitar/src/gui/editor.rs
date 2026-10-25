@@ -44,7 +44,7 @@ enum DiscreteParam {
 }
 
 pub const EDITOR_WIDTH: u32 = 1080;
-pub const EDITOR_HEIGHT: u32 = 635;
+pub const EDITOR_HEIGHT: u32 = 745;
 
 fn knob<P: Param + 'static>(
     cx: &mut Context,
@@ -164,6 +164,11 @@ fn guitar_value(params: &PhysicsGuitarParams, id: &str) -> Option<f32> {
         "groove_pattern" => params.groove_pattern.value() as f32,
         "groove_bpm" => params.groove_bpm.value(),
         "gain" => params.master_gain.value(),
+        "fx_eq_low" => params.fx_eq_low.value(),
+        "fx_eq_mid" => params.fx_eq_mid.value(),
+        "fx_eq_high" => params.fx_eq_high.value(),
+        "fx_reverb_mix" => params.fx_reverb_mix.value(),
+        "fx_reverb_decay" => params.fx_reverb_decay.value(),
         _ => return None,
     })
 }
@@ -192,6 +197,11 @@ fn set_guitar_value(cx: &mut EventContext, params: &PhysicsGuitarParams, id: &st
         "groove_pattern" => set_param(cx, &params.groove_pattern, value.round() as i32),
         "groove_bpm" => set_param(cx, &params.groove_bpm, value),
         "gain" => set_param(cx, &params.master_gain, value),
+        "fx_eq_low" => set_param(cx, &params.fx_eq_low, value),
+        "fx_eq_mid" => set_param(cx, &params.fx_eq_mid, value),
+        "fx_eq_high" => set_param(cx, &params.fx_eq_high, value),
+        "fx_reverb_mix" => set_param(cx, &params.fx_reverb_mix, value),
+        "fx_reverb_decay" => set_param(cx, &params.fx_reverb_decay, value),
         _ => {}
     }
 }
@@ -220,6 +230,11 @@ fn guitar_snapshot(params: &PhysicsGuitarParams) -> HashMap<String, f32> {
         "groove_pattern",
         "groove_bpm",
         "gain",
+        "fx_eq_low",
+        "fx_eq_mid",
+        "fx_eq_high",
+        "fx_reverb_mix",
+        "fx_reverb_decay",
     ]
     .into_iter()
     .filter_map(|id| guitar_value(params, id).map(|value| (id.to_string(), value)))
@@ -512,6 +527,16 @@ impl Model for GuitarUiState {
                 "groove_bpm"
             } else if ptr == params.master_gain.as_ptr() {
                 "gain"
+            } else if ptr == params.fx_eq_low.as_ptr() {
+                "fx_eq_low"
+            } else if ptr == params.fx_eq_mid.as_ptr() {
+                "fx_eq_mid"
+            } else if ptr == params.fx_eq_high.as_ptr() {
+                "fx_eq_high"
+            } else if ptr == params.fx_reverb_mix.as_ptr() {
+                "fx_reverb_mix"
+            } else if ptr == params.fx_reverb_decay.as_ptr() {
+                "fx_reverb_decay"
             } else {
                 return;
             };
@@ -584,6 +609,16 @@ impl Model for GuitarUiState {
                 ("groove_bpm", params.groove_bpm.value())
             } else if ptr == params.master_gain.as_ptr() {
                 ("gain", params.master_gain.value())
+            } else if ptr == params.fx_eq_low.as_ptr() {
+                ("fx_eq_low", params.fx_eq_low.value())
+            } else if ptr == params.fx_eq_mid.as_ptr() {
+                ("fx_eq_mid", params.fx_eq_mid.value())
+            } else if ptr == params.fx_eq_high.as_ptr() {
+                ("fx_eq_high", params.fx_eq_high.value())
+            } else if ptr == params.fx_reverb_mix.as_ptr() {
+                ("fx_reverb_mix", params.fx_reverb_mix.value())
+            } else if ptr == params.fx_reverb_decay.as_ptr() {
+                ("fx_reverb_decay", params.fx_reverb_decay.value())
             } else {
                 return;
             };
@@ -1179,6 +1214,46 @@ pub fn create_vizia_guitar_editor(
                 })
                 .height(Pixels(200.0))
                 .horizontal_gap(Pixels(8.0));
+
+                VStack::new(cx, |cx| {
+                    Label::new(cx, translate(lang, "fx.rack", "FX")).class("rack-title");
+                    HStack::new(cx, |cx| {
+                        knob(
+                            cx,
+                            translate(lang, "fx.eq_low", "EQ Low:"),
+                            &params.fx_eq_low,
+                            translate(lang, "fx.tooltip.eq_low", "Low shelf EQ at 120 Hz: boosts or cuts bass."),
+                        );
+                        knob(
+                            cx,
+                            translate(lang, "fx.eq_mid", "EQ Mid:"),
+                            &params.fx_eq_mid,
+                            translate(lang, "fx.tooltip.eq_mid", "Peaking EQ at 1 kHz: boosts or cuts the midrange."),
+                        );
+                        knob(
+                            cx,
+                            translate(lang, "fx.eq_high", "EQ High:"),
+                            &params.fx_eq_high,
+                            translate(lang, "fx.tooltip.eq_high", "High shelf EQ at 8 kHz: boosts or cuts treble."),
+                        );
+                        knob(
+                            cx,
+                            translate(lang, "fx.reverb_mix", "Reverb Mix:"),
+                            &params.fx_reverb_mix,
+                            translate(lang, "fx.tooltip.reverb_mix", "Reverb amount: 0 is dry, higher adds hall sound."),
+                        );
+                        knob(
+                            cx,
+                            translate(lang, "fx.reverb_decay", "Reverb Decay:"),
+                            &params.fx_reverb_decay,
+                            translate(lang, "fx.tooltip.reverb_decay", "Reverb length: longer decay means a bigger hall."),
+                        );
+                    })
+                    .horizontal_gap(Pixels(6.0));
+                })
+                .class("rack-box")
+                .width(Stretch(1.0))
+                .height(Pixels(110.0));
 
                 GuitarFretboardWidget::new(
                     cx,
