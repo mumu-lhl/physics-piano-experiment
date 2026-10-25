@@ -10,6 +10,7 @@ use vizia_plug::ViziaState;
 
 use crate::engine::{EngineEvent, EngineOutEvent, PianoEngine, velocity_points_from_exponent};
 use crate::gui::{Language, create_vizia_piano_editor, default_vizia_state};
+use physics_dsp::FxChain;
 use physics_presets::{PresetManager, UndoManager, piano_factory_presets};
 
 #[derive(Params)]
@@ -84,6 +85,26 @@ pub struct PhysicsPianoParams {
     /// Velocity curve point at 75% input velocity [0.0 ~ 1.0]
     #[id = "velocity_point_75"]
     pub velocity_point_75: FloatParam,
+
+    /// FX: low-shelf EQ gain at 120 Hz [-12 dB ~ +12 dB]
+    #[id = "fx_eq_low"]
+    pub fx_eq_low: FloatParam,
+
+    /// FX: peaking EQ gain at 1 kHz [-12 dB ~ +12 dB]
+    #[id = "fx_eq_mid"]
+    pub fx_eq_mid: FloatParam,
+
+    /// FX: high-shelf EQ gain at 8 kHz [-12 dB ~ +12 dB]
+    #[id = "fx_eq_high"]
+    pub fx_eq_high: FloatParam,
+
+    /// FX: reverb dry/wet mix [0.0 ~ 1.0], 0 = dry
+    #[id = "fx_reverb_mix"]
+    pub fx_reverb_mix: FloatParam,
+
+    /// FX: reverb decay [0.0 ~ 1.0], higher = longer tail
+    #[id = "fx_reverb_decay"]
+    pub fx_reverb_decay: FloatParam,
 }
 
 /// Migrates legacy velocity-curve preset entries to curve points. Old
@@ -255,6 +276,53 @@ impl Default for PhysicsPianoParams {
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )
             .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            fx_eq_low: FloatParam::new(
+                "EQ Low",
+                0.0,
+                FloatRange::Linear {
+                    min: -12.0,
+                    max: 12.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            fx_eq_mid: FloatParam::new(
+                "EQ Mid",
+                0.0,
+                FloatRange::Linear {
+                    min: -12.0,
+                    max: 12.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            fx_eq_high: FloatParam::new(
+                "EQ High",
+                0.0,
+                FloatRange::Linear {
+                    min: -12.0,
+                    max: 12.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            fx_reverb_mix: FloatParam::new(
+                "Reverb Mix",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            fx_reverb_decay: FloatParam::new(
+                "Reverb Decay",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
         }
     }
 }
@@ -290,6 +358,10 @@ pub struct PhysicsPiano {
     out_events_scratch: Vec<EngineOutEvent>,
     scratch_l: Vec<f64>,
     scratch_r: Vec<f64>,
+
+    // Insert FX (3-band EQ + reverb) applied to the engine mix before the
+    // master gain and soft limiter
+    fx: FxChain,
 
     // De-bounce/de-repeat for GUI virtual keyboard to prevent OS auto-repeat machine-gun re-strikes
     pending_gui_note_offs: HashMap<u8, usize>,
@@ -329,6 +401,7 @@ impl Default for PhysicsPiano {
             out_events_scratch: Vec::with_capacity(64),
             scratch_l: vec![0.0; 512],
             scratch_r: vec![0.0; 512],
+            fx: FxChain::new(48000.0),
             pending_gui_note_offs: HashMap::with_capacity(88),
             expired_gui_note_offs: Vec::with_capacity(88),
         }
@@ -369,6 +442,7 @@ impl Plugin for PhysicsPiano {
         let max_samples = buffer_config.max_buffer_size as usize;
         self.scratch_l = vec![0.0; max_samples];
         self.scratch_r = vec![0.0; max_samples];
+        self.fx = FxChain::new(buffer_config.sample_rate as f64);
 
         // Seed parameters before preparing voices so their first activation needs no coefficient
         // recalculation on the audio thread.
@@ -598,6 +672,22 @@ impl Plugin for PhysicsPiano {
             num_samples,
             &self.events_scratch,
             &mut self.out_events_scratch,
+            &mut self.scratch_l[..num_samples],
+            &mut self.scratch_r[..num_samples],
+        );
+
+        // 3b. Insert FX (3-band EQ + reverb) on the engine mix, before the
+        // master gain and soft limiter. Neutral by default (0 dB EQ, dry
+        // mix), so existing presets sound unchanged until FX is dialed in.
+        self.fx.set_sample_rate(self.engine.sample_rate);
+        self.fx.set_params(
+            self.params.fx_eq_low.value() as f64,
+            self.params.fx_eq_mid.value() as f64,
+            self.params.fx_eq_high.value() as f64,
+            self.params.fx_reverb_mix.value() as f64,
+            self.params.fx_reverb_decay.value() as f64,
+        );
+        self.fx.process_block(
             &mut self.scratch_l[..num_samples],
             &mut self.scratch_r[..num_samples],
         );
