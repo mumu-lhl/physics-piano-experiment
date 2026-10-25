@@ -941,3 +941,42 @@ fn test_guitar_oversampled_tube_amp_and_cabinet_ir() {
 
 
 
+
+#[test]
+fn test_chord_library_strum_frets_and_sounds_strings() {
+    use physics_guitar::core::chords::{ChordQuality, ChordRoot, chord_shape};
+    use physics_guitar::core::strummer::StrumDirection;
+
+    let mut engine = GuitarEngine::new(
+        44100.0,
+        GuitarStringSetType::Electric010,
+        GuitarInstrumentMode::Electric,
+    );
+    let shape = chord_shape(ChordRoot::C, ChordQuality::Major);
+    engine.strum_chord_shape(&shape, 0.9, StrumDirection::Down);
+    // The strummer direction is restored after the strum.
+    assert_eq!(engine.strummer.direction, StrumDirection::Auto);
+
+    // 18 ms strum stagger is ~794 samples; 8 blocks of 256 cover it.
+    let mut left = [0.0f32; 256];
+    let mut right = [0.0f32; 256];
+    for _ in 0..8 {
+        engine.process_block(&mut left, &mut right);
+    }
+
+    // Engine order: index 0 = high E. C major frets: high E open, B fret 1,
+    // G open, D fret 2, A fret 3; low E is muted and must stay unheld.
+    let expected_frets = [0, 1, 0, 2, 3];
+    for (i, fret) in expected_frets.iter().enumerate() {
+        assert!(engine.strings[i].is_held, "string {i} should be held");
+        assert_eq!(
+            engine.strings[i].current_fret, *fret,
+            "string {i} fret mismatch"
+        );
+        assert!(
+            engine.strings[i].total_energy() > 0.0,
+            "string {i} should be sounding"
+        );
+    }
+    assert!(!engine.strings[5].is_held, "muted low E must stay unheld");
+}

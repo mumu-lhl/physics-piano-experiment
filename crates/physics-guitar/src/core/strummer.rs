@@ -182,3 +182,71 @@ impl SmartStrummer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// C major in engine order (index 0 = high E): open, fret 1, open, fret 2, fret 3.
+    fn c_major_notes() -> Vec<(usize, u8, f64)> {
+        vec![
+            (0, 0, 0.9),
+            (1, 1, 0.9),
+            (2, 0, 0.9),
+            (3, 2, 0.9),
+            (4, 3, 0.9),
+        ]
+    }
+
+    fn string_order(plucks: &[StrumPluckEvent]) -> Vec<usize> {
+        plucks.iter().map(|p| p.string_index).collect()
+    }
+
+    #[test]
+    fn trigger_chord_down_strums_low_to_high_pitch() {
+        let mut strummer = SmartStrummer::new(44100.0);
+        strummer.direction = StrumDirection::Down;
+        strummer.trigger_chord(&c_major_notes());
+        // Down = low pitch string (index 4 here) first, delays increasing.
+        assert_eq!(string_order(&strummer.pending_plucks), vec![4, 3, 2, 1, 0]);
+        let delays: Vec<usize> = strummer
+            .pending_plucks
+            .iter()
+            .map(|p| p.delay_samples)
+            .collect();
+        assert!(delays.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(delays[0], 0);
+    }
+
+    #[test]
+    fn trigger_chord_up_strums_high_to_low_pitch() {
+        let mut strummer = SmartStrummer::new(44100.0);
+        strummer.direction = StrumDirection::Up;
+        strummer.trigger_chord(&c_major_notes());
+        assert_eq!(string_order(&strummer.pending_plucks), vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn trigger_chord_auto_alternates_strokes() {
+        let mut strummer = SmartStrummer::new(44100.0);
+        strummer.direction = StrumDirection::Auto;
+        strummer.trigger_chord(&c_major_notes());
+        assert_eq!(string_order(&strummer.pending_plucks), vec![4, 3, 2, 1, 0]);
+        strummer.pending_plucks.clear();
+        strummer.trigger_chord(&c_major_notes());
+        assert_eq!(string_order(&strummer.pending_plucks), vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn trigger_chord_instant_keeps_given_order() {
+        let mut strummer = SmartStrummer::new(44100.0);
+        strummer.set_strum_speed_ms(0.0);
+        strummer.direction = StrumDirection::Down;
+        strummer.trigger_chord(&c_major_notes());
+        assert_eq!(string_order(&strummer.pending_plucks), vec![0, 1, 2, 3, 4]);
+        assert!(strummer
+            .pending_plucks
+            .iter()
+            .all(|p| p.delay_samples == 0));
+    }
+}
