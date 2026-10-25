@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 pub const EDITOR_WIDTH: u32 = 1080;
-pub const EDITOR_HEIGHT: u32 = 620;
+pub const EDITOR_HEIGHT: u32 = 730;
 
 fn knob<P: Param + 'static>(
     cx: &mut Context,
@@ -100,6 +100,11 @@ fn piano_value(params: &PhysicsPianoParams, id: &str) -> Option<f32> {
         "velocity_point_25" => params.velocity_point_25.value(),
         "velocity_point_50" => params.velocity_point_50.value(),
         "velocity_point_75" => params.velocity_point_75.value(),
+        "fx_eq_low" => params.fx_eq_low.value(),
+        "fx_eq_mid" => params.fx_eq_mid.value(),
+        "fx_eq_high" => params.fx_eq_high.value(),
+        "fx_reverb_mix" => params.fx_reverb_mix.value(),
+        "fx_reverb_decay" => params.fx_reverb_decay.value(),
         "sustain" => params.sustain_pedal.value(),
         "gain" => params.master_gain.value(),
         "unacorda" => f32::from(params.una_corda.value()),
@@ -123,6 +128,11 @@ fn set_piano_value(cx: &mut EventContext, params: &PhysicsPianoParams, id: &str,
         "velocity_point_25" => set_param(cx, &params.velocity_point_25, value),
         "velocity_point_50" => set_param(cx, &params.velocity_point_50, value),
         "velocity_point_75" => set_param(cx, &params.velocity_point_75, value),
+        "fx_eq_low" => set_param(cx, &params.fx_eq_low, value),
+        "fx_eq_mid" => set_param(cx, &params.fx_eq_mid, value),
+        "fx_eq_high" => set_param(cx, &params.fx_eq_high, value),
+        "fx_reverb_mix" => set_param(cx, &params.fx_reverb_mix, value),
+        "fx_reverb_decay" => set_param(cx, &params.fx_reverb_decay, value),
         "sustain" => set_param(cx, &params.sustain_pedal, value),
         "gain" => set_param(cx, &params.master_gain, value),
         "unacorda" => set_param(cx, &params.una_corda, value >= 0.5),
@@ -146,6 +156,11 @@ fn piano_snapshot(params: &PhysicsPianoParams) -> HashMap<String, f32> {
         "velocity_point_25",
         "velocity_point_50",
         "velocity_point_75",
+        "fx_eq_low",
+        "fx_eq_mid",
+        "fx_eq_high",
+        "fx_reverb_mix",
+        "fx_reverb_decay",
         "sustain",
         "gain",
         "unacorda",
@@ -435,6 +450,16 @@ impl Model for PianoUiState {
                 "velocity_point_50"
             } else if ptr == params.velocity_point_75.as_ptr() {
                 "velocity_point_75"
+            } else if ptr == params.fx_eq_low.as_ptr() {
+                "fx_eq_low"
+            } else if ptr == params.fx_eq_mid.as_ptr() {
+                "fx_eq_mid"
+            } else if ptr == params.fx_eq_high.as_ptr() {
+                "fx_eq_high"
+            } else if ptr == params.fx_reverb_mix.as_ptr() {
+                "fx_reverb_mix"
+            } else if ptr == params.fx_reverb_decay.as_ptr() {
+                "fx_reverb_decay"
             } else if ptr == params.sustain_pedal.as_ptr() {
                 "sustain"
             } else if ptr == params.master_gain.as_ptr() {
@@ -491,6 +516,16 @@ impl Model for PianoUiState {
                 ("velocity_point_50", params.velocity_point_50.value())
             } else if ptr == params.velocity_point_75.as_ptr() {
                 ("velocity_point_75", params.velocity_point_75.value())
+            } else if ptr == params.fx_eq_low.as_ptr() {
+                ("fx_eq_low", params.fx_eq_low.value())
+            } else if ptr == params.fx_eq_mid.as_ptr() {
+                ("fx_eq_mid", params.fx_eq_mid.value())
+            } else if ptr == params.fx_eq_high.as_ptr() {
+                ("fx_eq_high", params.fx_eq_high.value())
+            } else if ptr == params.fx_reverb_mix.as_ptr() {
+                ("fx_reverb_mix", params.fx_reverb_mix.value())
+            } else if ptr == params.fx_reverb_decay.as_ptr() {
+                ("fx_reverb_decay", params.fx_reverb_decay.value())
             } else if ptr == params.sustain_pedal.as_ptr() {
                 ("sustain", params.sustain_pedal.value())
             } else if ptr == params.master_gain.as_ptr() {
@@ -991,6 +1026,46 @@ pub fn create_vizia_piano_editor(
                 })
                 .height(Pixels(170.0))
                 .horizontal_gap(Pixels(8.0));
+
+                VStack::new(cx, |cx| {
+                    Label::new(cx, translate(lang, "fx.rack", "FX")).class("rack-title");
+                    HStack::new(cx, |cx| {
+                        knob(
+                            cx,
+                            translate(lang, "fx.eq_low", "EQ Low:"),
+                            &params.fx_eq_low,
+                            translate(lang, "fx.tooltip.eq_low", "Low shelf EQ at 120 Hz: boosts or cuts bass."),
+                        );
+                        knob(
+                            cx,
+                            translate(lang, "fx.eq_mid", "EQ Mid:"),
+                            &params.fx_eq_mid,
+                            translate(lang, "fx.tooltip.eq_mid", "Peaking EQ at 1 kHz: boosts or cuts the midrange."),
+                        );
+                        knob(
+                            cx,
+                            translate(lang, "fx.eq_high", "EQ High:"),
+                            &params.fx_eq_high,
+                            translate(lang, "fx.tooltip.eq_high", "High shelf EQ at 8 kHz: boosts or cuts treble."),
+                        );
+                        knob(
+                            cx,
+                            translate(lang, "fx.reverb_mix", "Reverb Mix:"),
+                            &params.fx_reverb_mix,
+                            translate(lang, "fx.tooltip.reverb_mix", "Reverb amount: 0 is dry, higher adds hall sound."),
+                        );
+                        knob(
+                            cx,
+                            translate(lang, "fx.reverb_decay", "Reverb Decay:"),
+                            &params.fx_reverb_decay,
+                            translate(lang, "fx.tooltip.reverb_decay", "Reverb length: longer decay means a bigger hall."),
+                        );
+                    })
+                    .horizontal_gap(Pixels(8.0));
+                })
+                .class("rack-box")
+                .width(Stretch(1.0))
+                .height(Pixels(110.0));
 
                 PianoKeyboardWidget::new(
                     cx,
