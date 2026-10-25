@@ -3,13 +3,14 @@
 
 use crate::core::amp_cab::GuitarAmpCab;
 use crate::core::body::AcousticGuitarBody;
+use crate::core::chords::ChordShape;
 use crate::core::fretboard::FretboardRouter;
 use crate::core::groove::{GrooveAction, GrooveEngine};
 use crate::core::guitar_string::GuitarString;
 use crate::core::pickup::{MagneticPickup, PickupSelector, PickupType};
 use crate::core::pluck::{PluckExciter, PluckStyle};
 use crate::core::squeak::FingerSqueakGenerator;
-use crate::core::strummer::{SmartStrummer, StrumPluckEvent};
+use crate::core::strummer::{SmartStrummer, StrumDirection, StrumPluckEvent};
 use crate::params::{GuitarStringSetType, generate_guitar_string_set};
 
 const ELECTRIC_OUTPUT_TRIM: f64 = 0.5;
@@ -288,6 +289,32 @@ impl GuitarEngine {
             self.strings[str_idx].release();
             self.active_notes_on_string[str_idx] = None;
         }
+    }
+
+    /// Strums a chord-library shape. The direction applies to this strum
+    /// only: it is restored afterwards, like the groove player does.
+    /// Muted strings are untouched. Allocation-free: the notes are built
+    /// in a fixed array, not via [`ChordShape::engine_notes`].
+    pub fn strum_chord_shape(
+        &mut self,
+        shape: &ChordShape,
+        velocity: f64,
+        direction: StrumDirection,
+    ) {
+        // Engine order is high → low (index 0 = high E); shapes are stored
+        // low → high, the same reversal as `ChordShape::engine_notes`.
+        let mut notes = [(0usize, 0u8, 0.0f64); 6];
+        let mut count = 0;
+        for engine_idx in 0..6 {
+            if let Some(fret) = shape.frets[5 - engine_idx] {
+                notes[count] = (engine_idx, fret, velocity);
+                count += 1;
+            }
+        }
+        let prev_direction = self.strummer.direction;
+        self.strummer.direction = direction;
+        self.strummer.trigger_chord(&notes[..count]);
+        self.strummer.direction = prev_direction;
     }
 
     /// Handles Pitch Bend (e.g. string bending, whammy bar, or vibrato).

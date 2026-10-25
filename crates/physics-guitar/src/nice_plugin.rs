@@ -325,6 +325,15 @@ pub enum GuiGuitarEvent {
     MidiNoteOff {
         note: u8,
     },
+    /// Strum a chord from the editor's chord library. `frets` is stored
+    /// low string → high string (string 6 → string 1), `None` = muted.
+    /// The direction applies to this strum only; the strummer's saved
+    /// direction is restored afterwards, like the groove player does.
+    StrumChord {
+        frets: [Option<u8>; 6],
+        velocity: f32,
+        direction: crate::core::StrumDirection,
+    },
 }
 
 pub struct PhysicsGuitar {
@@ -541,6 +550,15 @@ impl Plugin for PhysicsGuitar {
                     } else {
                         self.engine.note_off(0, note);
                     }
+                }
+                GuiGuitarEvent::StrumChord {
+                    frets,
+                    velocity,
+                    direction,
+                } => {
+                    let shape = crate::core::ChordShape { frets };
+                    self.engine
+                        .strum_chord_shape(&shape, velocity as f64, direction);
                 }
             }
         }
