@@ -28,7 +28,7 @@ use vizia_plug::widgets::{ParamButton, ParamButtonExt, RawParamEvent, zoom_contr
 use vizia_plug::{ViziaEditor, ViziaTheming, create_vizia_editor};
 
 pub const EDITOR_WIDTH: u32 = 1120;
-pub const EDITOR_HEIGHT: u32 = 720;
+pub const EDITOR_HEIGHT: u32 = 830;
 
 #[derive(Clone)]
 struct DiscreteSelections {
@@ -64,6 +64,11 @@ fn bass_value(params: &PhysicsBassParams, id: &str) -> Option<f32> {
         "body_mix" => params.body_mix.value(),
         "drive" => params.drive.value(),
         "gain" => params.master_gain.value(),
+        "fx_eq_low" => params.fx_eq_low.value(),
+        "fx_eq_mid" => params.fx_eq_mid.value(),
+        "fx_eq_high" => params.fx_eq_high.value(),
+        "fx_reverb_mix" => params.fx_reverb_mix.value(),
+        "fx_reverb_decay" => params.fx_reverb_decay.value(),
         _ => return None,
     })
 }
@@ -80,6 +85,11 @@ fn set_bass_value(cx: &mut EventContext, params: &PhysicsBassParams, id: &str, v
         "body_mix" => set_param(cx, &params.body_mix, value),
         "drive" => set_param(cx, &params.drive, value),
         "gain" => set_param(cx, &params.master_gain, value),
+        "fx_eq_low" => set_param(cx, &params.fx_eq_low, value),
+        "fx_eq_mid" => set_param(cx, &params.fx_eq_mid, value),
+        "fx_eq_high" => set_param(cx, &params.fx_eq_high, value),
+        "fx_reverb_mix" => set_param(cx, &params.fx_reverb_mix, value),
+        "fx_reverb_decay" => set_param(cx, &params.fx_reverb_decay, value),
         _ => {}
     }
 }
@@ -96,6 +106,11 @@ fn bass_snapshot(params: &PhysicsBassParams) -> HashMap<String, f32> {
         "body_mix",
         "drive",
         "gain",
+        "fx_eq_low",
+        "fx_eq_mid",
+        "fx_eq_high",
+        "fx_reverb_mix",
+        "fx_reverb_decay",
     ]
     .into_iter()
     .filter_map(|id| bass_value(params, id).map(|value| (id.to_string(), value)))
@@ -384,6 +399,16 @@ impl Model for BassUiState {
                 "drive"
             } else if ptr == params.master_gain.as_ptr() {
                 "gain"
+            } else if ptr == params.fx_eq_low.as_ptr() {
+                "fx_eq_low"
+            } else if ptr == params.fx_eq_mid.as_ptr() {
+                "fx_eq_mid"
+            } else if ptr == params.fx_eq_high.as_ptr() {
+                "fx_eq_high"
+            } else if ptr == params.fx_reverb_mix.as_ptr() {
+                "fx_reverb_mix"
+            } else if ptr == params.fx_reverb_decay.as_ptr() {
+                "fx_reverb_decay"
             } else {
                 return;
             };
@@ -426,6 +451,16 @@ impl Model for BassUiState {
                 ("drive", params.drive.value())
             } else if ptr == params.master_gain.as_ptr() {
                 ("gain", params.master_gain.value())
+            } else if ptr == params.fx_eq_low.as_ptr() {
+                ("fx_eq_low", params.fx_eq_low.value())
+            } else if ptr == params.fx_eq_mid.as_ptr() {
+                ("fx_eq_mid", params.fx_eq_mid.value())
+            } else if ptr == params.fx_eq_high.as_ptr() {
+                ("fx_eq_high", params.fx_eq_high.value())
+            } else if ptr == params.fx_reverb_mix.as_ptr() {
+                ("fx_reverb_mix", params.fx_reverb_mix.value())
+            } else if ptr == params.fx_reverb_decay.as_ptr() {
+                ("fx_reverb_decay", params.fx_reverb_decay.value())
             } else {
                 return;
             };
@@ -844,6 +879,21 @@ pub fn create_vizia_bass_editor(
                 .width(Stretch(1.0))
                 .height(Pixels(145.0))
                 .horizontal_gap(Pixels(8.0));
+
+                VStack::new(cx, |cx| {
+                    Label::new(cx, translate(lang, "fx.rack", "FX")).class("rack-title");
+                    HStack::new(cx, |cx| {
+                        parameter_knob(cx, translate(lang, "fx.eq_low", "EQ Low:"), &params.fx_eq_low, 120.0, translate(lang, "fx.tooltip.eq_low", "Low shelf EQ at 120 Hz: boosts or cuts bass."));
+                        parameter_knob(cx, translate(lang, "fx.eq_mid", "EQ Mid:"), &params.fx_eq_mid, 120.0, translate(lang, "fx.tooltip.eq_mid", "Peaking EQ at 1 kHz: boosts or cuts the midrange."));
+                        parameter_knob(cx, translate(lang, "fx.eq_high", "EQ High:"), &params.fx_eq_high, 120.0, translate(lang, "fx.tooltip.eq_high", "High shelf EQ at 8 kHz: boosts or cuts treble."));
+                        parameter_knob(cx, translate(lang, "fx.reverb_mix", "Reverb Mix:"), &params.fx_reverb_mix, 120.0, translate(lang, "fx.tooltip.reverb_mix", "Reverb amount: 0 is dry, higher adds hall sound."));
+                        parameter_knob(cx, translate(lang, "fx.reverb_decay", "Reverb Decay:"), &params.fx_reverb_decay, 120.0, translate(lang, "fx.tooltip.reverb_decay", "Reverb length: longer decay means a bigger hall."));
+                    })
+                    .horizontal_gap(Pixels(8.0));
+                })
+                .class("rack-box")
+                .width(Stretch(1.0))
+                .height(Pixels(110.0));
 
                 Label::new(cx, translate(lang, "bass.fretboard_hint", "Open notes + 24 frets · Keys 1-5 open strings · A-L notes · Z/X octaves")).class("hint-text");
                 BassFretboardWidget::new(

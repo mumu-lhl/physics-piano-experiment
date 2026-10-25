@@ -7,6 +7,7 @@ use crate::{
 };
 use atomic_float::AtomicF32;
 use nice_plug::prelude::*;
+use physics_dsp::FxChain;
 use physics_presets::{PresetManager, UndoManager, bass_factory_presets};
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -47,6 +48,21 @@ pub struct PhysicsBassParams {
     pub drive: FloatParam,
     #[id = "gain"]
     pub master_gain: FloatParam,
+    /// FX: low-shelf EQ gain at 120 Hz [-12 dB ~ +12 dB]
+    #[id = "fx_eq_low"]
+    pub fx_eq_low: FloatParam,
+    /// FX: peaking EQ gain at 1 kHz [-12 dB ~ +12 dB]
+    #[id = "fx_eq_mid"]
+    pub fx_eq_mid: FloatParam,
+    /// FX: high-shelf EQ gain at 8 kHz [-12 dB ~ +12 dB]
+    #[id = "fx_eq_high"]
+    pub fx_eq_high: FloatParam,
+    /// FX: reverb dry/wet mix [0.0 ~ 1.0], 0 = dry
+    #[id = "fx_reverb_mix"]
+    pub fx_reverb_mix: FloatParam,
+    /// FX: reverb decay [0.0 ~ 1.0], higher = longer tail
+    #[id = "fx_reverb_decay"]
+    pub fx_reverb_decay: FloatParam,
 }
 
 impl Default for PhysicsBassParams {
@@ -115,6 +131,48 @@ impl Default for PhysicsBassParams {
             .with_unit(" dB")
             .with_value_to_string(formatters::v2s_f32_gain_to_db(1))
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
+            fx_eq_low: FloatParam::new(
+                "EQ Low",
+                0.0,
+                FloatRange::Linear {
+                    min: -12.0,
+                    max: 12.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            fx_eq_mid: FloatParam::new(
+                "EQ Mid",
+                0.0,
+                FloatRange::Linear {
+                    min: -12.0,
+                    max: 12.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            fx_eq_high: FloatParam::new(
+                "EQ High",
+                0.0,
+                FloatRange::Linear {
+                    min: -12.0,
+                    max: 12.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            fx_reverb_mix: FloatParam::new(
+                "Reverb Mix",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
+            fx_reverb_decay: FloatParam::new(
+                "Reverb Decay",
+                0.5,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
         }
     }
 }
@@ -142,6 +200,8 @@ pub struct PhysicsBass {
     pub params: Arc<PhysicsBassParams>,
     pub engine: BassEngine,
     sample_rate: f64,
+    // Insert FX (3-band EQ + reverb) applied to the engine output
+    fx: FxChain,
     pub active_frets_shared: Arc<[AtomicU8; 5]>,
     pub string_energies_shared: Arc<[AtomicU32; 5]>,
     pub string_profiles_shared: Arc<[[AtomicI32; 32]; 5]>,
@@ -169,6 +229,7 @@ impl Default for PhysicsBass {
             params: Arc::new(PhysicsBassParams::default()),
             engine: BassEngine::new(44_100.0, BassMode::Electric, false),
             sample_rate: 44_100.0,
+            fx: FxChain::new(44_100.0),
             active_frets_shared: Arc::new([
                 AtomicU8::new(255),
                 AtomicU8::new(255),
@@ -315,6 +376,7 @@ impl Plugin for PhysicsBass {
         self.reset_smoothers();
         self.sync_parameters();
         self.apply_smoothed_parameters();
+        self.fx = FxChain::new(self.sample_rate);
         true
     }
 
@@ -414,6 +476,18 @@ impl Plugin for PhysicsBass {
         }
 
         self.sync_parameters();
+        // Insert FX (3-band EQ + reverb) on the engine output. Neutral by
+        // default (0 dB EQ, dry mix), so existing presets sound unchanged
+        // until FX is dialed in. EQ and reverb are linear, so placing FX
+        // after the master gain is equivalent to placing it before.
+        self.fx.set_sample_rate(self.sample_rate);
+        self.fx.set_params(
+            self.params.fx_eq_low.value() as f64,
+            self.params.fx_eq_mid.value() as f64,
+            self.params.fx_eq_high.value() as f64,
+            self.params.fx_reverb_mix.value() as f64,
+            self.params.fx_reverb_decay.value() as f64,
+        );
         let mut next_event = context.next_event();
         let mut max_l = 0.0f32;
         let mut max_r = 0.0f32;
@@ -448,6 +522,7 @@ impl Plugin for PhysicsBass {
             }
             self.apply_smoothed_parameters();
             let (left, right) = self.engine.process_sample();
+            let (left, right) = self.fx.process_sample(left, right);
             let mut channels = channel_samples.into_iter();
             if let Some(channel) = channels.next() {
                 *channel = left as f32;
