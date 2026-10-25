@@ -932,3 +932,47 @@ msgstr "拖动开合琴盖。"
 msgctxt "piano.tooltip.mic_stage"
 msgid "Drag a mic up or down to change its gain."
 msgstr "上下拖动话筒可改变其增益。"
+
+msgctxt "fx.rack"
+msgid "FX"
+msgstr "效果器"
+
+msgctxt "fx.eq_low"
+msgid "EQ Low:"
+msgstr "低频均衡："
+
+msgctxt "fx.eq_mid"
+msgid "EQ Mid:"
+msgstr "中频均衡："
+
+msgctxt "fx.eq_high"
+msgid "EQ High:"
+msgstr "高频均衡："
+
+msgctxt "fx.reverb_mix"
+msgid "Reverb Mix:"
+msgstr "混响量："
+
+msgctxt "fx.reverb_decay"
+msgid "Reverb Decay:"
+msgstr "混响衰减："
+
+msgctxt "fx.tooltip.eq_low"
+msgid "Low shelf EQ at 120 Hz: boosts or cuts bass."
+msgstr "120 Hz 低频搁架均衡：提升或削减低频。"
+
+msgctxt "fx.tooltip.eq_mid"
+msgid "Peaking EQ at 1 kHz: boosts or cuts the midrange."
+msgstr "1 kHz 峰值均衡：提升或削减中频。"
+
+msgctxt "fx.tooltip.eq_high"
+msgid "High shelf EQ at 8 kHz: boosts or cuts treble."
+msgstr "8 kHz 高频搁架均衡：提升或削减高频。"
+
+msgctxt "fx.tooltip.reverb_mix"
+msgid "Reverb amount: 0 is dry, higher adds hall sound."
+msgstr "混响量：0 为干声，越大厅堂感越强。"
+
+msgctxt "fx.tooltip.reverb_decay"
+msgid "Reverb length: longer decay means a bigger hall."
+msgstr "混响长度：衰减越长，厅堂越大。"

@@ -932,3 +932,47 @@ msgstr "Drag to open or close the lid."
 msgctxt "piano.tooltip.mic_stage"
 msgid "Drag a mic up or down to change its gain."
 msgstr "Drag a mic up or down to change its gain."
+
+msgctxt "fx.rack"
+msgid "FX"
+msgstr "FX"
+
+msgctxt "fx.eq_low"
+msgid "EQ Low:"
+msgstr "EQ Low:"
+
+msgctxt "fx.eq_mid"
+msgid "EQ Mid:"
+msgstr "EQ Mid:"
+
+msgctxt "fx.eq_high"
+msgid "EQ High:"
+msgstr "EQ High:"
+
+msgctxt "fx.reverb_mix"
+msgid "Reverb Mix:"
+msgstr "Reverb Mix:"
+
+msgctxt "fx.reverb_decay"
+msgid "Reverb Decay:"
+msgstr "Reverb Decay:"
+
+msgctxt "fx.tooltip.eq_low"
+msgid "Low shelf EQ at 120 Hz: boosts or cuts bass."
+msgstr "Low shelf EQ at 120 Hz: boosts or cuts bass."
+
+msgctxt "fx.tooltip.eq_mid"
+msgid "Peaking EQ at 1 kHz: boosts or cuts the midrange."
+msgstr "Peaking EQ at 1 kHz: boosts or cuts the midrange."
+
+msgctxt "fx.tooltip.eq_high"
+msgid "High shelf EQ at 8 kHz: boosts or cuts treble."
+msgstr "High shelf EQ at 8 kHz: boosts or cuts treble."
+
+msgctxt "fx.tooltip.reverb_mix"
+msgid "Reverb amount: 0 is dry, higher adds hall sound."
+msgstr "Reverb amount: 0 is dry, higher adds hall sound."
+
+msgctxt "fx.tooltip.reverb_decay"
+msgid "Reverb length: longer decay means a bigger hall."
+msgstr "Reverb length: longer decay means a bigger hall."
