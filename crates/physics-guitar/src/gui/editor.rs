@@ -9,6 +9,7 @@ use vizia_plug::widgets::util::ModifiersExt;
 use vizia_plug::widgets::*;
 use vizia_plug::{ViziaEditor, ViziaState, ViziaTheming, create_vizia_editor};
 
+use crate::core::{ChordQuality, ChordRoot, ChordShape, StrumDirection, chord_shape};
 use crate::gui::fretboard_view::GuitarFretboardWidget;
 use crate::nice_plugin::{GuiGuitarEvent, PhysicsGuitarParams};
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
@@ -44,7 +45,7 @@ enum DiscreteParam {
 }
 
 pub const EDITOR_WIDTH: u32 = 1080;
-pub const EDITOR_HEIGHT: u32 = 745;
+pub const EDITOR_HEIGHT: u32 = 809;
 
 fn knob<P: Param + 'static>(
     cx: &mut Context,
@@ -66,6 +67,19 @@ fn discrete_selector(
     shared_discrete_selector(cx, label, selected, options, 92.0, move |cx, value| {
         set_discrete_param(cx, &params, param, value);
     });
+}
+
+/// Recomputes the chord rack's fingering readout ("C  x 3 2 0 1 0")
+/// from the currently selected root and quality.
+fn refresh_chord_display(
+    root: &Signal<i32>,
+    quality: &Signal<i32>,
+    display: &Signal<String>,
+) {
+    let r = ChordRoot::from_index(root.get());
+    let q = ChordQuality::from_index(quality.get());
+    let shape = chord_shape(r, q);
+    display.set(format!("{}  {}", ChordShape::name(r, q), shape.fingering_text()));
 }
 
 fn set_discrete_param(
@@ -808,6 +822,14 @@ pub fn create_vizia_guitar_editor(
             cabinet_model: Signal::new(params.cabinet_model.value()),
             groove_pattern: Signal::new(params.groove_pattern.value()),
         };
+        // Chord library state: GUI-only, not a plugin parameter and not
+        // part of presets. It lives outside the language Binding below so
+        // switching languages does not reset the selection.
+        let chord_root = Signal::new(0);
+        let chord_quality = Signal::new(0);
+        let chord_direction = Signal::new(0);
+        let chord_display = Signal::new(String::new());
+        refresh_chord_display(&chord_root, &chord_quality, &chord_display);
         let is_user_preset_ui = is_user_preset.clone();
         let can_undo_ui = can_undo.clone();
         let can_redo_ui = can_redo.clone();
@@ -868,6 +890,10 @@ pub fn create_vizia_guitar_editor(
         let can_undo_controls = can_undo_ui.clone();
         let can_redo_controls = can_redo_ui.clone();
         let discrete_controls = discrete.clone();
+        let chord_root_ui = chord_root.clone();
+        let chord_quality_ui = chord_quality.clone();
+        let chord_direction_ui = chord_direction.clone();
+        let chord_display_ui = chord_display.clone();
         let zoom_state_ui = zoom_state.clone();
         let peak_l_ui = peak_l.clone();
         let peak_r_ui = peak_r.clone();
@@ -894,6 +920,10 @@ pub fn create_vizia_guitar_editor(
             let can_undo = can_undo_controls.clone();
             let can_redo = can_redo_controls.clone();
             let discrete = discrete_controls.clone();
+            let chord_root = chord_root_ui.clone();
+            let chord_quality = chord_quality_ui.clone();
+            let chord_direction = chord_direction_ui.clone();
+            let chord_display = chord_display_ui.clone();
             let zoom_state = zoom_state_ui.clone();
             let peak_l = peak_l_ui.clone();
             let peak_r = peak_r_ui.clone();
@@ -1254,6 +1284,129 @@ pub fn create_vizia_guitar_editor(
                 .class("rack-box")
                 .width(Stretch(1.0))
                 .height(Pixels(110.0));
+
+                // Chord library: pick a chord, see its fingering, strum it.
+                // Selection is GUI-only state; only the Strum button sends
+                // an event to the audio thread.
+                VStack::new(cx, |cx| {
+                    Label::new(cx, translate(lang, "guitar.chord.rack", "CHORDS"))
+                        .class("rack-title");
+                    HStack::new(cx, |cx| {
+                        let root_sig = chord_root.clone();
+                        let quality_sig = chord_quality.clone();
+                        let display_sig = chord_display.clone();
+                        shared_discrete_selector(
+                            cx,
+                            translate(lang, "guitar.chord.root_label", "Root:"),
+                            chord_root.clone(),
+                            ChordRoot::ALL
+                                .iter()
+                                .enumerate()
+                                .map(|(i, r)| (i as i32, r.name().to_string()))
+                                .collect(),
+                            56.0,
+                            move |_cx, value| {
+                                root_sig.set(value);
+                                refresh_chord_display(&root_sig, &quality_sig, &display_sig);
+                            },
+                        );
+                        let root_sig = chord_root.clone();
+                        let quality_sig = chord_quality.clone();
+                        let display_sig = chord_display.clone();
+                        shared_discrete_selector(
+                            cx,
+                            translate(lang, "guitar.chord.quality_label", "Chord:"),
+                            chord_quality.clone(),
+                            vec![
+                                (
+                                    0,
+                                    translate(lang, "guitar.chord.quality.major", "Major")
+                                        .to_string(),
+                                ),
+                                (
+                                    1,
+                                    translate(lang, "guitar.chord.quality.minor", "Minor")
+                                        .to_string(),
+                                ),
+                                (
+                                    2,
+                                    translate(lang, "guitar.chord.quality.dom7", "7").to_string(),
+                                ),
+                                (
+                                    3,
+                                    translate(lang, "guitar.chord.quality.maj7", "Maj7")
+                                        .to_string(),
+                                ),
+                                (
+                                    4,
+                                    translate(lang, "guitar.chord.quality.min7", "Min7")
+                                        .to_string(),
+                                ),
+                            ],
+                            56.0,
+                            move |_cx, value| {
+                                quality_sig.set(value);
+                                refresh_chord_display(&root_sig, &quality_sig, &display_sig);
+                            },
+                        );
+                        let direction_sig = chord_direction.clone();
+                        shared_discrete_selector(
+                            cx,
+                            translate(lang, "guitar.chord.direction_label", "Strum:"),
+                            chord_direction.clone(),
+                            vec![
+                                (
+                                    0,
+                                    translate(lang, "guitar.chord.direction.auto", "Auto")
+                                        .to_string(),
+                                ),
+                                (
+                                    1,
+                                    translate(lang, "guitar.chord.direction.down", "Down")
+                                        .to_string(),
+                                ),
+                                (
+                                    2,
+                                    translate(lang, "guitar.chord.direction.up", "Up").to_string(),
+                                ),
+                            ],
+                            56.0,
+                            move |_cx, value| {
+                                direction_sig.set(value);
+                            },
+                        );
+                        let strum_root = chord_root.clone();
+                        let strum_quality = chord_quality.clone();
+                        let strum_direction = chord_direction.clone();
+                        let strum_tx = gui_tx.clone();
+                        Button::new(cx, |cx| {
+                            Label::new(cx, translate(lang, "guitar.chord.strum", "Strum"))
+                        })
+                        .class("btn-action")
+                        .on_press(move |_cx| {
+                            let shape = chord_shape(
+                                ChordRoot::from_index(strum_root.get()),
+                                ChordQuality::from_index(strum_quality.get()),
+                            );
+                            let direction = match strum_direction.get() {
+                                1 => StrumDirection::Down,
+                                2 => StrumDirection::Up,
+                                _ => StrumDirection::Auto,
+                            };
+                            let _ = strum_tx.send(GuiGuitarEvent::StrumChord {
+                                frets: shape.frets,
+                                velocity: 0.9,
+                                direction,
+                            });
+                        })
+                        .width(Pixels(64.0));
+                        Label::new(cx, chord_display.clone()).width(Stretch(1.0));
+                    })
+                    .horizontal_gap(Pixels(6.0));
+                })
+                .class("rack-box")
+                .width(Stretch(1.0))
+                .height(Pixels(64.0));
 
                 GuitarFretboardWidget::new(
                     cx,
