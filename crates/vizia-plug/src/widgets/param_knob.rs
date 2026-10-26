@@ -137,7 +137,11 @@ impl View for ParamKnob {
                 }
             }
             WindowEvent::MouseDoubleClick(MouseButton::Left) => {
-                self.dragging = false;
+                // Do NOT clear dragging here: the second press already began
+                // a gesture, and the following MouseUp ends it. Clearing
+                // would orphan that gesture (begin without end) and leak
+                // the pointer capture; the bracketed reset below is
+                // self-contained and leaves the drag balanced.
                 self.bracketed_set(cx, self.param_base.default_normalized_value());
                 meta.consume();
             }
