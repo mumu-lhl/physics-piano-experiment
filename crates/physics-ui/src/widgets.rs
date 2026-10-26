@@ -214,7 +214,9 @@ pub fn parameter_slider<P: Param + 'static>(
 /// Builds a compact rotary parameter control: label above, knob, formatted
 /// value readout below. The knob itself is 40px; `cell_width` sets the cell
 /// (piano/bass groups use 120px for two cells per row, guitar uses 84px for
-/// three). Right-click restore (as on sliders) is not wired here yet.
+/// three). Right-click restore mirrors the slider: during a drag it restores
+/// the pre-drag value and ends the drag; after a completed drag it discards
+/// that drag's undo record and restores inside a bracketed gesture.
 pub fn parameter_knob<P: Param + 'static>(
     cx: &mut Context,
     label: &'static str,
@@ -231,11 +233,78 @@ pub fn parameter_knob<P: Param + 'static>(
     // Knob labels sit above the knob with the value below, so the trailing
     // colon the slider rows used as a separator is dropped for display.
     let label = label.strip_suffix(':').unwrap_or(label);
+    let param_ptr = param.as_ptr();
     VStack::new(cx, move |cx| {
         Label::new(cx, label).class("knob-label");
-        ParamKnob::new(cx, param)
+        let mut knob = ParamKnob::new(cx, param)
             .width(Pixels(40.0))
             .height(Pixels(40.0));
+        let restore_state = Arc::new(parking_lot::Mutex::new(SliderRestoreState::default()));
+        let knob_entity = knob.entity();
+        knob.context().with_current(knob_entity, |cx| {
+            cx.add_listener(
+                move |_: &mut ParamKnob, cx: &mut EventContext, event: &mut Event| {
+                    event.map(|window, meta| match window {
+                        WindowEvent::MouseDown(MouseButton::Left) => {
+                            let bounds = cx.bounds();
+                            let mouse = cx.mouse();
+                            let inside = mouse.cursor_x >= bounds.x
+                                && mouse.cursor_x <= bounds.x + bounds.w
+                                && mouse.cursor_y >= bounds.y
+                                && mouse.cursor_y <= bounds.y + bounds.h;
+                            if inside {
+                                restore_state
+                                    .lock()
+                                    .begin(unsafe { param_ptr.unmodulated_normalized_value() });
+                            }
+                        }
+                        WindowEvent::MouseUp(MouseButton::Left) => {
+                            restore_state.lock().finish();
+                        }
+                        WindowEvent::MouseDown(MouseButton::Right) => {
+                            let bounds = cx.bounds();
+                            let mouse = cx.mouse();
+                            if mouse.cursor_x < bounds.x
+                                || mouse.cursor_x > bounds.x + bounds.w
+                                || mouse.cursor_y < bounds.y
+                                || mouse.cursor_y > bounds.y + bounds.h
+                            {
+                                return;
+                            }
+                            if let Some(point) = restore_state.lock().take_restore_value() {
+                                if point.completed {
+                                    // Discard the completed drag's undo record, then restore the
+                                    // parameter inside a properly bracketed host gesture.
+                                    cx.emit(CancelParamGestureEvent {
+                                        param: param_ptr,
+                                        restore_normalized: point.normalized,
+                                    });
+                                    cx.emit(RawParamEvent::BeginSetParameter(param_ptr));
+                                    cx.emit(RawParamEvent::SetParameterNormalized(
+                                        param_ptr,
+                                        point.normalized,
+                                    ));
+                                    cx.emit(RawParamEvent::EndSetParameter(param_ptr));
+                                } else {
+                                    cx.emit(RawParamEvent::SetParameterNormalized(
+                                        param_ptr,
+                                        point.normalized,
+                                    ));
+                                    // Consume ParamKnob's default reset and end the active drag.
+                                    cx.emit_custom(
+                                        Event::new(WindowEvent::MouseUp(MouseButton::Left))
+                                            .target(cx.current())
+                                            .propagate(Propagation::Direct),
+                                    );
+                                }
+                                meta.consume();
+                            }
+                        }
+                        _ => {}
+                    });
+                },
+            );
+        });
         // The readout lives in a fixed-height box instead of directly in
         // the cell: a Memo-bound label can measure as zero-height in
         // flow layout, which let the next knob row start too high and
