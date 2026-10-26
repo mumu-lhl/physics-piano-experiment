@@ -394,6 +394,7 @@ impl Plugin for PhysicsBass {
         for energy in self.string_energies_shared.iter() {
             energy.store(0, Ordering::Relaxed);
         }
+        self.fx.reset();
     }
 
     fn process(

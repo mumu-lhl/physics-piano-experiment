@@ -491,6 +491,7 @@ impl Plugin for PhysicsGuitar {
         for e in self.string_energies_shared.iter() {
             e.store(0, Ordering::Relaxed);
         }
+        self.fx.reset();
     }
 
     fn process(

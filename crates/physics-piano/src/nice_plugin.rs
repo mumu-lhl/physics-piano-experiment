@@ -487,6 +487,7 @@ impl Plugin for PhysicsPiano {
 
     fn reset(&mut self) {
         self.engine.reset();
+        self.fx.reset();
         self.active_keys_low.store(0, Ordering::Relaxed);
         self.active_keys_high.store(0, Ordering::Relaxed);
         self.pending_gui_note_offs.clear();
