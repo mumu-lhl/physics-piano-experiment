@@ -304,7 +304,8 @@ impl Model for PianoUiState {
                 let preset = self.manager.read().get_preset(id).cloned();
                 if let Some(mut preset) = preset {
                     // Old presets carry the legacy exponent entry; convert it
-                    // to curve points before applying so their touch is kept.
+                    // to curve points before applying so their touch is kept
+                    // at the five curve points (piecewise-linear in between).
                     migrate_velocity_curve_params(&mut preset.params);
                     let mut changes = Vec::new();
                     for (pid, value) in &preset.params {

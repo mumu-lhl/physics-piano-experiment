@@ -31,8 +31,9 @@ pub enum EngineOutEvent {
 pub const VELOCITY_CURVE_X: [f64; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
 
 /// Converts a legacy exponent-style touch curve (-1..1) to the five curve
-/// points, so old presets keep exactly their touch response: each point is
-/// the old formula `v^(2^(curve*0.8))` evaluated at its abscissa.
+/// points, so old presets keep their touch response at those points
+/// (piecewise-linear in between): each point is the old formula
+/// `v^(2^(curve*0.8))` evaluated at its abscissa.
 pub fn velocity_points_from_exponent(curve: f64) -> [f64; 5] {
     let exponent = 2.0_f64.powf(curve.clamp(-1.0, 1.0) * 0.8);
     let mut points = [0.0; 5];

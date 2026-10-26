@@ -111,7 +111,8 @@ pub struct PhysicsPianoParams {
 /// presets carry a single "velocity_curve" exponent; new presets carry the
 /// three interior point values. Points missing from the map are filled from
 /// the exponent conversion, then the legacy entry is dropped, so old presets
-/// keep their exact touch response.
+/// keep their touch response at the five curve points (piecewise-linear in
+/// between).
 pub fn migrate_velocity_curve_params(params: &mut HashMap<String, f32>) {
     if let Some(curve) = params.get("velocity_curve").copied() {
         let points = velocity_points_from_exponent(curve as f64);
