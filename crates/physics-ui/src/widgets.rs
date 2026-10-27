@@ -5,6 +5,7 @@ use vizia_plug::vizia::prelude::*;
 use vizia_plug::widgets::param_base::ParamWidgetBase;
 use vizia_plug::widgets::*;
 
+use crate::midi_learn::LearnArm;
 use crate::{Language, translate};
 
 #[derive(Default)]
@@ -223,6 +224,7 @@ pub fn parameter_knob<P: Param + 'static>(
     param: &P,
     cell_width: f32,
     tooltip: &'static str,
+    learn: Option<LearnArm>,
 ) {
     let param_base = ParamWidgetBase::new(cx, param);
     let unmodulated = param_base.unmodulated_signal(cx);
@@ -246,6 +248,18 @@ pub fn parameter_knob<P: Param + 'static>(
                 move |_: &mut ParamKnob, cx: &mut EventContext, event: &mut Event| {
                     event.map(|window, meta| match window {
                         WindowEvent::MouseDown(MouseButton::Left) => {
+                            // MIDI Learn arming: in Learn mode a knob click
+                            // only arms the parameter for the next CC and
+                            // must not start a drag gesture.
+                            if let Some(learn) = &learn {
+                                if learn.mode.get() {
+                                    if let Some(id) = learn.ptr_to_id.get(&param_ptr) {
+                                        learn.pending.set(Some(id.clone()));
+                                    }
+                                    meta.consume();
+                                    return;
+                                }
+                            }
                             let bounds = cx.bounds();
                             let mouse = cx.mouse();
                             let inside = mouse.cursor_x >= bounds.x
