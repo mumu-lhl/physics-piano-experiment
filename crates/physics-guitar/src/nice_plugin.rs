@@ -4,6 +4,8 @@ use atomic_float::AtomicF32;
 use nice_plug::prelude::*;
 use physics_dsp::FxChain;
 use physics_presets::{PresetManager, UndoManager, guitar_factory_presets};
+use physics_ui::{LastCc, apply_midi_cc, build_param_map};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 use vizia_plug::ViziaState;
@@ -178,20 +180,32 @@ impl Default for PhysicsGuitarParams {
                 .with_value_to_string(formatters::v2s_f32_percentage(0))
                 .with_string_to_value(formatters::s2v_f32_percentage()),
 
-            amp_middle: FloatParam::new("Amp Middle", 0.50, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_unit(" %")
-                .with_value_to_string(formatters::v2s_f32_percentage(0))
-                .with_string_to_value(formatters::s2v_f32_percentage()),
+            amp_middle: FloatParam::new(
+                "Amp Middle",
+                0.50,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_unit(" %")
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
 
-            amp_treble: FloatParam::new("Amp Treble", 0.50, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_unit(" %")
-                .with_value_to_string(formatters::v2s_f32_percentage(0))
-                .with_string_to_value(formatters::s2v_f32_percentage()),
+            amp_treble: FloatParam::new(
+                "Amp Treble",
+                0.50,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_unit(" %")
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
 
-            amp_presence: FloatParam::new("Amp Presence", 0.50, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_unit(" %")
-                .with_value_to_string(formatters::v2s_f32_percentage(0))
-                .with_string_to_value(formatters::s2v_f32_percentage()),
+            amp_presence: FloatParam::new(
+                "Amp Presence",
+                0.50,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_unit(" %")
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
 
             amp_sag: FloatParam::new("Power SAG", 0.35, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_unit(" %")
@@ -360,6 +374,12 @@ pub struct PhysicsGuitar {
     pub preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     pub undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
 
+    // MIDI Learn: id -> ParamPtr built once from the params Arc (pointers
+    // stay valid: the Arc is kept for the plugin's lifetime), plus the
+    // last received CC for the editor's Learn polling.
+    pub param_map: HashMap<String, ParamPtr>,
+    pub last_cc: Arc<LastCc>,
+
     // De-bounce/de-repeat for GUI virtual keyboard to prevent OS auto-repeat machine-gun re-strikes
     pending_gui_midi_note_offs: [usize; 128],
     pending_gui_string_note_offs: [usize; 7],
@@ -407,8 +427,13 @@ impl Default for PhysicsGuitar {
 
         let (gui_event_tx, gui_event_rx) = crossbeam_channel::bounded(256);
 
+        let params = Arc::new(PhysicsGuitarParams::default());
+        let param_map = build_param_map(&params);
+
         Self {
-            params: Arc::new(PhysicsGuitarParams::default()),
+            params,
+            param_map,
+            last_cc: Arc::new(LastCc::new()),
             engine,
             sample_rate: sample_rate as f32,
             fx: FxChain::new(sample_rate),
@@ -432,6 +457,18 @@ impl Default for PhysicsGuitar {
     }
 }
 
+impl PhysicsGuitar {
+    /// Apply one incoming MIDI CC: always record it for the editor's Learn
+    /// polling, and drive the bound parameter when one is learned. The
+    /// manager lock is only tried, never waited on, so a contended GUI
+    /// thread can't stall the audio thread; the next CC movement retries.
+    fn handle_midi_cc(&self, cc: u8, value: f32) {
+        self.last_cc.record(cc);
+        if let Some(manager) = self.preset_manager.try_read() {
+            apply_midi_cc(&self.param_map, manager.midi_mappings(), cc, value);
+        }
+    }
+}
 
 impl Plugin for PhysicsGuitar {
     const NAME: &'static str = "Physics Guitar";
@@ -652,7 +689,9 @@ impl Plugin for PhysicsGuitar {
             2 => crate::core::amp_cab::CabinetModel::Greenback,
             _ => crate::core::amp_cab::CabinetModel::Vintage30,
         };
-        self.engine.amp_cab.set_use_ir_cabinet(self.params.use_ir_cab.value());
+        self.engine
+            .amp_cab
+            .set_use_ir_cabinet(self.params.use_ir_cab.value());
         self.engine.pluck_pos_ratio = self.params.pluck_pos.value() as f64;
         self.engine.master_volume = self.params.master_gain.value() as f64;
 
@@ -690,7 +729,8 @@ impl Plugin for PhysicsGuitar {
                         if n < 128 {
                             self.pending_gui_midi_note_offs[n] = 0;
                         }
-                        self.engine.note_on(channel.number().unwrap_or(0), note, velocity as f64);
+                        self.engine
+                            .note_on(channel.number().unwrap_or(0), note, velocity as f64);
                     }
                     NoteEvent::NoteOff { channel, key, .. } => {
                         let note = key.number().unwrap_or(0);
@@ -701,6 +741,9 @@ impl Plugin for PhysicsGuitar {
                         // Map to +/- 12 semitones
                         let bend_semitones = (value as f64 - 0.5) * 2.0 * 12.0;
                         self.engine.pitch_bend(channel, bend_semitones);
+                    }
+                    NoteEvent::MidiCC { cc, value, .. } => {
+                        self.handle_midi_cc(cc, value);
                     }
                     _ => {}
                 }
@@ -784,6 +827,7 @@ impl Plugin for PhysicsGuitar {
             self.preset_manager.clone(),
             self.undo_manager.clone(),
             self.params.editor_state.clone(),
+            self.last_cc.clone(),
         )
     }
 }
@@ -842,5 +886,70 @@ mod no_alloc_regression_tests {
         });
 
         assert_eq!(violation_count(), violations_before);
+    }
+}
+
+#[cfg(test)]
+mod midi_learn_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    struct TempDirGuard(PathBuf);
+
+    impl TempDirGuard {
+        fn new(tag: &str) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("ppe-midi-test-{}-{}", tag, std::process::id()));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir_all(&path).expect("tempdir");
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn midi_cc_drives_learned_param_and_records_last_cc() {
+        // The manager is swapped for a temp-dir one so binding (which saves
+        // midi_mappings.json) never touches the user's real data dir.
+        let dir = TempDirGuard::new("guitar");
+        let mut plugin = PhysicsGuitar::default();
+        plugin.preset_manager = Arc::new(parking_lot::RwLock::new(PresetManager::with_custom_dir(
+            "guitar",
+            guitar_factory_presets(),
+            dir.0.clone(),
+        )));
+        assert!(
+            plugin
+                .preset_manager
+                .write()
+                .bind_midi_cc(7, "tone")
+                .unwrap()
+        );
+        plugin.handle_midi_cc(7, 0.13);
+        assert!((plugin.params.tone.value() - 0.13).abs() < 1e-6);
+        assert_eq!(plugin.last_cc.cc(), 7);
+        assert_eq!(plugin.last_cc.seq(), 1);
+        // An unmapped CC records but changes nothing.
+        plugin.handle_midi_cc(8, 0.9);
+        assert_eq!(plugin.last_cc.cc(), 8);
+        assert_eq!(plugin.last_cc.seq(), 2);
+        assert!((plugin.params.tone.value() - 0.13).abs() < 1e-6);
+    }
+
+    #[test]
+    fn param_map_covers_all_param_ids() {
+        let plugin = PhysicsGuitar::default();
+        let ids = plugin.params.param_map();
+        assert!(!ids.is_empty());
+        assert_eq!(plugin.param_map.len(), ids.len());
+        for (id, _, _) in &ids {
+            assert!(plugin.param_map.contains_key(id), "missing {id}");
+        }
     }
 }

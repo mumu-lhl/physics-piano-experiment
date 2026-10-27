@@ -15,12 +15,13 @@ use crate::nice_plugin::{GuiGuitarEvent, PhysicsGuitarParams};
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::Language;
 use physics_ui::{
-    CancelParamGestureEvent, PresetBrowserAction, PresetBrowserItem, PresetBrowserSignals,
-    PresetPanelAction, PresetPanelLayout, PresetPanelSignals, SpectrumAnalyzerWidget,
-    StereoVuMeterWidget, add_base_theme, discrete_selector as shared_discrete_selector,
-    filter_browser_items, map_param_history_event, parameter_knob, preset_browser,
-    preset_browser_categories, preset_browser_items, preset_choices, preset_display_name,
-    preset_panel, redraw_custom_view, set_param, setup_vizia_fonts, translate,
+    CancelParamGestureEvent, LastCc, LearnArm, PresetBrowserAction, PresetBrowserItem,
+    PresetBrowserSignals, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
+    SpectrumAnalyzerWidget, StereoVuMeterWidget, add_base_theme, build_ptr_to_id_map,
+    discrete_selector as shared_discrete_selector, filter_browser_items, map_param_history_event,
+    parameter_knob, preset_browser, preset_browser_categories, preset_browser_items,
+    preset_choices, preset_display_name, preset_panel, redraw_custom_view, set_param,
+    setup_vizia_fonts, translate, translate_format,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -52,8 +53,9 @@ fn knob<P: Param + 'static>(
     label: &'static str,
     param: &P,
     tooltip: &'static str,
+    learn: &LearnArm,
 ) {
-    parameter_knob(cx, label, param, 84.0, tooltip);
+    parameter_knob(cx, label, param, 84.0, tooltip, Some(learn.clone()));
 }
 
 fn discrete_selector(
@@ -71,15 +73,15 @@ fn discrete_selector(
 
 /// Recomputes the chord rack's fingering readout ("C  x 3 2 0 1 0")
 /// from the currently selected root and quality.
-fn refresh_chord_display(
-    root: &Signal<i32>,
-    quality: &Signal<i32>,
-    display: &Signal<String>,
-) {
+fn refresh_chord_display(root: &Signal<i32>, quality: &Signal<i32>, display: &Signal<String>) {
     let r = ChordRoot::from_index(root.get());
     let q = ChordQuality::from_index(quality.get());
     let shape = chord_shape(r, q);
-    display.set(format!("{}  {}", ChordShape::name(r, q), shape.fingering_text()));
+    display.set(format!(
+        "{}  {}",
+        ChordShape::name(r, q),
+        shape.fingering_text()
+    ));
 }
 
 fn set_discrete_param(
@@ -124,6 +126,13 @@ struct GuitarUiState {
     held_string_keys: HashMap<Code, u8>,
     held_nav_keys: HashSet<Code>,
     octave_offset: i8,
+    // MIDI Learn state: the arm (mode + pending param id) lives in the
+    // shared LearnArm; the poll bookkeeping below is handler-local.
+    learn_arm: LearnArm,
+    learn_status: Signal<String>,
+    last_cc: Arc<LastCc>,
+    last_seen_seq: u32,
+    last_seen_pending: Option<String>,
 }
 
 #[derive(Debug)]
@@ -139,6 +148,7 @@ enum GuitarUiEvent {
     Delete,
     Undo,
     Redo,
+    ToggleLearn,
     RefreshDisplay,
 }
 
@@ -339,7 +349,72 @@ impl Model for GuitarUiState {
         });
 
         event.map(|event, _| match event {
+            GuitarUiEvent::ToggleLearn => {
+                let lang = self.language.get();
+                let on = !self.learn_arm.mode.get();
+                self.learn_arm.mode.set(on);
+                if on {
+                    self.learn_status
+                        .set(translate(lang, "learn.on", "Learn on: click a knob").to_string());
+                } else {
+                    self.learn_arm.pending.set(None);
+                    self.last_seen_pending = None;
+                    self.learn_status
+                        .set(translate(lang, "learn.off", "Learn off").to_string());
+                }
+            }
             GuitarUiEvent::RefreshDisplay => {
+                // MIDI Learn: while armed, poll for a newly moved
+                // controller and bind it. Learn mode stays on after a
+                // successful bind so several knobs can be bound in a row.
+                if self.learn_arm.mode.get() {
+                    let seq = self.last_cc.seq();
+                    if seq != self.last_seen_seq {
+                        self.last_seen_seq = seq;
+                        if let Some(id) = self.learn_arm.pending.get() {
+                            let cc = self.last_cc.cc();
+                            let lang = self.language.get();
+                            match self.manager.write().bind_midi_cc(cc, &id) {
+                                Ok(true) => {
+                                    self.learn_arm.pending.set(None);
+                                    self.last_seen_pending = None;
+                                    self.learn_status.set(translate_format(
+                                        lang,
+                                        "learn.bound",
+                                        "Bound CC{cc} to {param}",
+                                        &[("cc", &cc.to_string()), ("param", &id)],
+                                    ));
+                                }
+                                Ok(false) => {
+                                    self.learn_status.set(translate_format(
+                                        lang,
+                                        "learn.reserved",
+                                        "CC{cc} is reserved and can't be learned",
+                                        &[("cc", &cc.to_string()), ("param", &id)],
+                                    ));
+                                }
+                                Err(err) => {
+                                    eprintln!("MIDI Learn: failed to save binding: {err}");
+                                }
+                            }
+                        }
+                    }
+                    // A newly armed knob (pending changed to Some) prompts
+                    // the user to move a controller.
+                    let pending = self.learn_arm.pending.get();
+                    if pending != self.last_seen_pending {
+                        self.last_seen_pending = pending.clone();
+                        if let Some(id) = pending {
+                            let lang = self.language.get();
+                            self.learn_status.set(translate_format(
+                                lang,
+                                "learn.move_controller",
+                                "Move a controller to bind {param}",
+                                &[("param", &id)],
+                            ));
+                        }
+                    }
+                }
                 self.discrete.mode.set(self.params.mode.value());
                 self.discrete
                     .pluck_style
@@ -734,7 +809,6 @@ impl Model for GuitarUiState {
                     }
                     meta.consume();
                 }
-
             }
             WindowEvent::KeyUp(code, _) => {
                 self.held_nav_keys.remove(code);
@@ -786,6 +860,7 @@ pub fn create_vizia_guitar_editor(
     preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
     editor_state: Arc<ViziaState>,
+    last_cc: Arc<LastCc>,
 ) -> Option<ViziaEditor> {
     let lang = Language::from_index(language_atom.load(Ordering::Relaxed));
     let selected_name = preset_manager
@@ -834,6 +909,10 @@ pub fn create_vizia_guitar_editor(
         let can_undo_ui = can_undo.clone();
         let can_redo_ui = can_redo.clone();
         let suppress_undo = Arc::new(AtomicU32::new(0));
+        // MIDI Learn: the ptr -> id table is built from the params Arc,
+        // whose allocation never moves, so the pointers stay valid.
+        let learn_arm = LearnArm::new(build_ptr_to_id_map(&params));
+        let learn_status = Signal::new(String::new());
         setup_vizia_fonts(cx);
         if let Err(err) = add_base_theme(cx) {
             eprintln!("Failed to load shared Vizia theme: {err:?}");
@@ -864,6 +943,11 @@ pub fn create_vizia_guitar_editor(
             held_string_keys: HashMap::new(),
             held_nav_keys: HashSet::new(),
             octave_offset: 0,
+            learn_arm: learn_arm.clone(),
+            learn_status: learn_status.clone(),
+            last_cc: last_cc.clone(),
+            last_seen_seq: last_cc.seq(),
+            last_seen_pending: None,
         }
         .build(cx);
         let display_timer = cx.add_timer(std::time::Duration::from_millis(33), None, |cx, _| {
@@ -872,6 +956,8 @@ pub fn create_vizia_guitar_editor(
         cx.start_timer(display_timer);
 
         let params_ui = params.clone();
+        let learn_ui = learn_arm.clone();
+        let learn_status_ui = learn_status.clone();
         let gui_tx_ui = gui_tx.clone();
         let active_frets_ui = active_frets_shared.clone();
         let string_energies_ui = string_energies_shared.clone();
@@ -902,6 +988,8 @@ pub fn create_vizia_guitar_editor(
         Binding::new(cx, language_ui, move |cx| {
             let lang = language_ui.get();
             let params = params_ui.clone();
+            let learn = learn_ui.clone();
+            let learn_status = learn_status_ui.clone();
             let gui_tx = gui_tx_ui.clone();
             let active_frets_shared = active_frets_ui.clone();
             let string_energies_shared = string_energies_ui.clone();
@@ -1035,13 +1123,27 @@ pub fn create_vizia_guitar_editor(
                         StereoVuMeterWidget::new(cx, peak_l.clone(), peak_r.clone())
                             .width(Pixels(70.0))
                             .height(Pixels(24.0));
-                        zoom_control(
-                            cx,
-                            zoom_state.clone(),
-                            translate(lang, "gui.zoom", "Zoom"),
-                        );
+                        zoom_control(cx, zoom_state.clone(), translate(lang, "gui.zoom", "Zoom"));
                     },
                 );
+
+                // MIDI Learn row: toggle button + status line.
+                HStack::new(cx, |cx| {
+                    let learn_mode = learn.mode;
+                    Binding::new(cx, learn_mode, move |cx| {
+                        let on = learn_mode.get();
+                        Button::new(cx, |cx| {
+                            Label::new(cx, if on { "LEARN ●" } else { "LEARN" })
+                        })
+                        .class("btn-action")
+                        .on_press(|cx| {
+                            cx.emit(GuitarUiEvent::ToggleLearn);
+                        })
+                        .width(Pixels(64.0));
+                    });
+                    Label::new(cx, learn_status.clone()).class("small-note");
+                })
+                .horizontal_gap(Pixels(8.0));
 
                 HStack::new(cx, |cx| {
                     // Rack 1: INSTRUMENT
@@ -1096,19 +1198,34 @@ pub fn create_vizia_guitar_editor(
                                 cx,
                                 translate(lang, "guitar.tone_label", "Tone:"),
                                 &params.tone,
-                                translate(lang, "guitar.tooltip.tone", "Passive tone control: darker to brighter."),
+                                translate(
+                                    lang,
+                                    "guitar.tooltip.tone",
+                                    "Passive tone control: darker to brighter.",
+                                ),
+                                &learn,
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.palm_mute_label", "PalmMute:"),
                                 &params.palm_mute,
-                                translate(lang, "guitar.tooltip.palm_mute", "Palm muting depth on picked notes."),
+                                translate(
+                                    lang,
+                                    "guitar.tooltip.palm_mute",
+                                    "Palm muting depth on picked notes.",
+                                ),
+                                &learn,
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.pluck_pos_label", "PluckPos:"),
                                 &params.pluck_pos,
-                                translate(lang, "guitar.tooltip.pluck_pos", "Where the string is plucked, from bridge to neck."),
+                                translate(
+                                    lang,
+                                    "guitar.tooltip.pluck_pos",
+                                    "Where the string is plucked, from bridge to neck.",
+                                ),
+                                &learn,
                             );
                         })
                         .horizontal_gap(Pixels(6.0));
@@ -1117,19 +1234,30 @@ pub fn create_vizia_guitar_editor(
                                 cx,
                                 translate(lang, "guitar.strum_speed_label", "Speed:"),
                                 &params.strum_speed,
-                                translate(lang, "guitar.tooltip.strum_speed", "Speed of the strum across the strings."),
+                                translate(
+                                    lang,
+                                    "guitar.tooltip.strum_speed",
+                                    "Speed of the strum across the strings.",
+                                ),
+                                &learn,
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.fret_buzz_label", "Buzz:"),
                                 &params.fret_buzz,
                                 translate(lang, "guitar.tooltip.fret_buzz", "Fret buzz amount."),
+                                &learn,
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.finger_squeak_label", "Squeak:"),
                                 &params.finger_squeak,
-                                translate(lang, "guitar.tooltip.finger_squeak", "Finger squeak noise when shifting positions."),
+                                translate(
+                                    lang,
+                                    "guitar.tooltip.finger_squeak",
+                                    "Finger squeak noise when shifting positions.",
+                                ),
+                                &learn,
                             );
                         })
                         .horizontal_gap(Pixels(6.0));
@@ -1146,19 +1274,26 @@ pub fn create_vizia_guitar_editor(
                                 cx,
                                 translate(lang, "guitar.amp_drive_label", "Drive:"),
                                 &params.amp_drive,
-                                translate(lang, "guitar.tooltip.amp_drive", "Amp overdrive amount."),
+                                translate(
+                                    lang,
+                                    "guitar.tooltip.amp_drive",
+                                    "Amp overdrive amount.",
+                                ),
+                                &learn,
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.amp_bass_label", "Bass:"),
                                 &params.amp_bass,
                                 translate(lang, "guitar.tooltip.amp_bass", "Amp bass EQ."),
+                                &learn,
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.amp_middle_label", "Middle:"),
                                 &params.amp_middle,
                                 translate(lang, "guitar.tooltip.amp_middle", "Amp middle EQ."),
+                                &learn,
                             );
                         })
                         .horizontal_gap(Pixels(6.0));
@@ -1168,18 +1303,29 @@ pub fn create_vizia_guitar_editor(
                                 translate(lang, "guitar.amp_treble_label", "Treble:"),
                                 &params.amp_treble,
                                 translate(lang, "guitar.tooltip.amp_treble", "Amp treble EQ."),
+                                &learn,
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.amp_presence_label", "Presence:"),
                                 &params.amp_presence,
-                                translate(lang, "guitar.tooltip.amp_presence", "Amp presence: high-frequency air and bite."),
+                                translate(
+                                    lang,
+                                    "guitar.tooltip.amp_presence",
+                                    "Amp presence: high-frequency air and bite.",
+                                ),
+                                &learn,
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.amp_sag_label", "SAG:"),
                                 &params.amp_sag,
-                                translate(lang, "guitar.tooltip.amp_sag", "Power-supply sag: how much the amp compresses under load."),
+                                translate(
+                                    lang,
+                                    "guitar.tooltip.amp_sag",
+                                    "Power-supply sag: how much the amp compresses under load.",
+                                ),
+                                &learn,
                             );
                         })
                         .horizontal_gap(Pixels(6.0));
@@ -1228,13 +1374,23 @@ pub fn create_vizia_guitar_editor(
                                 cx,
                                 translate(lang, "guitar.bpm_label", "BPM:"),
                                 &params.groove_bpm,
-                                translate(lang, "guitar.tooltip.bpm", "Tempo for the groove pattern player."),
+                                translate(
+                                    lang,
+                                    "guitar.tooltip.bpm",
+                                    "Tempo for the groove pattern player.",
+                                ),
+                                &learn,
                             );
                             knob(
                                 cx,
                                 translate(lang, "guitar.master_gain_label", "Volume:"),
                                 &params.master_gain,
-                                translate(lang, "guitar.tooltip.master_gain", "Overall output volume."),
+                                translate(
+                                    lang,
+                                    "guitar.tooltip.master_gain",
+                                    "Overall output volume.",
+                                ),
+                                &learn,
                             );
                         })
                         .horizontal_gap(Pixels(6.0));
@@ -1252,31 +1408,56 @@ pub fn create_vizia_guitar_editor(
                             cx,
                             translate(lang, "fx.eq_low", "EQ Low:"),
                             &params.fx_eq_low,
-                            translate(lang, "fx.tooltip.eq_low", "Low shelf EQ at 120 Hz: boosts or cuts bass."),
+                            translate(
+                                lang,
+                                "fx.tooltip.eq_low",
+                                "Low shelf EQ at 120 Hz: boosts or cuts bass.",
+                            ),
+                            &learn,
                         );
                         knob(
                             cx,
                             translate(lang, "fx.eq_mid", "EQ Mid:"),
                             &params.fx_eq_mid,
-                            translate(lang, "fx.tooltip.eq_mid", "Peaking EQ at 1 kHz: boosts or cuts the midrange."),
+                            translate(
+                                lang,
+                                "fx.tooltip.eq_mid",
+                                "Peaking EQ at 1 kHz: boosts or cuts the midrange.",
+                            ),
+                            &learn,
                         );
                         knob(
                             cx,
                             translate(lang, "fx.eq_high", "EQ High:"),
                             &params.fx_eq_high,
-                            translate(lang, "fx.tooltip.eq_high", "High shelf EQ at 8 kHz: boosts or cuts treble."),
+                            translate(
+                                lang,
+                                "fx.tooltip.eq_high",
+                                "High shelf EQ at 8 kHz: boosts or cuts treble.",
+                            ),
+                            &learn,
                         );
                         knob(
                             cx,
                             translate(lang, "fx.reverb_mix", "Reverb Mix:"),
                             &params.fx_reverb_mix,
-                            translate(lang, "fx.tooltip.reverb_mix", "Reverb amount: 0 is dry, higher adds hall sound."),
+                            translate(
+                                lang,
+                                "fx.tooltip.reverb_mix",
+                                "Reverb amount: 0 is dry, higher adds hall sound.",
+                            ),
+                            &learn,
                         );
                         knob(
                             cx,
                             translate(lang, "fx.reverb_decay", "Reverb Decay:"),
                             &params.fx_reverb_decay,
-                            translate(lang, "fx.tooltip.reverb_decay", "Reverb length: longer decay means a bigger hall."),
+                            translate(
+                                lang,
+                                "fx.tooltip.reverb_decay",
+                                "Reverb length: longer decay means a bigger hall.",
+                            ),
+                            &learn,
                         );
                     })
                     .horizontal_gap(Pixels(6.0));
