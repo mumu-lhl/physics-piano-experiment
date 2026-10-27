@@ -12,12 +12,13 @@ use fretboard_view::BassFretboardWidget;
 use nice_plug::prelude::Param;
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
-    CancelParamGestureEvent, Language, PresetBrowserAction, PresetBrowserItem,
+    CancelParamGestureEvent, Language, LastCc, LearnArm, PresetBrowserAction, PresetBrowserItem,
     PresetBrowserSignals, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
-    SpectrumAnalyzerWidget, StereoVuMeterWidget, add_base_theme, discrete_selector,
-    filter_browser_items, map_param_history_event, parameter_knob, preset_browser,
-    preset_browser_categories, preset_browser_items, preset_choices, preset_display_name,
-    preset_panel, redraw_custom_view, set_param, setup_vizia_fonts, translate,
+    SpectrumAnalyzerWidget, StereoVuMeterWidget, add_base_theme, build_ptr_to_id_map,
+    discrete_selector, filter_browser_items, map_param_history_event, parameter_knob,
+    preset_browser, preset_browser_categories, preset_browser_items, preset_choices,
+    preset_display_name, preset_panel, redraw_custom_view, set_param, setup_vizia_fonts, translate,
+    translate_format,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -49,6 +50,7 @@ enum BassUiEvent {
     Delete,
     Undo,
     Redo,
+    ToggleLearn,
     RefreshDisplay,
 }
 
@@ -143,6 +145,13 @@ struct BassUiState {
     held_string_keys: HashMap<Code, u8>,
     held_nav_keys: HashSet<Code>,
     octave_offset: i8,
+    // MIDI Learn state: the arm (mode + pending param id) lives in the
+    // shared LearnArm; the poll bookkeeping below is handler-local.
+    learn_arm: LearnArm,
+    learn_status: Signal<String>,
+    last_cc: Arc<LastCc>,
+    last_seen_seq: u32,
+    last_seen_pending: Option<String>,
 }
 
 impl BassUiState {
@@ -230,7 +239,72 @@ impl Model for BassUiState {
         });
 
         event.map(|action: &BassUiEvent, _| match action {
+            BassUiEvent::ToggleLearn => {
+                let lang = self.language.get();
+                let on = !self.learn_arm.mode.get();
+                self.learn_arm.mode.set(on);
+                if on {
+                    self.learn_status
+                        .set(translate(lang, "learn.on", "Learn on: click a knob").to_string());
+                } else {
+                    self.learn_arm.pending.set(None);
+                    self.last_seen_pending = None;
+                    self.learn_status
+                        .set(translate(lang, "learn.off", "Learn off").to_string());
+                }
+            }
             BassUiEvent::RefreshDisplay => {
+                // MIDI Learn: while armed, poll for a newly moved
+                // controller and bind it. Learn mode stays on after a
+                // successful bind so several knobs can be bound in a row.
+                if self.learn_arm.mode.get() {
+                    let seq = self.last_cc.seq();
+                    if seq != self.last_seen_seq {
+                        self.last_seen_seq = seq;
+                        if let Some(id) = self.learn_arm.pending.get() {
+                            let cc = self.last_cc.cc();
+                            let lang = self.language.get();
+                            match self.manager.write().bind_midi_cc(cc, &id) {
+                                Ok(true) => {
+                                    self.learn_arm.pending.set(None);
+                                    self.last_seen_pending = None;
+                                    self.learn_status.set(translate_format(
+                                        lang,
+                                        "learn.bound",
+                                        "Bound CC{cc} to {param}",
+                                        &[("cc", &cc.to_string()), ("param", &id)],
+                                    ));
+                                }
+                                Ok(false) => {
+                                    self.learn_status.set(translate_format(
+                                        lang,
+                                        "learn.reserved",
+                                        "CC{cc} is reserved and can't be learned",
+                                        &[("cc", &cc.to_string()), ("param", &id)],
+                                    ));
+                                }
+                                Err(err) => {
+                                    eprintln!("MIDI Learn: failed to save binding: {err}");
+                                }
+                            }
+                        }
+                    }
+                    // A newly armed knob (pending changed to Some) prompts
+                    // the user to move a controller.
+                    let pending = self.learn_arm.pending.get();
+                    if pending != self.last_seen_pending {
+                        self.last_seen_pending = pending.clone();
+                        if let Some(id) = pending {
+                            let lang = self.language.get();
+                            self.learn_status.set(translate_format(
+                                lang,
+                                "learn.move_controller",
+                                "Move a controller to bind {param}",
+                                &[("param", &id)],
+                            ));
+                        }
+                    }
+                }
                 self.discrete.mode.set(self.params.mode.value());
                 self.discrete
                     .pluck_style
@@ -557,8 +631,13 @@ impl Model for BassUiState {
                 ];
                 if let Some((_, base)) = KEY_MAP.iter().find(|(key, _)| key == code) {
                     if !self.held_qwerty_keys.contains_key(code) {
-                        let min_note = if self.params.five_string.value() { 23 } else { 28 };
-                        let midi = (*base as i16 + self.octave_offset as i16).clamp(min_note, 72) as u8;
+                        let min_note = if self.params.five_string.value() {
+                            23
+                        } else {
+                            28
+                        };
+                        let midi =
+                            (*base as i16 + self.octave_offset as i16).clamp(min_note, 72) as u8;
                         self.held_qwerty_keys.insert(*code, midi);
                         let _ = self.gui_tx.try_send(GuiBassEvent::MidiNoteOn {
                             note: midi,
@@ -578,7 +657,9 @@ impl Model for BassUiState {
                     meta.consume();
                 }
                 if let Some(midi) = self.held_qwerty_keys.remove(code) {
-                    let _ = self.gui_tx.try_send(GuiBassEvent::MidiNoteOff { note: midi });
+                    let _ = self
+                        .gui_tx
+                        .try_send(GuiBassEvent::MidiNoteOff { note: midi });
                     meta.consume();
                 }
             }
@@ -590,7 +671,9 @@ impl Model for BassUiState {
                     });
                 }
                 for (_, midi) in self.held_qwerty_keys.drain() {
-                    let _ = self.gui_tx.try_send(GuiBassEvent::MidiNoteOff { note: midi });
+                    let _ = self
+                        .gui_tx
+                        .try_send(GuiBassEvent::MidiNoteOff { note: midi });
                 }
             }
             _ => {}
@@ -611,6 +694,7 @@ pub fn create_vizia_bass_editor(
     language_atom: Arc<AtomicU8>,
     preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
+    last_cc: Arc<LastCc>,
 ) -> Option<ViziaEditor> {
     let language_initial = Language::from_index(language_atom.load(Ordering::Relaxed));
     let selected_id = "bass_finger_punch".to_string();
@@ -647,6 +731,10 @@ pub fn create_vizia_bass_editor(
             mode: Signal::new(params.mode.value()),
             pluck_style: Signal::new(params.pluck_style.value()),
         };
+        // MIDI Learn: the ptr -> id table is built from the params Arc,
+        // whose allocation never moves, so the pointers stay valid.
+        let learn_arm = LearnArm::new(build_ptr_to_id_map(&params));
+        let learn_status = Signal::new(String::new());
 
         BassUiState {
             params: params.clone(),
@@ -674,6 +762,11 @@ pub fn create_vizia_bass_editor(
             held_string_keys: HashMap::new(),
             held_nav_keys: HashSet::new(),
             octave_offset: -24,
+            learn_arm: learn_arm.clone(),
+            learn_status: learn_status.clone(),
+            last_cc: last_cc.clone(),
+            last_seen_seq: last_cc.seq(),
+            last_seen_pending: None,
         }
         .build(cx);
 
@@ -683,6 +776,8 @@ pub fn create_vizia_bass_editor(
         cx.start_timer(display_timer);
 
         let params_ui = params.clone();
+        let learn_ui = learn_arm.clone();
+        let learn_status_ui = learn_status.clone();
         let language_ui = language.clone();
         let language_view = language.clone();
         let active_frets_ui = active_frets.clone();
@@ -711,6 +806,8 @@ pub fn create_vizia_bass_editor(
         Binding::new(cx, language_ui, move |cx| {
             let lang = language_ui.get();
             let params = params_ui.clone();
+            let learn = learn_ui.clone();
+            let learn_status = learn_status_ui.clone();
             let language_view = language_view.clone();
             let discrete = discrete_ui.clone();
             let active_frets = active_frets_ui.clone();
@@ -776,6 +873,24 @@ pub fn create_vizia_bass_editor(
                     },
                 );
 
+                // MIDI Learn row: toggle button + status line.
+                HStack::new(cx, |cx| {
+                    let learn_mode = learn.mode;
+                    Binding::new(cx, learn_mode, move |cx| {
+                        let on = learn_mode.get();
+                        Button::new(cx, |cx| {
+                            Label::new(cx, if on { "LEARN ●" } else { "LEARN" })
+                        })
+                        .class("btn-action")
+                        .on_press(|cx| {
+                            cx.emit(BassUiEvent::ToggleLearn);
+                        })
+                        .width(Pixels(64.0));
+                    });
+                    Label::new(cx, learn_status.clone()).class("small-note");
+                })
+                .horizontal_gap(Pixels(8.0));
+
                 HStack::new(cx, |cx| {
                     VStack::new(cx, |cx| {
                         Label::new(cx, translate(lang, "bass.instrument", "INSTRUMENT")).class("rack-title");
@@ -826,15 +941,13 @@ pub fn create_vizia_bass_editor(
                                 translate(lang, "bass.pluck_position", "Pluck position"),
                                 &params.pluck_position,
                                 120.0,
-                                translate(lang, "bass.tooltip.pluck_position", "Where the string is plucked, from bridge to neck."),
-                            );
+                                translate(lang, "bass.tooltip.pluck_position", "Where the string is plucked, from bridge to neck."), Some(learn.clone()));
                             parameter_knob(
                                 cx,
                                 translate(lang, "bass.pickup_position", "Pickup position"),
                                 &params.pickup_position,
                                 120.0,
-                                translate(lang, "bass.tooltip.pickup_position", "Pickup position along the string."),
-                            );
+                                translate(lang, "bass.tooltip.pickup_position", "Pickup position along the string."), Some(learn.clone()));
                         })
                         .horizontal_gap(Pixels(8.0));
                         HStack::new(cx, |cx| {
@@ -843,8 +956,7 @@ pub fn create_vizia_bass_editor(
                                 translate(lang, "bass.tone", "Tone"),
                                 &params.tone,
                                 120.0,
-                                translate(lang, "bass.tooltip.tone", "Tone control: darker to brighter."),
-                            );
+                                translate(lang, "bass.tooltip.tone", "Tone control: darker to brighter."), Some(learn.clone()));
                         })
                         .horizontal_gap(Pixels(8.0));
                     })
@@ -854,8 +966,8 @@ pub fn create_vizia_bass_editor(
                     VStack::new(cx, |cx| {
                         Label::new(cx, translate(lang, "bass.contact_body", "CONTACT / BODY")).class("rack-title");
                         HStack::new(cx, |cx| {
-                            parameter_knob(cx, translate(lang, "bass.fret_buzz", "Fret buzz"), &params.fret_buzz, 120.0, translate(lang, "bass.tooltip.fret_buzz", "Fret buzz amount."));
-                            parameter_knob(cx, translate(lang, "bass.body_mix", "Body mix"), &params.body_mix, 120.0, translate(lang, "bass.tooltip.body_mix", "Body resonance mix: how much of the instrument body sound is blended in."));
+                            parameter_knob(cx, translate(lang, "bass.fret_buzz", "Fret buzz"), &params.fret_buzz, 120.0, translate(lang, "bass.tooltip.fret_buzz", "Fret buzz amount."), Some(learn.clone()));
+                            parameter_knob(cx, translate(lang, "bass.body_mix", "Body mix"), &params.body_mix, 120.0, translate(lang, "bass.tooltip.body_mix", "Body resonance mix: how much of the instrument body sound is blended in."), Some(learn.clone()));
                         })
                         .horizontal_gap(Pixels(8.0));
                         Label::new(cx, translate(lang, "bass.slap_note", "Slap uses the same bounded contact state as the FDTD string")).class("small-note");
@@ -866,8 +978,8 @@ pub fn create_vizia_bass_editor(
                     VStack::new(cx, |cx| {
                         Label::new(cx, translate(lang, "bass.output", "AMP & OUTPUT")).class("rack-title");
                         HStack::new(cx, |cx| {
-                            parameter_knob(cx, translate(lang, "bass.drive", "Drive"), &params.drive, 120.0, translate(lang, "bass.tooltip.drive", "Drive amount: tube/FET saturation."));
-                            parameter_knob(cx, translate(lang, "bass.master_gain", "Master gain"), &params.master_gain, 120.0, translate(lang, "bass.tooltip.master_gain", "Overall output volume."));
+                            parameter_knob(cx, translate(lang, "bass.drive", "Drive"), &params.drive, 120.0, translate(lang, "bass.tooltip.drive", "Drive amount: tube/FET saturation."), Some(learn.clone()));
+                            parameter_knob(cx, translate(lang, "bass.master_gain", "Master gain"), &params.master_gain, 120.0, translate(lang, "bass.tooltip.master_gain", "Overall output volume."), Some(learn.clone()));
                         })
                         .horizontal_gap(Pixels(8.0));
                         Label::new(cx, translate(lang, "bass.output_note", "Electric: tube/FET drive & pickup · Acoustic: cavity")).class("small-note");
@@ -883,11 +995,11 @@ pub fn create_vizia_bass_editor(
                 VStack::new(cx, |cx| {
                     Label::new(cx, translate(lang, "fx.rack", "FX")).class("rack-title");
                     HStack::new(cx, |cx| {
-                        parameter_knob(cx, translate(lang, "fx.eq_low", "EQ Low:"), &params.fx_eq_low, 120.0, translate(lang, "fx.tooltip.eq_low", "Low shelf EQ at 120 Hz: boosts or cuts bass."));
-                        parameter_knob(cx, translate(lang, "fx.eq_mid", "EQ Mid:"), &params.fx_eq_mid, 120.0, translate(lang, "fx.tooltip.eq_mid", "Peaking EQ at 1 kHz: boosts or cuts the midrange."));
-                        parameter_knob(cx, translate(lang, "fx.eq_high", "EQ High:"), &params.fx_eq_high, 120.0, translate(lang, "fx.tooltip.eq_high", "High shelf EQ at 8 kHz: boosts or cuts treble."));
-                        parameter_knob(cx, translate(lang, "fx.reverb_mix", "Reverb Mix:"), &params.fx_reverb_mix, 120.0, translate(lang, "fx.tooltip.reverb_mix", "Reverb amount: 0 is dry, higher adds hall sound."));
-                        parameter_knob(cx, translate(lang, "fx.reverb_decay", "Reverb Decay:"), &params.fx_reverb_decay, 120.0, translate(lang, "fx.tooltip.reverb_decay", "Reverb length: longer decay means a bigger hall."));
+                        parameter_knob(cx, translate(lang, "fx.eq_low", "EQ Low:"), &params.fx_eq_low, 120.0, translate(lang, "fx.tooltip.eq_low", "Low shelf EQ at 120 Hz: boosts or cuts bass."), Some(learn.clone()));
+                        parameter_knob(cx, translate(lang, "fx.eq_mid", "EQ Mid:"), &params.fx_eq_mid, 120.0, translate(lang, "fx.tooltip.eq_mid", "Peaking EQ at 1 kHz: boosts or cuts the midrange."), Some(learn.clone()));
+                        parameter_knob(cx, translate(lang, "fx.eq_high", "EQ High:"), &params.fx_eq_high, 120.0, translate(lang, "fx.tooltip.eq_high", "High shelf EQ at 8 kHz: boosts or cuts treble."), Some(learn.clone()));
+                        parameter_knob(cx, translate(lang, "fx.reverb_mix", "Reverb Mix:"), &params.fx_reverb_mix, 120.0, translate(lang, "fx.tooltip.reverb_mix", "Reverb amount: 0 is dry, higher adds hall sound."), Some(learn.clone()));
+                        parameter_knob(cx, translate(lang, "fx.reverb_decay", "Reverb Decay:"), &params.fx_reverb_decay, 120.0, translate(lang, "fx.tooltip.reverb_decay", "Reverb length: longer decay means a bigger hall."), Some(learn.clone()));
                     })
                     .horizontal_gap(Pixels(8.0));
                 })

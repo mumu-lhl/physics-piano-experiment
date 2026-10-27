@@ -9,6 +9,8 @@ use atomic_float::AtomicF32;
 use nice_plug::prelude::*;
 use physics_dsp::FxChain;
 use physics_presets::{PresetManager, UndoManager, bass_factory_presets};
+use physics_ui::{LastCc, apply_midi_cc, build_param_map};
+use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
@@ -216,6 +218,12 @@ pub struct PhysicsBass {
     pub preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     pub undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
 
+    // MIDI Learn: id -> ParamPtr built once from the params Arc (pointers
+    // stay valid: the Arc is kept for the plugin's lifetime), plus the
+    // last received CC for the editor's Learn polling.
+    pub param_map: HashMap<String, ParamPtr>,
+    pub last_cc: Arc<LastCc>,
+
     // De-bounce/de-repeat for GUI virtual keyboard to prevent OS auto-repeat machine-gun re-strikes
     pending_gui_midi_note_offs: [usize; 128],
     pending_gui_string_note_offs: [usize; 5],
@@ -225,8 +233,12 @@ impl Default for PhysicsBass {
     fn default() -> Self {
         let (gui_event_tx, gui_event_rx) = crossbeam_channel::bounded(256);
         let language = physics_ui::Language::from_system_locale().index();
+        let params = Arc::new(PhysicsBassParams::default());
+        let param_map = build_param_map(&params);
         Self {
-            params: Arc::new(PhysicsBassParams::default()),
+            params,
+            param_map,
+            last_cc: Arc::new(LastCc::new()),
             engine: BassEngine::new(44_100.0, BassMode::Electric, false),
             sample_rate: 44_100.0,
             fx: FxChain::new(44_100.0),
@@ -267,8 +279,18 @@ impl Default for PhysicsBass {
     }
 }
 
-
 impl PhysicsBass {
+    /// Apply one incoming MIDI CC: always record it for the editor's Learn
+    /// polling, and drive the bound parameter when one is learned. The
+    /// manager lock is only tried, never waited on, so a contended GUI
+    /// thread can't stall the audio thread; the next CC movement retries.
+    fn handle_midi_cc(&self, cc: u8, value: f32) {
+        self.last_cc.record(cc);
+        if let Some(manager) = self.preset_manager.try_read() {
+            apply_midi_cc(&self.param_map, manager.midi_mappings(), cc, value);
+        }
+    }
+
     fn sync_parameters(&mut self) {
         self.engine.set_mode(if self.params.mode.value() == 0 {
             BassMode::Electric
@@ -323,10 +345,7 @@ impl PhysicsBass {
             .body_mix
             .smoothed
             .reset(self.params.body_mix.value());
-        self.params
-            .drive
-            .smoothed
-            .reset(self.params.drive.value());
+        self.params.drive.smoothed.reset(self.params.drive.value());
         self.params
             .master_gain
             .smoothed
@@ -517,6 +536,9 @@ impl Plugin for PhysicsBass {
                     NoteEvent::MidiPitchBend { value, .. } => {
                         self.engine.set_pitch_bend((value as f64 - 0.5) * 24.0);
                     }
+                    NoteEvent::MidiCC { cc, value, .. } => {
+                        self.handle_midi_cc(cc, value);
+                    }
                     _ => {}
                 }
                 next_event = context.next_event();
@@ -596,6 +618,7 @@ impl Plugin for PhysicsBass {
             self.language.clone(),
             self.preset_manager.clone(),
             self.undo_manager.clone(),
+            self.last_cc.clone(),
         )
     }
 }
@@ -637,5 +660,70 @@ mod no_alloc_regression_tests {
             }
         });
         assert_eq!(violation_count(), before);
+    }
+}
+
+#[cfg(test)]
+mod midi_learn_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    struct TempDirGuard(PathBuf);
+
+    impl TempDirGuard {
+        fn new(tag: &str) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("ppe-midi-test-{}-{}", tag, std::process::id()));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir_all(&path).expect("tempdir");
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn midi_cc_drives_learned_param_and_records_last_cc() {
+        // The manager is swapped for a temp-dir one so binding (which saves
+        // midi_mappings.json) never touches the user's real data dir.
+        let dir = TempDirGuard::new("bass");
+        let mut plugin = PhysicsBass::default();
+        plugin.preset_manager = Arc::new(parking_lot::RwLock::new(PresetManager::with_custom_dir(
+            "bass",
+            bass_factory_presets(),
+            dir.0.clone(),
+        )));
+        assert!(
+            plugin
+                .preset_manager
+                .write()
+                .bind_midi_cc(7, "drive")
+                .unwrap()
+        );
+        plugin.handle_midi_cc(7, 0.13);
+        assert!((plugin.params.drive.value() - 0.13).abs() < 1e-6);
+        assert_eq!(plugin.last_cc.cc(), 7);
+        assert_eq!(plugin.last_cc.seq(), 1);
+        // An unmapped CC records but changes nothing.
+        plugin.handle_midi_cc(8, 0.9);
+        assert_eq!(plugin.last_cc.cc(), 8);
+        assert_eq!(plugin.last_cc.seq(), 2);
+        assert!((plugin.params.drive.value() - 0.13).abs() < 1e-6);
+    }
+
+    #[test]
+    fn param_map_covers_all_param_ids() {
+        let plugin = PhysicsBass::default();
+        let ids = plugin.params.param_map();
+        assert!(!ids.is_empty());
+        assert_eq!(plugin.param_map.len(), ids.len());
+        for (id, _, _) in &ids {
+            assert!(plugin.param_map.contains_key(id), "missing {id}");
+        }
     }
 }
