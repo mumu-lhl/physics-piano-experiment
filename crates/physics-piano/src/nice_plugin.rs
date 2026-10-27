@@ -12,6 +12,7 @@ use crate::engine::{EngineEvent, EngineOutEvent, PianoEngine, velocity_points_fr
 use crate::gui::{Language, create_vizia_piano_editor, default_vizia_state};
 use physics_dsp::FxChain;
 use physics_presets::{PresetManager, UndoManager, piano_factory_presets};
+use physics_ui::{LastCc, apply_midi_cc, build_param_map};
 
 #[derive(Params)]
 pub struct PhysicsPianoParams {
@@ -350,6 +351,12 @@ pub struct PhysicsPiano {
     preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
 
+    // MIDI Learn: id -> ParamPtr built once from the params Arc (pointers
+    // stay valid: the Arc is kept for the plugin's lifetime), plus the
+    // last received CC for the editor's Learn polling.
+    param_map: HashMap<String, ParamPtr>,
+    last_cc: Arc<LastCc>,
+
     // Edge-triggered parameter tracking to prevent overwriting MIDI CC
     prev_sustain: f32,
     prev_una_corda: bool,
@@ -374,8 +381,13 @@ impl Default for PhysicsPiano {
         let (tx, rx) = crossbeam_channel::bounded(256);
         let lang_code = Language::from_system_locale().index();
 
+        let params = Arc::new(PhysicsPianoParams::default());
+        let param_map = build_param_map(&params);
+
         Self {
-            params: Arc::new(PhysicsPianoParams::default()),
+            params,
+            param_map,
+            last_cc: Arc::new(LastCc::new()),
             engine: PianoEngine::new(48000.0, 35, true),
             gui_event_tx: tx,
             gui_event_rx: rx,
@@ -405,6 +417,18 @@ impl Default for PhysicsPiano {
             fx: FxChain::new(48000.0),
             pending_gui_note_offs: HashMap::with_capacity(88),
             expired_gui_note_offs: Vec::with_capacity(88),
+        }
+    }
+}
+
+impl PhysicsPiano {
+    /// Apply one non-reserved MIDI CC to its learned parameter, if any.
+    /// The manager lock is only tried, never waited on, so a contended
+    /// GUI thread can't stall the audio thread; the next CC movement
+    /// retries.
+    fn apply_learned_cc(&self, cc: u8, value: f32) {
+        if let Some(manager) = self.preset_manager.try_read() {
+            apply_midi_cc(&self.param_map, manager.midi_mappings(), cc, value);
         }
     }
 }
@@ -551,6 +575,11 @@ impl Plugin for PhysicsPiano {
                 NoteEvent::MidiCC {
                     cc, value, timing, ..
                 } => {
+                    // MIDI Learn: record every CC for the editor's Learn
+                    // polling first; reserved CCs keep their pedal /
+                    // expression behavior below, the rest may drive a
+                    // learned parameter.
+                    self.last_cc.record(cc);
                     if cc == 64 {
                         let depth = value as f64;
                         self.events_scratch.push(EngineEvent::SustainPedal {
@@ -568,6 +597,8 @@ impl Plugin for PhysicsPiano {
                             time: timing as usize,
                             gain,
                         });
+                    } else {
+                        self.apply_learned_cc(cc, value);
                     }
                 }
                 _ => {}
@@ -807,6 +838,7 @@ impl Plugin for PhysicsPiano {
             self.preset_manager.clone(),
             self.undo_manager.clone(),
             self.params.editor_state.clone(),
+            self.last_cc.clone(),
         )
     }
 }
@@ -913,5 +945,70 @@ mod velocity_curve_migration_tests {
         migrate_velocity_curve_params(&mut params);
         assert_eq!(params.len(), 1);
         assert_eq!(params["velocity_point_25"], 0.2);
+    }
+}
+
+#[cfg(test)]
+mod midi_learn_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    struct TempDirGuard(PathBuf);
+
+    impl TempDirGuard {
+        fn new(tag: &str) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("ppe-midi-test-{}-{}", tag, std::process::id()));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir_all(&path).expect("tempdir");
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn learned_cc_drives_param_and_records_last_cc() {
+        // The manager is swapped for a temp-dir one so binding (which saves
+        // midi_mappings.json) never touches the user's real data dir.
+        let dir = TempDirGuard::new("piano");
+        let mut plugin = PhysicsPiano::default();
+        plugin.preset_manager = Arc::new(parking_lot::RwLock::new(PresetManager::with_custom_dir(
+            "piano",
+            piano_factory_presets(),
+            dir.0.clone(),
+        )));
+        assert!(
+            plugin
+                .preset_manager
+                .write()
+                .bind_midi_cc(7, "hardness")
+                .unwrap()
+        );
+        // Hardness range is 0.5..2.5, so normalized 0.13 lands at 0.76 plain.
+        plugin.last_cc.record(7);
+        plugin.apply_learned_cc(7, 0.13);
+        assert!((plugin.params.hammer_hardness.value() - 0.76).abs() < 1e-6);
+        assert_eq!(plugin.last_cc.cc(), 7);
+        assert_eq!(plugin.last_cc.seq(), 1);
+        // An unmapped CC applies nothing.
+        plugin.apply_learned_cc(8, 0.9);
+        assert!((plugin.params.hammer_hardness.value() - 0.76).abs() < 1e-6);
+    }
+
+    #[test]
+    fn param_map_covers_all_param_ids() {
+        let plugin = PhysicsPiano::default();
+        let ids = plugin.params.param_map();
+        assert!(!ids.is_empty());
+        assert_eq!(plugin.param_map.len(), ids.len());
+        for (id, _, _) in &ids {
+            assert!(plugin.param_map.contains_key(id), "missing {id}");
+        }
     }
 }

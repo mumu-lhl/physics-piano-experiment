@@ -19,12 +19,13 @@ use crate::nice_plugin::{PhysicsPianoParams, migrate_velocity_curve_params};
 use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::Language;
 use physics_ui::{
-    CancelParamGestureEvent, PresetBrowserAction, PresetBrowserItem, PresetBrowserSignals,
-    PresetPanelAction, PresetPanelLayout, PresetPanelSignals, SpectrumAnalyzerWidget,
-    StereoVuMeterWidget, VelocityCurveEditorWidget, add_base_theme, filter_browser_items,
-    map_param_history_event, parameter_knob, preset_browser, preset_browser_categories,
-    preset_browser_items, preset_choices, preset_display_name, preset_panel, redraw_custom_view,
-    set_param, setup_vizia_fonts, translate,
+    CancelParamGestureEvent, LastCc, LearnArm, PresetBrowserAction, PresetBrowserItem,
+    PresetBrowserSignals, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
+    SpectrumAnalyzerWidget, StereoVuMeterWidget, VelocityCurveEditorWidget, add_base_theme,
+    build_ptr_to_id_map, filter_browser_items, map_param_history_event, parameter_knob,
+    preset_browser, preset_browser_categories, preset_browser_items, preset_choices,
+    preset_display_name, preset_panel, redraw_custom_view, set_param, setup_vizia_fonts, translate,
+    translate_format,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -37,8 +38,9 @@ fn knob<P: Param + 'static>(
     label: &'static str,
     param: &P,
     tooltip: &'static str,
+    learn: &LearnArm,
 ) {
-    parameter_knob(cx, label, param, 120.0, tooltip);
+    parameter_knob(cx, label, param, 120.0, tooltip, Some(learn.clone()));
 }
 
 struct PianoUiState {
@@ -66,6 +68,13 @@ struct PianoUiState {
     octave_offset: i8,
     held_qwerty_keys: HashMap<Code, u8>,
     held_nav_keys: std::collections::HashSet<Code>,
+    // MIDI Learn state: the arm (mode + pending param id) lives in the
+    // shared LearnArm; the poll bookkeeping below is handler-local.
+    learn_arm: LearnArm,
+    learn_status: Signal<String>,
+    last_cc: Arc<LastCc>,
+    last_seen_seq: u32,
+    last_seen_pending: Option<String>,
 }
 
 #[derive(Debug)]
@@ -81,6 +90,7 @@ enum PianoUiEvent {
     Rename,
     Overwrite,
     Delete,
+    ToggleLearn,
     RefreshDisplay,
 }
 
@@ -272,7 +282,72 @@ impl Model for PianoUiState {
             }
         });
         event.map(|event, _| match event {
+            PianoUiEvent::ToggleLearn => {
+                let lang = self.language.get();
+                let on = !self.learn_arm.mode.get();
+                self.learn_arm.mode.set(on);
+                if on {
+                    self.learn_status
+                        .set(translate(lang, "learn.on", "Learn on: click a knob").to_string());
+                } else {
+                    self.learn_arm.pending.set(None);
+                    self.last_seen_pending = None;
+                    self.learn_status
+                        .set(translate(lang, "learn.off", "Learn off").to_string());
+                }
+            }
             PianoUiEvent::RefreshDisplay => {
+                // MIDI Learn: while armed, poll for a newly moved
+                // controller and bind it. Learn mode stays on after a
+                // successful bind so several knobs can be bound in a row.
+                if self.learn_arm.mode.get() {
+                    let seq = self.last_cc.seq();
+                    if seq != self.last_seen_seq {
+                        self.last_seen_seq = seq;
+                        if let Some(id) = self.learn_arm.pending.get() {
+                            let cc = self.last_cc.cc();
+                            let lang = self.language.get();
+                            match self.manager.write().bind_midi_cc(cc, &id) {
+                                Ok(true) => {
+                                    self.learn_arm.pending.set(None);
+                                    self.last_seen_pending = None;
+                                    self.learn_status.set(translate_format(
+                                        lang,
+                                        "learn.bound",
+                                        "Bound CC{cc} to {param}",
+                                        &[("cc", &cc.to_string()), ("param", &id)],
+                                    ));
+                                }
+                                Ok(false) => {
+                                    self.learn_status.set(translate_format(
+                                        lang,
+                                        "learn.reserved",
+                                        "CC{cc} is reserved and can't be learned",
+                                        &[("cc", &cc.to_string()), ("param", &id)],
+                                    ));
+                                }
+                                Err(err) => {
+                                    eprintln!("MIDI Learn: failed to save binding: {err}");
+                                }
+                            }
+                        }
+                    }
+                    // A newly armed knob (pending changed to Some) prompts
+                    // the user to move a controller.
+                    let pending = self.learn_arm.pending.get();
+                    if pending != self.last_seen_pending {
+                        self.last_seen_pending = pending.clone();
+                        if let Some(id) = pending {
+                            let lang = self.language.get();
+                            self.learn_status.set(translate_format(
+                                lang,
+                                "learn.move_controller",
+                                "Move a controller to bind {param}",
+                                &[("param", &id)],
+                            ));
+                        }
+                    }
+                }
                 redraw_custom_view(cx, "piano-keyboard-widget");
                 redraw_custom_view(cx, "lissajous-scope-widget");
                 redraw_custom_view(cx, "stereo-vu-meter-widget");
@@ -653,6 +728,7 @@ pub fn create_vizia_piano_editor(
     preset_manager: Arc<parking_lot::RwLock<PresetManager>>,
     undo_manager: Arc<parking_lot::RwLock<UndoManager>>,
     editor_state: Arc<ViziaState>,
+    last_cc: Arc<LastCc>,
 ) -> Option<ViziaEditor> {
     let lang = Language::from_index(language_atom.load(std::sync::atomic::Ordering::Relaxed));
     let selected_name = preset_manager
@@ -688,6 +764,10 @@ pub fn create_vizia_piano_editor(
         let can_undo_ui = can_undo.clone();
         let can_redo_ui = can_redo.clone();
         let suppress_undo = Arc::new(AtomicU32::new(0));
+        // MIDI Learn: the ptr -> id table is built from the params Arc,
+        // whose allocation never moves, so the pointers stay valid.
+        let learn_arm = LearnArm::new(build_ptr_to_id_map(&params));
+        let learn_status = Signal::new(String::new());
         setup_vizia_fonts(cx);
         if let Err(err) = add_base_theme(cx) {
             eprintln!("Failed to load shared Vizia theme: {err:?}");
@@ -717,6 +797,11 @@ pub fn create_vizia_piano_editor(
             octave_offset: 0,
             held_qwerty_keys: HashMap::new(),
             held_nav_keys: std::collections::HashSet::new(),
+            learn_arm: learn_arm.clone(),
+            learn_status: learn_status.clone(),
+            last_cc: last_cc.clone(),
+            last_seen_seq: last_cc.seq(),
+            last_seen_pending: None,
         }
         .build(cx);
         let display_timer = cx.add_timer(std::time::Duration::from_millis(33), None, |cx, _| {
@@ -725,6 +810,8 @@ pub fn create_vizia_piano_editor(
         cx.start_timer(display_timer);
 
         let params_ui = params.clone();
+        let learn_ui = learn_arm.clone();
+        let learn_status_ui = learn_status.clone();
         let peak_l_ui = peak_l.clone();
         let peak_r_ui = peak_r.clone();
         let active_keys_low_ui = active_keys_low.clone();
@@ -752,6 +839,8 @@ pub fn create_vizia_piano_editor(
         Binding::new(cx, language_ui, move |cx| {
             let lang = language_ui.get();
             let params = params_ui.clone();
+            let learn = learn_ui.clone();
+            let learn_status = learn_status_ui.clone();
             let peak_l = peak_l_ui.clone();
             let peak_r = peak_r_ui.clone();
             let active_keys_low = active_keys_low_ui.clone();
@@ -818,6 +907,24 @@ pub fn create_vizia_piano_editor(
                     },
                 );
 
+                // MIDI Learn row: toggle button + status line.
+                HStack::new(cx, |cx| {
+                    let learn_mode = learn.mode;
+                    Binding::new(cx, learn_mode, move |cx| {
+                        let on = learn_mode.get();
+                        Button::new(cx, |cx| {
+                            Label::new(cx, if on { "LEARN ●" } else { "LEARN" })
+                        })
+                        .class("btn-action")
+                        .on_press(|cx| {
+                            cx.emit(PianoUiEvent::ToggleLearn);
+                        })
+                        .width(Pixels(64.0));
+                    });
+                    Label::new(cx, learn_status.clone()).class("small-note");
+                })
+                .horizontal_gap(Pixels(8.0));
+
                 HStack::new(cx, |cx| {
                     PianoLidWidget::new(cx, params.clone(), lang)
                         .width(Stretch(1.0))
@@ -869,13 +976,13 @@ pub fn create_vizia_piano_editor(
                                 translate(lang, "piano.sustain", "Sustain:"),
                                 &params.sustain_pedal,
                                 translate(lang, "piano.tooltip.sustain", "How much the sustain pedal holds notes after you lift the keys."),
-                            );
+                            &learn);
                             knob(
                                 cx,
                                 translate(lang, "piano.key_action", "Key Action:"),
                                 &params.key_noise,
                                 translate(lang, "piano.tooltip.key_action", "Loudness of keybed thumps and escapement clicks."),
-                            );
+                            &learn);
                         })
                         .horizontal_gap(Pixels(8.0));
                         HStack::new(cx, |cx| {
@@ -884,13 +991,13 @@ pub fn create_vizia_piano_editor(
                                 translate(lang, "piano.damper_noise", "Damper Noise:"),
                                 &params.damper_noise,
                                 translate(lang, "piano.tooltip.damper_noise", "Noise of dampers lifting off and landing on the strings."),
-                            );
+                            &learn);
                             knob(
                                 cx,
                                 translate(lang, "piano.pedal_shock", "Pedal Shock:"),
                                 &params.pedal_noise,
                                 translate(lang, "piano.tooltip.pedal_shock", "Thump from the pedal mechanism itself."),
-                            );
+                            &learn);
                         })
                         .horizontal_gap(Pixels(8.0));
                     })
@@ -905,13 +1012,13 @@ pub fn create_vizia_piano_editor(
                                 translate(lang, "piano.inharmonicity", "Inharmonicity B:"),
                                 &params.inharmonicity_scale,
                                 translate(lang, "piano.tooltip.inharmonicity", "String stiffness (B factor): higher values push upper partials sharper."),
-                            );
+                            &learn);
                             knob(
                                 cx,
                                 translate(lang, "piano.hammer_hardness", "Hammer Hardness:"),
                                 &params.hammer_hardness,
                                 translate(lang, "piano.tooltip.hammer_hardness", "Hammer felt hardness: harder hammers sound brighter and more aggressive."),
-                            );
+                            &learn);
                         })
                         .horizontal_gap(Pixels(8.0));
                         HStack::new(cx, |cx| {
@@ -920,13 +1027,13 @@ pub fn create_vizia_piano_editor(
                                 translate(lang, "piano.unison_detune", "Unison Detune:"),
                                 &params.unison_detuning,
                                 translate(lang, "piano.tooltip.unison_detune", "Detuning spread between the strings of each note's trichord."),
-                            );
+                            &learn);
                             knob(
                                 cx,
                                 translate(lang, "piano.phantom_partials", "Phantom Partials:"),
                                 &params.phantom_gain,
                                 translate(lang, "piano.tooltip.phantom_partials", "Longitudinal phantom partials: extra high shimmer from string vibration."),
-                            );
+                            &learn);
                         })
                         .horizontal_gap(Pixels(8.0));
                     })
@@ -944,13 +1051,13 @@ pub fn create_vizia_piano_editor(
                                 translate(lang, "piano.mic_close", "Close Mic:"),
                                 &params.mic_close,
                                 translate(lang, "piano.tooltip.mic_close", "Close microphone pair over the bridges: direct, detailed sound."),
-                            );
+                            &learn);
                             knob(
                                 cx,
                                 translate(lang, "piano.mic_player", "Player Mic:"),
                                 &params.mic_player,
                                 translate(lang, "piano.tooltip.mic_player", "Microphones at the player's seat: what the pianist hears."),
-                            );
+                            &learn);
                         })
                         .horizontal_gap(Pixels(8.0));
                         HStack::new(cx, |cx| {
@@ -959,13 +1066,13 @@ pub fn create_vizia_piano_editor(
                                 translate(lang, "piano.mic_ambient", "Ambient Mic:"),
                                 &params.mic_ambient,
                                 translate(lang, "piano.tooltip.mic_ambient", "Hall microphones in the room: spacious, reverberant sound."),
-                            );
+                            &learn);
                             knob(
                                 cx,
                                 translate(lang, "piano.lid_angle", "Lid Angle:"),
                                 &params.lid_angle,
                                 translate(lang, "piano.tooltip.lid_angle", "Grand lid opening angle: wider sounds louder and brighter."),
-                            );
+                            &learn);
                         })
                         .horizontal_gap(Pixels(8.0));
                     })
@@ -980,7 +1087,7 @@ pub fn create_vizia_piano_editor(
                                 translate(lang, "piano.master_gain", "Master Gain:"),
                                 &params.master_gain,
                                 translate(lang, "piano.tooltip.master_gain", "Overall output volume."),
-                            );
+                            &learn);
                             VStack::new(cx, |cx| {
                                 let label = translate(lang, "piano.velocity_curve", "Touch Curve:");
                                 Label::new(cx, label.strip_suffix(':').unwrap_or(label))
@@ -1035,31 +1142,56 @@ pub fn create_vizia_piano_editor(
                             cx,
                             translate(lang, "fx.eq_low", "EQ Low:"),
                             &params.fx_eq_low,
-                            translate(lang, "fx.tooltip.eq_low", "Low shelf EQ at 120 Hz: boosts or cuts bass."),
+                            translate(
+                                lang,
+                                "fx.tooltip.eq_low",
+                                "Low shelf EQ at 120 Hz: boosts or cuts bass.",
+                            ),
+                            &learn,
                         );
                         knob(
                             cx,
                             translate(lang, "fx.eq_mid", "EQ Mid:"),
                             &params.fx_eq_mid,
-                            translate(lang, "fx.tooltip.eq_mid", "Peaking EQ at 1 kHz: boosts or cuts the midrange."),
+                            translate(
+                                lang,
+                                "fx.tooltip.eq_mid",
+                                "Peaking EQ at 1 kHz: boosts or cuts the midrange.",
+                            ),
+                            &learn,
                         );
                         knob(
                             cx,
                             translate(lang, "fx.eq_high", "EQ High:"),
                             &params.fx_eq_high,
-                            translate(lang, "fx.tooltip.eq_high", "High shelf EQ at 8 kHz: boosts or cuts treble."),
+                            translate(
+                                lang,
+                                "fx.tooltip.eq_high",
+                                "High shelf EQ at 8 kHz: boosts or cuts treble.",
+                            ),
+                            &learn,
                         );
                         knob(
                             cx,
                             translate(lang, "fx.reverb_mix", "Reverb Mix:"),
                             &params.fx_reverb_mix,
-                            translate(lang, "fx.tooltip.reverb_mix", "Reverb amount: 0 is dry, higher adds hall sound."),
+                            translate(
+                                lang,
+                                "fx.tooltip.reverb_mix",
+                                "Reverb amount: 0 is dry, higher adds hall sound.",
+                            ),
+                            &learn,
                         );
                         knob(
                             cx,
                             translate(lang, "fx.reverb_decay", "Reverb Decay:"),
                             &params.fx_reverb_decay,
-                            translate(lang, "fx.tooltip.reverb_decay", "Reverb length: longer decay means a bigger hall."),
+                            translate(
+                                lang,
+                                "fx.tooltip.reverb_decay",
+                                "Reverb length: longer decay means a bigger hall.",
+                            ),
+                            &learn,
                         );
                     })
                     .horizontal_gap(Pixels(8.0));
