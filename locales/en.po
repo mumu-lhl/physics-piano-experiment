@@ -1028,3 +1028,23 @@ msgstr "Reverb amount: 0 is dry, higher adds hall sound."
 msgctxt "fx.tooltip.reverb_decay"
 msgid "Reverb length: longer decay means a bigger hall."
 msgstr "Reverb length: longer decay means a bigger hall."
+
+msgctxt "learn.on"
+msgid "Learn on: click a knob"
+msgstr "Learn on: click a knob"
+
+msgctxt "learn.off"
+msgid "Learn off"
+msgstr "Learn off"
+
+msgctxt "learn.move_controller"
+msgid "Move a controller to bind {param}"
+msgstr "Move a controller to bind {param}"
+
+msgctxt "learn.bound"
+msgid "Bound CC{cc} to {param}"
+msgstr "Bound CC{cc} to {param}"
+
+msgctxt "learn.reserved"
+msgid "CC{cc} is reserved and can't be learned"
+msgstr "CC{cc} is reserved and can't be learned"

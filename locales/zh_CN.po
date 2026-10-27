@@ -1028,3 +1028,23 @@ msgstr "混响量：0 为干声，越大厅堂感越强。"
 msgctxt "fx.tooltip.reverb_decay"
 msgid "Reverb length: longer decay means a bigger hall."
 msgstr "混响长度：衰减越长，厅堂越大。"
+
+msgctxt "learn.on"
+msgid "Learn on: click a knob"
+msgstr "已进入学习模式：点击一个旋钮"
+
+msgctxt "learn.off"
+msgid "Learn off"
+msgstr "已退出学习模式"
+
+msgctxt "learn.move_controller"
+msgid "Move a controller to bind {param}"
+msgstr "动一下控制器，绑定 {param}"
+
+msgctxt "learn.bound"
+msgid "Bound CC{cc} to {param}"
+msgstr "已将 CC{cc} 绑定到 {param}"
+
+msgctxt "learn.reserved"
+msgid "CC{cc} is reserved and can't be learned"
+msgstr "CC{cc} 已保留，不可学习"
