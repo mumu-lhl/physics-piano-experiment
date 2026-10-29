@@ -5,10 +5,15 @@
 
 mod biquad;
 mod fx;
+mod midi;
 mod modal;
 mod noise;
 
 pub use biquad::Biquad;
 pub use fx::{EQ_HIGH_FREQ, EQ_LOW_FREQ, EQ_MID_FREQ, EQ_MID_Q, FxChain, Reverb};
+pub use midi::{
+    BASS_BEND_RANGE_SEMITONES, GUITAR_BEND_RANGE_SEMITONES, PIANO_BEND_RANGE_CENTS, SOSTENUTO_CC,
+    bend_cents, bend_semitones, cc_pedal_down,
+};
 pub use modal::{ModalTransition, OverdampedPolicy};
 pub use noise::{XorShift32, XorShift64};
