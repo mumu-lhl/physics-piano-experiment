@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use crate::preset::Preset;
 
 /// Controller CC numbers that MIDI Learn must never bind: they already have
-/// a fixed meaning (piano sustain / una corda / expression, drum hi-hat
-/// pedal) and stealing them would break playing.
-pub const MIDI_LEARN_EXCLUDED_CCS: [u8; 4] = [64, 67, 11, 4];
+/// a fixed meaning (piano sustain / sostenuto / una corda / expression,
+/// drum hi-hat pedal) and stealing them would break playing.
+pub const MIDI_LEARN_EXCLUDED_CCS: [u8; 5] = [64, 66, 67, 11, 4];
 
 #[derive(Debug, Clone)]
 pub struct PresetManager {
