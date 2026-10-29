@@ -71,6 +71,13 @@ pub struct GuitarEngine {
     pub active_notes_on_string: [Option<u8>; 6],
     /// Global pitch bend in semitones for standard single-channel MIDI keyboards
     pub global_pitch_bend: f64,
+    /// Sostenuto (middle pedal, CC66) state: strings sounding when the
+    /// pedal went down keep ringing after note-off until it comes up.
+    /// `sostenuto_deferred` marks captured strings whose note-off already
+    /// arrived while the pedal was down.
+    pub sostenuto_down: bool,
+    pub sostenuto_strings: [bool; 6],
+    pub sostenuto_deferred: [bool; 6],
 
     // Acoustic feedback closed-loop
     pub feedback_gain: f64,
@@ -121,6 +128,9 @@ impl GuitarEngine {
             master_volume: 0.85,
             active_notes_on_string: [None; 6],
             global_pitch_bend: 0.0,
+            sostenuto_down: false,
+            sostenuto_strings: [false; 6],
+            sostenuto_deferred: [false; 6],
             feedback_gain: 0.0,
             feedback_delay_ms: 4.5,
             feedback_buffer: [0.0; 2048],
@@ -194,6 +204,10 @@ impl GuitarEngine {
                 self.squeak.trigger_shift(str_idx, delta, 1.0);
             }
             self.active_notes_on_string[str_idx] = Some(midi_note);
+            // A fresh strike supersedes any sostenuto capture: notes
+            // started after the pedal went down are not held by it.
+            self.sostenuto_strings[str_idx] = false;
+            self.sostenuto_deferred[str_idx] = false;
 
             let is_mpe = (2..=7).contains(&channel);
             if self.strummer.strum_speed_ms <= 1.0 {
@@ -266,17 +280,51 @@ impl GuitarEngine {
         }
     }
 
+    /// Sostenuto (middle pedal, CC66): pressing captures the strings
+    /// sounding at that moment; releasing applies their deferred
+    /// note-offs. Explicit `release_string` calls bypass it.
+    pub fn set_sostenuto_pedal(&mut self, down: bool) {
+        if down == self.sostenuto_down {
+            return;
+        }
+        self.sostenuto_down = down;
+        if down {
+            for i in 0..6 {
+                self.sostenuto_strings[i] = self.active_notes_on_string[i].is_some();
+                self.sostenuto_deferred[i] = false;
+            }
+        } else {
+            for i in 0..6 {
+                if self.sostenuto_deferred[i] {
+                    self.strings[i].release();
+                    self.active_notes_on_string[i] = None;
+                }
+                self.sostenuto_strings[i] = false;
+                self.sostenuto_deferred[i] = false;
+            }
+        }
+    }
+
+    /// Release a string, deferring to the sostenuto pedal when it holds
+    /// this string: the note-off is remembered and applied on pedal-up.
+    fn release_or_defer(&mut self, str_idx: usize) {
+        if self.sostenuto_down && self.sostenuto_strings[str_idx] {
+            self.sostenuto_deferred[str_idx] = true;
+        } else {
+            self.strings[str_idx].release();
+            self.active_notes_on_string[str_idx] = None;
+        }
+    }
+
     /// Handles MIDI Note Off event.
     pub fn note_off(&mut self, channel: u8, midi_note: u8) {
         if (2..=7).contains(&channel) {
             let str_idx = (channel - 2) as usize;
-            self.strings[str_idx].release();
-            self.active_notes_on_string[str_idx] = None;
+            self.release_or_defer(str_idx);
         } else {
             for i in 0..6 {
                 if self.active_notes_on_string[i] == Some(midi_note) {
-                    self.strings[i].release();
-                    self.active_notes_on_string[i] = None;
+                    self.release_or_defer(i);
                 }
             }
         }

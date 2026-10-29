@@ -980,3 +980,85 @@ fn test_chord_library_strum_frets_and_sounds_strings() {
     }
     assert!(!engine.strings[5].is_held, "muted low E must stay unheld");
 }
+
+#[test]
+fn test_sostenuto_holds_captured_string() {
+    let mut engine = GuitarEngine::new(
+        48000.0,
+        GuitarStringSetType::Electric010,
+        GuitarInstrumentMode::Electric,
+    );
+    engine.strummer.strum_speed_ms = 0.0;
+    engine.note_on(0, 64, 0.8);
+    for _ in 0..100 {
+        engine.process_sample();
+    }
+    let str_idx = engine
+        .active_notes_on_string
+        .iter()
+        .position(|n| *n == Some(64))
+        .expect("note 64 should be allocated to a string");
+    assert!(engine.strings[str_idx].is_held);
+
+    engine.set_sostenuto_pedal(true);
+    engine.note_off(0, 64);
+    assert!(
+        engine.strings[str_idx].is_held,
+        "sostenuto must defer the release"
+    );
+    assert!(!engine.strings[str_idx].is_releasing);
+    assert_eq!(engine.active_notes_on_string[str_idx], Some(64));
+
+    engine.set_sostenuto_pedal(false);
+    assert!(engine.strings[str_idx].is_releasing);
+    assert_eq!(engine.active_notes_on_string[str_idx], None);
+}
+
+#[test]
+fn test_sostenuto_ignores_post_pedal_notes_and_restrikes() {
+    let mut engine = GuitarEngine::new(
+        48000.0,
+        GuitarStringSetType::Electric010,
+        GuitarInstrumentMode::Electric,
+    );
+    engine.strummer.strum_speed_ms = 0.0;
+
+    // Note started after the pedal went down is not captured.
+    engine.set_sostenuto_pedal(true);
+    engine.note_on(0, 64, 0.8);
+    for _ in 0..100 {
+        engine.process_sample();
+    }
+    let str_idx = engine
+        .active_notes_on_string
+        .iter()
+        .position(|n| *n == Some(64))
+        .expect("note 64 should be allocated to a string");
+    engine.note_off(0, 64);
+    assert!(engine.strings[str_idx].is_releasing);
+    assert_eq!(engine.active_notes_on_string[str_idx], None);
+
+    // Re-striking a captured note supersedes the capture.
+    engine.set_sostenuto_pedal(false);
+    engine.note_on(0, 64, 0.8);
+    for _ in 0..100 {
+        engine.process_sample();
+    }
+    let str_idx = engine
+        .active_notes_on_string
+        .iter()
+        .position(|n| *n == Some(64))
+        .expect("note 64 should be allocated to a string");
+    engine.set_sostenuto_pedal(true);
+    engine.note_off(0, 64);
+    assert!(!engine.strings[str_idx].is_releasing);
+    engine.note_on(0, 64, 0.8);
+    for _ in 0..100 {
+        engine.process_sample();
+    }
+    engine.note_off(0, 64);
+    assert!(
+        engine.strings[str_idx].is_releasing,
+        "re-struck note must release immediately despite the pedal"
+    );
+}
