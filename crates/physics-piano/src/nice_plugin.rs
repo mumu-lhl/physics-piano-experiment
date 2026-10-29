@@ -10,7 +10,7 @@ use vizia_plug::ViziaState;
 
 use crate::engine::{EngineEvent, EngineOutEvent, PianoEngine, velocity_points_from_exponent};
 use crate::gui::{Language, create_vizia_piano_editor, default_vizia_state};
-use physics_dsp::FxChain;
+use physics_dsp::{FxChain, PIANO_BEND_RANGE_CENTS, SOSTENUTO_CC, bend_cents, cc_pedal_down};
 use physics_presets::{PresetManager, UndoManager, piano_factory_presets};
 use physics_ui::{LastCc, apply_midi_cc, build_param_map};
 
@@ -565,8 +565,8 @@ impl Plugin for PhysicsPiano {
                     });
                 }
                 NoteEvent::MidiPitchBend { value, timing, .. } => {
-                    // value is in [0.0, 1.0], center is 0.5. Standard bend is +/- 2 semitones = +/- 200 cents.
-                    let cents = (value as f64 - 0.5) * 2.0 * 200.0;
+                    // Shared bend conversion: +/- 2 semitones = +/- 200 cents.
+                    let cents = bend_cents(value as f64, PIANO_BEND_RANGE_CENTS);
                     self.events_scratch.push(EngineEvent::PitchBend {
                         time: timing as usize,
                         cents,
@@ -585,6 +585,11 @@ impl Plugin for PhysicsPiano {
                         self.events_scratch.push(EngineEvent::SustainPedal {
                             time: timing as usize,
                             depth,
+                        });
+                    } else if cc == SOSTENUTO_CC {
+                        self.events_scratch.push(EngineEvent::SostenutoPedal {
+                            time: timing as usize,
+                            down: cc_pedal_down(value as f64),
                         });
                     } else if cc == 67 {
                         self.events_scratch.push(EngineEvent::UnaCorda {

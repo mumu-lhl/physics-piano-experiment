@@ -18,6 +18,9 @@ pub struct PianoVoice {
 
     pub is_key_down: bool,
     pub is_sounding: bool,
+    /// Sostenuto (middle pedal) capture: dampers stay lifted after key
+    /// release until the sostenuto pedal comes up, like a held key.
+    pub sostenuto_held: bool,
     pub unison_scale: f64,
     pub pitch_bend_cents: f64,
     pub inharmonicity_scale: f64,
@@ -59,6 +62,7 @@ impl PianoVoice {
             hammer,
             is_key_down: false,
             is_sounding: false,
+            sostenuto_held: false,
             unison_scale: 1.0,
             pitch_bend_cents: 0.0,
             inharmonicity_scale: 1.0,
@@ -71,6 +75,7 @@ impl PianoVoice {
     pub fn reset(&mut self) {
         self.is_sounding = false;
         self.is_key_down = false;
+        self.sostenuto_held = false;
         self.hammer.reset();
         for s in &mut self.strings {
             s.reset();
@@ -162,9 +167,10 @@ impl PianoVoice {
     }
 
     pub fn update_damper_state(&mut self, sustain_pedal: bool, pedal_depth: f64) {
-        // 1. If key is physically held down by pianist's finger,
-        // the whippen/damper lever keeps the damper 100% lifted off the string!
-        if self.is_key_down {
+        // 1. If key is physically held down by pianist's finger, or
+        // captured by the sostenuto pedal, the whippen/damper lever
+        // keeps the damper 100% lifted off the string!
+        if self.is_key_down || self.sostenuto_held {
             for s in &mut self.strings {
                 s.set_damper(false, 0.0);
             }

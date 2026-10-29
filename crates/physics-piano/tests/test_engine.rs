@@ -699,3 +699,202 @@ fn prepared_voice_preserves_per_note_tuning_on_restrike() {
 
     assert!((engine.get_voice(60).unwrap().pitch_bend_cents - 7.5).abs() < 1e-6);
 }
+
+#[test]
+fn test_sostenuto_holds_captured_note_after_release() {
+    let mut engine = PianoEngine::new(48000.0, 30, true);
+    let block_size = 64;
+    let mut out_l = vec![0.0; block_size];
+    let mut out_r = vec![0.0; block_size];
+    let mut out_events = Vec::new();
+
+    // Strike A4, sostenuto down while held, then release the key.
+    engine.process_block(
+        block_size,
+        &[EngineEvent::NoteOn {
+            time: 0,
+            key: 69,
+            velocity: 0.8,
+        }],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
+    engine.process_block(
+        block_size,
+        &[EngineEvent::SostenutoPedal {
+            time: 0,
+            down: true,
+        }],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
+    engine.process_block(
+        block_size,
+        &[EngineEvent::NoteOff { time: 0, key: 69 }],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
+    let voice = engine.voices.get(&69).unwrap();
+    assert!(voice.sostenuto_held);
+    assert!(!voice.strings[0].damper_active);
+
+    // Pedal up: the pending note-off takes effect, damper seats.
+    engine.process_block(
+        block_size,
+        &[EngineEvent::SostenutoPedal {
+            time: 0,
+            down: false,
+        }],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
+    let voice = engine.voices.get(&69).unwrap();
+    assert!(!voice.sostenuto_held);
+    assert!(voice.strings[0].damper_active);
+}
+
+#[test]
+fn test_sostenuto_ignores_post_pedal_notes_and_restrikes() {
+    let mut engine = PianoEngine::new(48000.0, 30, true);
+    let block_size = 64;
+    let mut out_l = vec![0.0; block_size];
+    let mut out_r = vec![0.0; block_size];
+    let mut out_events = Vec::new();
+    let block = |engine: &mut PianoEngine,
+                 events: &[EngineEvent],
+                 out_events: &mut Vec<physics_piano::engine::EngineOutEvent>,
+                 out_l: &mut [f64],
+                 out_r: &mut [f64]| {
+        engine.process_block(block_size, events, out_events, out_l, out_r);
+    };
+
+    // Hold A4, sostenuto down, then start C5 after the pedal is down.
+    block(
+        &mut engine,
+        &[EngineEvent::NoteOn {
+            time: 0,
+            key: 69,
+            velocity: 0.8,
+        }],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
+    block(
+        &mut engine,
+        &[EngineEvent::SostenutoPedal {
+            time: 0,
+            down: true,
+        }],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
+    block(
+        &mut engine,
+        &[EngineEvent::NoteOn {
+            time: 0,
+            key: 72,
+            velocity: 0.8,
+        }],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
+    block(
+        &mut engine,
+        &[EngineEvent::NoteOff { time: 0, key: 72 }],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
+    // C5 was started after the pedal went down: damped immediately.
+    let voice = engine.voices.get(&72).unwrap();
+    assert!(!voice.sostenuto_held);
+    assert!(voice.strings[0].damper_active);
+
+    // Re-striking the captured A4 supersedes the capture: its next
+    // release damps immediately even with the pedal still down.
+    block(
+        &mut engine,
+        &[EngineEvent::NoteOn {
+            time: 0,
+            key: 69,
+            velocity: 0.8,
+        }],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
+    block(
+        &mut engine,
+        &[EngineEvent::NoteOff { time: 0, key: 69 }],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
+    let voice = engine.voices.get(&69).unwrap();
+    assert!(!voice.sostenuto_held);
+    assert!(voice.strings[0].damper_active);
+}
+
+#[test]
+fn test_sostenuto_release_keeps_sustain_pedal_hold() {
+    let mut engine = PianoEngine::new(48000.0, 30, true);
+    let block_size = 64;
+    let mut out_l = vec![0.0; block_size];
+    let mut out_r = vec![0.0; block_size];
+    let mut out_events = Vec::new();
+
+    engine.set_sustain_pedal(true, 1.0);
+    engine.process_block(
+        block_size,
+        &[EngineEvent::NoteOn {
+            time: 0,
+            key: 69,
+            velocity: 0.8,
+        }],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
+    engine.process_block(
+        block_size,
+        &[EngineEvent::SostenutoPedal {
+            time: 0,
+            down: true,
+        }],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
+    engine.process_block(
+        block_size,
+        &[EngineEvent::NoteOff { time: 0, key: 69 }],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
+    // Sostenuto up: the sustain pedal still holds the damper open.
+    engine.process_block(
+        block_size,
+        &[EngineEvent::SostenutoPedal {
+            time: 0,
+            down: false,
+        }],
+        &mut out_events,
+        &mut out_l,
+        &mut out_r,
+    );
+    let voice = engine.voices.get(&69).unwrap();
+    assert!(!voice.sostenuto_held);
+    assert!(!voice.strings[0].damper_active);
+    // Sustain pedal up: damper seats.
+    engine.set_sustain_pedal(false, 0.0);
+    let voice = engine.voices.get(&69).unwrap();
+    assert!(voice.strings[0].damper_active);
+}

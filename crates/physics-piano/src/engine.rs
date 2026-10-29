@@ -16,6 +16,7 @@ pub enum EngineEvent {
     NoteOff { time: usize, key: u8 },
     NoteTuning { time: usize, key: u8, cents: f64 },
     SustainPedal { time: usize, depth: f64 },
+    SostenutoPedal { time: usize, down: bool },
     UnaCorda { time: usize, enabled: bool },
     PitchBend { time: usize, cents: f64 },
     Expression { time: usize, gain: f64 },
@@ -77,6 +78,11 @@ pub struct PianoEngine {
     pub pedal_depth: f64,
     pub prev_pedal_depth: f64,
     pub una_corda: bool,
+
+    /// Sostenuto (middle pedal) state: keys physically held when the
+    /// pedal went down keep sounding after release until it comes up.
+    pub sostenuto_pedal: bool,
+    pub sostenuto_notes: HashSet<u8>,
 
     // Core voicing parameters
     pub inharmonicity_scale: f64,
@@ -144,6 +150,8 @@ impl PianoEngine {
             pedal_depth: 0.0,
             prev_pedal_depth: 0.0,
             una_corda: false,
+            sostenuto_pedal: false,
+            sostenuto_notes: HashSet::with_capacity(32),
             inharmonicity_scale: 1.0,
             hammer_hardness: 1.0,
             unison_detuning: 1.0,
@@ -346,6 +354,7 @@ impl PianoEngine {
 
         if let Some(stolen_key) = candidate {
             self.active_keys.remove(&stolen_key);
+            self.sostenuto_notes.remove(&stolen_key);
             if let Some(v) = self.voices.get_mut(&stolen_key) {
                 v.reset();
             }
@@ -360,6 +369,9 @@ impl PianoEngine {
         if self.active_keys.len() >= self.max_active_voices && !self.active_keys.contains(&key) {
             self.steal_voice();
         }
+        // A fresh strike supersedes any sostenuto capture: notes started
+        // after the pedal went down are not held by it.
+        self.sostenuto_notes.remove(&key);
         let effective_vel = self.map_velocity(velocity);
 
         self.action_noise.trigger_note_on(key, effective_vel);
@@ -383,6 +395,7 @@ impl PianoEngine {
                 voice.set_hammer_hardness(hammer_hardness);
             }
             voice.set_una_corda(una_corda);
+            voice.sostenuto_held = false;
             voice.note_on(effective_vel);
             voice.get_energy()
         };
@@ -432,6 +445,36 @@ impl PianoEngine {
         }
     }
 
+    /// Sostenuto (middle pedal, CC66): pressing captures the keys held
+    /// at that moment; releasing re-applies their pending note-offs
+    /// (honoring the sustain pedal) for keys no longer held down.
+    pub fn set_sostenuto_pedal(&mut self, down: bool) {
+        if down == self.sostenuto_pedal {
+            return;
+        }
+        self.sostenuto_pedal = down;
+        if down {
+            self.sostenuto_notes = self.depressed_keys.clone();
+            for &key in &self.sostenuto_notes {
+                if let Some(voice) = self.voices.get_mut(&key) {
+                    voice.sostenuto_held = true;
+                }
+            }
+        } else {
+            let captured = std::mem::take(&mut self.sostenuto_notes);
+            for key in captured {
+                if let Some(voice) = self.voices.get_mut(&key) {
+                    voice.sostenuto_held = false;
+                }
+                if !self.depressed_keys.contains(&key) {
+                    if let Some(voice) = self.voices.get_mut(&key) {
+                        voice.note_off(self.sustain_pedal, self.pedal_depth);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn set_una_corda(&mut self, enabled: bool) {
         self.una_corda = enabled;
         for &key in &self.active_keys {
@@ -470,6 +513,7 @@ impl PianoEngine {
                     EngineEvent::NoteOff { time, .. } => *time,
                     EngineEvent::NoteTuning { time, .. } => *time,
                     EngineEvent::SustainPedal { time, .. } => *time,
+                    EngineEvent::SostenutoPedal { time, .. } => *time,
                     EngineEvent::UnaCorda { time, .. } => *time,
                     EngineEvent::PitchBend { time, .. } => *time,
                     EngineEvent::Expression { time, .. } => *time,
@@ -484,6 +528,9 @@ impl PianoEngine {
                         EngineEvent::SustainPedal { depth, .. } => {
                             let down = *depth > 0.05;
                             self.set_sustain_pedal(down, *depth);
+                        }
+                        EngineEvent::SostenutoPedal { down, .. } => {
+                            self.set_sostenuto_pedal(*down)
                         }
                         EngineEvent::UnaCorda { enabled, .. } => self.set_una_corda(*enabled),
                         EngineEvent::PitchBend { cents, .. } => self.set_pitch_bend(*cents),
@@ -628,6 +675,8 @@ impl PianoEngine {
         }
         self.active_keys.clear();
         self.depressed_keys.clear();
+        self.sostenuto_pedal = false;
+        self.sostenuto_notes.clear();
         self.active_keys_vec.clear();
         self.note_energy_peak.clear();
         self.pitch_bend_cents = 0.0;
