@@ -51,6 +51,7 @@ This roadmap tracks milestones for the piano engine and its supporting research,
   - Continuous damper pedal articulation (half-pedaling $[0, 1]$) and Una Corda soft-pedal felt strike displacement.
 - [x] **CLAP C-ABI Export**:
   - `clap_entry` symbol exported from `libphysics_piano.so` (`cdylib`).
+  - Note (2026-10-29): the hand-written C-ABI layer (`clap_plugin.rs`) was removed as dead code — no host could discover its entry point; CLAP export is provided by nice-plug (`nice_export_clap!` in `src/lib.rs`).
 
 ---
 
