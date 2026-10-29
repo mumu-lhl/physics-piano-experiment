@@ -594,4 +594,58 @@ fn test_bass_spatial_profile_sampling() {
     }
 }
 
+#[test]
+fn test_sostenuto_holds_captured_string() {
+    let mut engine = BassEngine::new(SAMPLE_RATE, BassMode::Electric, true);
+    engine.note_on(40, 0.8);
+    let idx = engine
+        .strings
+        .iter()
+        .position(|v| v.current_note == Some(40))
+        .expect("note 40 should be routed to a string");
+    assert!(engine.strings[idx].string.is_held);
 
+    engine.set_sostenuto_pedal(true);
+    engine.note_off(40);
+    assert!(
+        engine.strings[idx].string.is_held,
+        "sostenuto must defer the release"
+    );
+
+    engine.set_sostenuto_pedal(false);
+    assert!(!engine.strings[idx].string.is_held);
+}
+
+#[test]
+fn test_sostenuto_ignores_post_pedal_notes_and_restrikes() {
+    let mut engine = BassEngine::new(SAMPLE_RATE, BassMode::Electric, true);
+
+    // Note started after the pedal went down is not captured.
+    engine.set_sostenuto_pedal(true);
+    engine.note_on(40, 0.8);
+    let idx = engine
+        .strings
+        .iter()
+        .position(|v| v.current_note == Some(40))
+        .expect("note 40 should be routed to a string");
+    engine.note_off(40);
+    assert!(!engine.strings[idx].string.is_held);
+
+    // Re-striking a captured note supersedes the capture.
+    engine.set_sostenuto_pedal(false);
+    engine.note_on(40, 0.8);
+    let idx = engine
+        .strings
+        .iter()
+        .position(|v| v.current_note == Some(40))
+        .expect("note 40 should be routed to a string");
+    engine.set_sostenuto_pedal(true);
+    engine.note_off(40);
+    assert!(engine.strings[idx].string.is_held);
+    engine.note_on(40, 0.8);
+    engine.note_off(40);
+    assert!(
+        !engine.strings[idx].string.is_held,
+        "re-struck note must release immediately despite the pedal"
+    );
+}

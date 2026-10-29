@@ -7,7 +7,9 @@ use crate::{
 };
 use atomic_float::AtomicF32;
 use nice_plug::prelude::*;
-use physics_dsp::FxChain;
+use physics_dsp::{
+    BASS_BEND_RANGE_SEMITONES, FxChain, SOSTENUTO_CC, bend_semitones, cc_pedal_down,
+};
 use physics_presets::{PresetManager, UndoManager, bass_factory_presets};
 use physics_ui::{LastCc, apply_midi_cc, build_param_map};
 use std::collections::HashMap;
@@ -284,8 +286,12 @@ impl PhysicsBass {
     /// polling, and drive the bound parameter when one is learned. The
     /// manager lock is only tried, never waited on, so a contended GUI
     /// thread can't stall the audio thread; the next CC movement retries.
-    fn handle_midi_cc(&self, cc: u8, value: f32) {
+    fn handle_midi_cc(&mut self, cc: u8, value: f32) {
         self.last_cc.record(cc);
+        if cc == SOSTENUTO_CC {
+            self.engine.set_sostenuto_pedal(cc_pedal_down(value as f64));
+            return;
+        }
         if let Some(manager) = self.preset_manager.try_read() {
             apply_midi_cc(&self.param_map, manager.midi_mappings(), cc, value);
         }
@@ -534,7 +540,9 @@ impl Plugin for PhysicsBass {
                         self.engine.note_off(note);
                     }
                     NoteEvent::MidiPitchBend { value, .. } => {
-                        self.engine.set_pitch_bend((value as f64 - 0.5) * 24.0);
+                        // Shared bend conversion: +/- 12 semitones.
+                        self.engine
+                            .set_pitch_bend(bend_semitones(value as f64, BASS_BEND_RANGE_SEMITONES));
                     }
                     NoteEvent::MidiCC { cc, value, .. } => {
                         self.handle_midi_cc(cc, value);
@@ -714,6 +722,16 @@ mod midi_learn_tests {
         assert_eq!(plugin.last_cc.cc(), 8);
         assert_eq!(plugin.last_cc.seq(), 2);
         assert!((plugin.params.drive.value() - 0.13).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sostenuto_cc_drives_engine_not_learn() {
+        let mut plugin = PhysicsBass::default();
+        plugin.handle_midi_cc(66, 1.0);
+        assert!(plugin.engine.sostenuto_down);
+        assert_eq!(plugin.last_cc.cc(), 66);
+        plugin.handle_midi_cc(66, 0.0);
+        assert!(!plugin.engine.sostenuto_down);
     }
 
     #[test]

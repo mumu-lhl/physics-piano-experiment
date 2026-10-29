@@ -127,6 +127,13 @@ pub struct BassEngine {
     pub drive: f64,
     pub master_gain: f64,
     pub pitch_bend_semitones: f64,
+    /// Sostenuto (middle pedal, CC66) state: strings sounding when the
+    /// pedal went down keep ringing after note-off until it comes up.
+    /// `sostenuto_deferred` marks captured strings whose note-off already
+    /// arrived while the pedal was down.
+    pub sostenuto_down: bool,
+    pub sostenuto_strings: [bool; STRING_COUNT],
+    pub sostenuto_deferred: [bool; STRING_COUNT],
 }
 
 impl BassEngine {
@@ -154,6 +161,9 @@ impl BassEngine {
             drive: 0.0,
             master_gain: 0.82,
             pitch_bend_semitones: 0.0,
+            sostenuto_down: false,
+            sostenuto_strings: [false; STRING_COUNT],
+            sostenuto_deferred: [false; STRING_COUNT],
         }
     }
 
@@ -203,6 +213,11 @@ impl BassEngine {
         let fret = fret.min(24);
         let note = self.strings[index].open_midi.saturating_add(fret);
 
+        // A fresh strike supersedes any sostenuto capture: notes started
+        // after the pedal went down are not held by it.
+        self.sostenuto_strings[index] = false;
+        self.sostenuto_deferred[index] = false;
+
         // Physical legato: if this string is currently vibrating and the fret changed,
         // perform smooth legato without resetting the wave grid!
         let is_legato = self.strings[index].string.is_held
@@ -233,17 +248,52 @@ impl BassEngine {
         self.pickup.set_blend(blend);
     }
 
+    /// Sostenuto (middle pedal, CC66): pressing captures the strings
+    /// sounding at that moment; releasing applies their deferred
+    /// note-offs.
+    pub fn set_sostenuto_pedal(&mut self, down: bool) {
+        if down == self.sostenuto_down {
+            return;
+        }
+        self.sostenuto_down = down;
+        if down {
+            for (index, voice) in self.strings.iter().enumerate() {
+                self.sostenuto_strings[index] =
+                    voice.current_note.is_some() && voice.string.is_held;
+                self.sostenuto_deferred[index] = false;
+            }
+        } else {
+            for index in 0..STRING_COUNT {
+                if self.sostenuto_deferred[index] {
+                    self.strings[index].release();
+                }
+                self.sostenuto_strings[index] = false;
+                self.sostenuto_deferred[index] = false;
+            }
+        }
+    }
+
+    /// Release a string, deferring to the sostenuto pedal when it holds
+    /// this string: the note-off is remembered and applied on pedal-up.
+    fn release_or_defer(&mut self, index: usize) {
+        if self.sostenuto_down && self.sostenuto_strings[index] {
+            self.sostenuto_deferred[index] = true;
+        } else {
+            self.strings[index].release();
+        }
+    }
+
     pub fn note_off(&mut self, note: u8) {
-        for voice in &mut self.strings {
-            if voice.current_note == Some(note) {
-                voice.release();
+        for index in 0..STRING_COUNT {
+            if self.strings[index].current_note == Some(note) {
+                self.release_or_defer(index);
             }
         }
     }
 
     pub fn note_off_string(&mut self, index: usize) {
-        if let Some(voice) = self.strings.get_mut(index) {
-            voice.release();
+        if index < STRING_COUNT {
+            self.release_or_defer(index);
         }
     }
 
@@ -331,7 +381,9 @@ impl BassEngine {
 
     pub fn start_bowing(&mut self, string_index: usize, velocity: f64, pressure: f64, position: f64) {
         if string_index < STRING_COUNT {
-            self.strings[string_index].string.start_bowing(velocity, pressure, position);
+            self.strings[string_index]
+                .string
+                .start_bowing(velocity, pressure, position);
         }
     }
 
@@ -437,6 +489,9 @@ impl BassEngine {
         self.body.reset(self.sample_rate);
         self.pickup.reset();
         self.pitch_bend_semitones = 0.0;
+        self.sostenuto_down = false;
+        self.sostenuto_strings = [false; STRING_COUNT];
+        self.sostenuto_deferred = [false; STRING_COUNT];
     }
 
     pub fn total_energy(&self) -> f64 {
