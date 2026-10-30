@@ -359,6 +359,25 @@ impl PhysicsBass {
     }
 }
 
+/// Transparent tanh-based soft limiter ensuring output never exceeds 0.99
+/// (0 dBFS), mirroring piano's post-FX limiter. The engine already limits
+/// its own output, but the FX chain sits after it and can add up to +12 dB
+/// per EQ band, so the final output is limited again after FX. The
+/// engine's pre-FX limiter is kept: the master gain is applied inside the
+/// engine, so removing it would change the engine's own output (used by
+/// the CLI and the acoustic tests) rather than just the plugin's.
+#[inline]
+fn soft_limit(x: f32) -> f32 {
+    if x.abs() <= 0.82 {
+        x
+    } else {
+        let sign = x.signum();
+        let mag = x.abs();
+        let excess = mag - 0.82;
+        sign * (0.82 + 0.17 * (excess / 0.17).tanh())
+    }
+}
+
 impl Plugin for PhysicsBass {
     const NAME: &'static str = "Physics Bass";
     const VENDOR: &'static str = "Mumulhl";
@@ -554,15 +573,17 @@ impl Plugin for PhysicsBass {
             self.apply_smoothed_parameters();
             let (left, right) = self.engine.process_sample();
             let (left, right) = self.fx.process_sample(left, right);
+            let left = soft_limit(left as f32);
+            let right = soft_limit(right as f32);
             let mut channels = channel_samples.into_iter();
             if let Some(channel) = channels.next() {
-                *channel = left as f32;
+                *channel = left;
             }
             if let Some(channel) = channels.next() {
-                *channel = right as f32;
+                *channel = right;
             }
-            max_l = max_l.max((left as f32).abs());
-            max_r = max_r.max((right as f32).abs());
+            max_l = max_l.max(left.abs());
+            max_r = max_r.max(right.abs());
         }
 
         // Update peak meter smoothly (same 0.92/0.08 smoothing as piano)
@@ -743,5 +764,42 @@ mod midi_learn_tests {
         for (id, _, _) in &ids {
             assert!(plugin.param_map.contains_key(id), "missing {id}");
         }
+    }
+}
+
+#[cfg(test)]
+mod post_fx_limiter_tests {
+    use super::*;
+
+    #[test]
+    fn soft_limit_never_exceeds_0_99() {
+        for x in [0.0f32, 0.5, -0.5, 0.82, -0.82, 1.0, -1.0, 4.0, -4.0, 100.0] {
+            assert!(soft_limit(x).abs() <= 0.99, "soft_limit({x})");
+        }
+        // Below the knee the limiter is transparent.
+        assert_eq!(soft_limit(0.5), 0.5);
+        assert_eq!(soft_limit(-0.5), -0.5);
+    }
+
+    #[test]
+    fn boosted_eq_output_stays_bounded_after_limiter() {
+        // Engine output (up to ~1.0 after the engine's own limiter) through
+        // all three EQ bands at +12 dB, as the plugin's process loop does
+        // it: FX first, then the post-FX limiter.
+        let mut fx = FxChain::new(44_100.0);
+        fx.set_params(12.0, 12.0, 12.0, 0.0, 0.5);
+        let mut saw_unlimited = false;
+        for _ in 0..4096 {
+            let (l, r) = fx.process_sample(2.0, -2.0);
+            if l.abs() > 0.99 || r.abs() > 0.99 {
+                saw_unlimited = true;
+            }
+            assert!(soft_limit(l as f32).abs() <= 0.99);
+            assert!(soft_limit(r as f32).abs() <= 0.99);
+        }
+        assert!(
+            saw_unlimited,
+            "boosted EQ should exceed 0.99 before limiting"
+        );
     }
 }

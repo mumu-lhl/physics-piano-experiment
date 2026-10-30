@@ -175,12 +175,29 @@ impl PianoEngine {
 
     pub fn set_pitch_bend(&mut self, cents: f64) {
         self.pitch_bend_cents = cents;
-        self.note_tuning_cents.fill(None);
         for &key in &self.active_keys {
+            let composed = self.composed_pitch_offset(key);
             if let Some(voice) = self.voices.get_mut(&key) {
-                voice.set_pitch_bend(cents);
+                voice.set_pitch_bend(composed);
             }
         }
+    }
+
+    /// Per-note tuning offset plus the global pitch bend, in cents.
+    ///
+    /// The two are stored separately (`note_tuning_cents` /
+    /// `pitch_bend_cents`) and only composed when handed to a voice:
+    /// `PianoVoice` keeps a single composed offset, so passing either
+    /// component alone would erase the other. Keys outside 21..=108
+    /// have no tuning entry and compose to the global bend alone.
+    fn composed_pitch_offset(&self, key: u8) -> f64 {
+        let tuning = key
+            .checked_sub(21)
+            .map(usize::from)
+            .filter(|&i| i < 88)
+            .and_then(|i| self.note_tuning_cents[i])
+            .unwrap_or(0.0);
+        tuning + self.pitch_bend_cents
     }
 
     pub fn set_expression_gain(&mut self, gain: f64) {
@@ -283,6 +300,9 @@ impl PianoEngine {
         }
     }
 
+    /// Callers must pass a key in 21..=108: `key_params` only covers the
+    /// 88-key range. `note_on` guards out-of-range host notes before
+    /// calling here; `prepare_voices` only iterates the valid range.
     pub fn get_or_create_voice(&mut self, key: u8) -> &mut PianoVoice {
         let sr = self.sample_rate;
         let una_corda = self.una_corda;
@@ -293,8 +313,7 @@ impl PianoEngine {
         let hardness = self.hammer_hardness;
         let detune = self.unison_detuning;
         let inharm = self.inharmonicity_scale;
-        let pitch_bend =
-            self.note_tuning_cents[(key - 21) as usize].unwrap_or(self.pitch_bend_cents);
+        let pitch_bend = self.composed_pitch_offset(key);
 
         self.voices.entry(key).or_insert_with(|| {
             let mut v = PianoVoice::new(kp.clone(), sr);
@@ -366,6 +385,13 @@ impl PianoEngine {
     }
 
     pub fn note_on(&mut self, key: u8, velocity: f64) {
+        // Hosts deliver the full MIDI range, but only A0..C8 (21..=108)
+        // have parameters and voices. Ignore anything outside the range
+        // instead of indexing `note_tuning_cents` / `key_params` out of
+        // bounds, which would panic on the audio thread.
+        if !(21..=108).contains(&key) {
+            return;
+        }
         if self.active_keys.len() >= self.max_active_voices && !self.active_keys.contains(&key) {
             self.steal_voice();
         }
@@ -376,8 +402,7 @@ impl PianoEngine {
 
         self.action_noise.trigger_note_on(key, effective_vel);
         let unison_detuning = self.unison_detuning;
-        let pitch_bend_cents =
-            self.note_tuning_cents[(key - 21) as usize].unwrap_or(self.pitch_bend_cents);
+        let pitch_bend_cents = self.composed_pitch_offset(key);
         let inharmonicity_scale = self.inharmonicity_scale;
         let hammer_hardness = self.hammer_hardness;
         let una_corda = self.una_corda;
@@ -421,8 +446,12 @@ impl PianoEngine {
         if let Some(index) = key.checked_sub(21).map(usize::from).filter(|&i| i < 88) {
             self.note_tuning_cents[index] = Some(cents);
         }
+        // The voice stores a single composed offset, so hand it the
+        // tuning plus the current global bend rather than the tuning
+        // alone, which would erase the bend for a sounding voice.
+        let composed = self.composed_pitch_offset(key);
         if let Some(v) = self.voices.get_mut(&key) {
-            v.set_tuning_offset(cents);
+            v.set_pitch_bend(composed);
         }
     }
 
@@ -745,5 +774,115 @@ mod tests {
                 assert!(w[0] < w[1]);
             }
         }
+    }
+
+    #[test]
+    fn out_of_range_note_on_through_process_block_is_ignored() {
+        let mut engine = PianoEngine::new(48_000.0, 15, false);
+        let block_size = 64;
+        let mut out_l = vec![0.0; block_size];
+        let mut out_r = vec![0.0; block_size];
+        let mut out_events = Vec::new();
+
+        // Hosts deliver the full MIDI range; keys 0 and 127 used to
+        // panic on the audio thread via out-of-bounds indexing.
+        let events = vec![
+            EngineEvent::NoteOn {
+                time: 0,
+                key: 0,
+                velocity: 0.8,
+            },
+            EngineEvent::NoteOn {
+                time: 0,
+                key: 127,
+                velocity: 0.8,
+            },
+            EngineEvent::NoteOff { time: 0, key: 0 },
+            EngineEvent::NoteOff {
+                time: 0,
+                key: 127,
+            },
+            EngineEvent::NoteOn {
+                time: 0,
+                key: 60,
+                velocity: 0.8,
+            },
+        ];
+        engine.process_block(
+            block_size,
+            &events,
+            &mut out_events,
+            &mut out_l,
+            &mut out_r,
+        );
+
+        assert!(engine.get_voice(0).is_none());
+        assert!(engine.get_voice(127).is_none());
+        assert!(!engine.active_keys.contains(&0));
+        assert!(!engine.active_keys.contains(&127));
+        assert!(!engine.note_energy_peak.contains_key(&0));
+        assert!(!engine.note_energy_peak.contains_key(&127));
+        assert!(engine.note_tuning_cents.iter().all(|t| t.is_none()));
+        assert!(engine.get_voice(60).is_some());
+        assert!(engine.active_keys.contains(&60));
+
+        // Direct calls, including the keys just outside the range, are
+        // ignored too and leave no state behind.
+        engine.note_on(0, 0.8);
+        engine.note_on(20, 0.8);
+        engine.note_on(109, 0.8);
+        engine.note_on(127, 0.8);
+        assert!(engine.get_voice(0).is_none());
+        assert!(engine.get_voice(20).is_none());
+        assert!(engine.get_voice(109).is_none());
+        assert!(engine.get_voice(127).is_none());
+
+        // The range edges themselves still sound.
+        engine.note_on(21, 0.8);
+        engine.note_on(108, 0.8);
+        assert!(engine.get_voice(21).is_some());
+        assert!(engine.get_voice(108).is_some());
+    }
+
+    #[test]
+    fn pitch_bend_preserves_per_note_tuning_and_composes() {
+        let mut engine = PianoEngine::new(44_100.0, 15, false);
+        engine.note_on(60, 0.8);
+        engine.note_on(62, 0.8);
+        let baseline = engine.get_voice(60).unwrap().strings[0].tuning_offset_cents;
+
+        // Per-note tuning applies to the sounding voice.
+        engine.set_note_tuning(60, 50.0);
+        assert_eq!(engine.note_tuning_cents[60 - 21], Some(50.0));
+        assert!((engine.get_voice(60).unwrap().pitch_bend_cents - 50.0).abs() < 1e-6);
+        let tuned = engine.get_voice(60).unwrap().strings[0].tuning_offset_cents;
+        assert!((tuned - baseline - 50.0).abs() < 1e-6);
+
+        // Pitch bend must not erase the tuning: the sounding voice and
+        // the stored tuning both keep it, composed with the bend.
+        engine.set_pitch_bend(100.0);
+        assert_eq!(engine.note_tuning_cents[60 - 21], Some(50.0));
+        assert!((engine.get_voice(60).unwrap().pitch_bend_cents - 150.0).abs() < 1e-6);
+        let bent = engine.get_voice(60).unwrap().strings[0].tuning_offset_cents;
+        assert!((bent - baseline - 150.0).abs() < 1e-6);
+        // No-tuning case is unchanged: the untuned voice hears bend only.
+        assert!((engine.get_voice(62).unwrap().pitch_bend_cents - 100.0).abs() < 1e-6);
+
+        // Bend back to zero restores the tuned pitch.
+        engine.set_pitch_bend(0.0);
+        assert_eq!(engine.note_tuning_cents[60 - 21], Some(50.0));
+        assert!((engine.get_voice(60).unwrap().pitch_bend_cents - 50.0).abs() < 1e-6);
+        let restored = engine.get_voice(60).unwrap().strings[0].tuning_offset_cents;
+        assert!((restored - baseline - 50.0).abs() < 1e-6);
+
+        // A retriggered tuned note keeps its tuning under bend.
+        engine.set_pitch_bend(100.0);
+        engine.note_on(60, 0.8);
+        assert!((engine.get_voice(60).unwrap().pitch_bend_cents - 150.0).abs() < 1e-6);
+
+        // Tuning set before the first strike composes with the bend too.
+        engine.set_note_tuning(64, -25.0);
+        engine.note_on(64, 0.8);
+        assert!((engine.get_voice(64).unwrap().pitch_bend_cents - 75.0).abs() < 1e-6);
     }
 }

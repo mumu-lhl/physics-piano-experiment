@@ -222,11 +222,14 @@ impl FdtdString {
         self.fret_clearances.fill(0.0);
         self.fret_stiffness_factors.fill(1.0);
         self.active_fret_count = 0;
-        let last_fret = if self.current_fret == 0 {
-            FRET_COUNT
-        } else {
-            self.current_fret.min(FRET_COUNT as u8) as usize
-        };
+
+        // The FDTD grid spans only the vibrating segment: index 0 is the
+        // stopping fret (nut for an open string) and the last index is
+        // the bridge. A fret's grid coordinate is therefore measured
+        // from the stopping fret, not from the nut.
+        let stopping_fret = self.current_fret.min(FRET_COUNT as u8);
+        let stopping_fret_position = self.params.scale_length
+            * (1.0 - 2.0_f64.powf(-(stopping_fret as f64) / 12.0));
 
         let neck_relief_span = self.params.scale_length * 0.60;
         let base_nut_clearance = 0.00075;
@@ -235,11 +238,14 @@ impl FdtdString {
         let r_string = (self.params.area() / PI).max(1e-12).sqrt();
         let crown_stiffness_mult = 1.0 + (r_string / self.fret_crown_radius.max(1e-5)).min(2.0) * 0.15;
 
-        for fret in 1..=last_fret {
+        for fret in 1..=FRET_COUNT {
             let physical_position =
                 self.params.scale_length * (1.0 - 2.0_f64.powf(-(fret as f64) / 12.0));
-            let relative_position = physical_position / self.effective_length.max(1e-6);
-            if relative_position > 0.995 {
+            let relative_position =
+                (physical_position - stopping_fret_position) / self.effective_length.max(1e-6);
+            // Frets below the stopping fret lie behind the vibrating
+            // segment and can never touch it; frets at or above it do.
+            if relative_position < 0.0 || relative_position > 0.995 {
                 continue;
             }
             let grid_position = relative_position * self.segments as f64;
@@ -1171,16 +1177,48 @@ mod tests {
     }
 
     #[test]
-    fn fretted_contact_stencils_cover_every_fret_up_to_the_stopping_fret() {
+    fn fretted_contact_stencils_use_fret_relative_coordinates() {
         let mut string = FdtdString::new(BassStringParams::electric_four()[0], 48_000.0);
         string.set_fret(12);
         assert_eq!(string.current_fret, 12);
-        assert_eq!(string.active_fret_count, 11);
-        assert!(
-            string.fret_fractions[..11]
-                .iter()
-                .all(|fraction| (0.0..=1.0).contains(fraction))
-        );
+        // Only frets at or above the stopping fret can touch the
+        // vibrating segment: frets 12..=24, thirteen stencils. Frets
+        // below the stopping fret lie behind the grid origin and must
+        // not appear; the old nut-relative coordinates placed phantom
+        // contacts for every one of them on each fretted note.
+        assert_eq!(string.active_fret_count, 13);
+        let scale = string.params.scale_length;
+        let stopping = scale * (1.0 - 2.0_f64.powf(-12.0 / 12.0));
+        for (slot, fret) in (12..=24u8).enumerate() {
+            let physical = scale * (1.0 - 2.0_f64.powf(-(fret as f64) / 12.0));
+            let grid =
+                (physical - stopping) / string.effective_length * string.segments as f64;
+            let expected_index = (grid.floor() as usize).clamp(2, string.segments - 2);
+            let expected_fraction = (grid - expected_index as f64).clamp(0.0, 1.0);
+            assert_eq!(
+                string.fret_indices[slot], expected_index,
+                "fret {fret} grid index"
+            );
+            assert!(
+                (string.fret_fractions[slot] - expected_fraction).abs() < 1e-12,
+                "fret {fret} grid fraction"
+            );
+        }
+        // The stopping fret sits at the grid origin (clamped to the
+        // first usable node) and the 24th fret halfway to the bridge.
+        assert_eq!(string.fret_indices[0], 2);
+        assert_eq!(string.fret_fractions[0], 0.0);
+        let last_grid =
+            string.fret_indices[12] as f64 + string.fret_fractions[12];
+        assert!((last_grid - 0.5 * string.segments as f64).abs() < 1.0);
+
+        // Open string is unchanged: all 24 frets, with the nut as the
+        // origin, so nut-relative and fret-relative coordinates agree.
+        let open = FdtdString::new(BassStringParams::electric_four()[0], 48_000.0);
+        assert_eq!(open.current_fret, 0);
+        assert_eq!(open.active_fret_count, 24);
+        let open_last = open.fret_indices[23] as f64 + open.fret_fractions[23];
+        assert!((open_last - 0.75 * open.segments as f64).abs() < 1.0);
 
         string.trigger(1.0, PluckStyle::Pick, 0.19);
         let mut max_contact = 0.0_f64;
