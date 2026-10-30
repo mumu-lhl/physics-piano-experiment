@@ -914,12 +914,49 @@ msgctxt "gui.waveform"
 msgid "Waveform"
 msgstr ""
 
-#: crates/physics-ui/src/theme.rs:27
+#: crates/physics-ui/src/theme.rs:29
 msgctxt "gui.theme-light"
 msgid "Light"
 msgstr ""
 
-#: crates/physics-ui/src/theme.rs:29
+#: crates/physics-ui/src/theme.rs:31
 msgctxt "gui.theme-dark"
 msgid "Dark"
+msgstr ""
+
+#: crates/physics-ui/src/device_row.rs:32
+msgctxt "gui.device-audio-in"
+msgid "Audio In"
+msgstr ""
+
+#: crates/physics-ui/src/device_row.rs:42
+msgctxt "gui.device-audio-out"
+msgid "Audio Out"
+msgstr ""
+
+#: crates/physics-ui/src/device_row.rs:52
+msgctxt "gui.device-midi-in"
+msgid "MIDI In"
+msgstr ""
+
+#: crates/physics-ui/src/device_row.rs:62
+msgctxt "gui.device-midi-out"
+msgid "MIDI Out"
+msgstr ""
+
+#: crates/physics-ui/src/device_row.rs:47
+msgctxt "gui.device-default-output"
+msgid "System default"
+msgstr ""
+
+#: crates/physics-ui/src/device_row.rs:37
+#: crates/physics-ui/src/device_row.rs:57
+#: crates/physics-ui/src/device_row.rs:67
+msgctxt "gui.device-none"
+msgid "None"
+msgstr ""
+
+#: crates/physics-ui/src/device_row.rs:73
+msgctxt "gui.device-restart"
+msgid "Restart to apply"
 msgstr ""

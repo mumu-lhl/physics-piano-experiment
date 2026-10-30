@@ -493,7 +493,7 @@ impl PresetManager {
 /// Linux: `$XDG_DATA_HOME/physics-instruments/presets/{instrument}/` (~/.local/share/physics-instruments/presets/{instrument}/)
 /// Windows: `%APPDATA%\physics-instruments\presets\{instrument}\`
 /// macOS: `~/Library/Application Support/physics-instruments/presets/{instrument}/`
-fn default_user_presets_dir(instrument: &str) -> PathBuf {
+pub(crate) fn default_user_presets_dir(instrument: &str) -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("physics-instruments")

@@ -1,9 +1,11 @@
 //! Universal Preset and Undo/Redo System for the physical-modeling instruments.
 
+pub mod device_settings;
 pub mod manager;
 pub mod preset;
 pub mod undo;
 
+pub use device_settings::{DeviceList, DeviceSettings};
 pub use manager::PresetManager;
 pub use preset::Preset;
 pub use undo::{ParamTransition, UndoAction, UndoManager};

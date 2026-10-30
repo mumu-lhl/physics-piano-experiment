@@ -2858,7 +2858,9 @@ dependencies = [
 name = "physics-presets"
 version = "0.1.0"
 dependencies = [
+ "cpal",
  "dirs",
+ "midir",
  "serde",
  "serde_json",
 ]

@@ -14,7 +14,8 @@ use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
     CancelParamGestureEvent, Language, LastCc, LearnArm, PresetBrowserAction, PresetBrowserItem,
     PresetBrowserSignals, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
-    SpectrumAnalyzerWidget, StereoVuMeterWidget, WaveformWidget, add_base_theme, theme_toggle_button,
+    SpectrumAnalyzerWidget, StereoVuMeterWidget, WaveformWidget, add_base_theme, device_settings_row,
+    theme_toggle_button,
     build_ptr_to_id_map,
     discrete_selector, filter_browser_items, map_param_history_event, parameter_knob,
     parse_tags_input, preset_browser, preset_browser_categories, preset_browser_items,
@@ -31,7 +32,7 @@ use vizia_plug::widgets::{ParamButton, ParamButtonExt, RawParamEvent, zoom_contr
 use vizia_plug::{ViziaEditor, ViziaTheming, create_vizia_editor};
 
 pub const EDITOR_WIDTH: u32 = 1120;
-pub const EDITOR_HEIGHT: u32 = 934;
+pub const EDITOR_HEIGHT: u32 = 965;
 
 #[derive(Clone)]
 struct DiscreteSelections {
@@ -840,6 +841,7 @@ pub fn create_vizia_bass_editor(
         let discrete_ui = discrete;
         let language_atom_ui = language_atom.clone();
         let zoom_state_ui = zoom_state.clone();
+        let presets_dir_ui = preset_manager.read().user_presets_dir().to_path_buf();
         let peak_l_ui = peak_l.clone();
         let peak_r_ui = peak_r.clone();
         let sample_history_ui = sample_history.clone();
@@ -869,6 +871,7 @@ pub fn create_vizia_bass_editor(
             let zoom_state = zoom_state_ui.clone();
             let theme_signal = zoom_state.theme_signal();
             let theme_state = zoom_state.clone();
+            let presets_dir = presets_dir_ui.clone();
             let peak_l = peak_l_ui.clone();
             let peak_r = peak_r_ui.clone();
             let sample_history = sample_history_ui.clone();
@@ -941,6 +944,9 @@ pub fn create_vizia_bass_editor(
                     theme_toggle_button(cx, theme_state.clone(), lang);
                 })
                 .horizontal_gap(Pixels(8.0));
+
+                // Standalone-only audio/MIDI device row; hidden in plugin builds.
+                device_settings_row(cx, presets_dir, language_initial);
 
                 HStack::new(cx, |cx| {
                     VStack::new(cx, |cx| {

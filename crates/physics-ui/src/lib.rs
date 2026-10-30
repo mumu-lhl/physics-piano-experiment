@@ -1,6 +1,7 @@
 //! Shared GUI support and theming for all physical instrument plugins.
 
 mod curve_editor;
+mod device_row;
 mod language;
 pub mod midi_learn;
 mod preset_browser;
@@ -13,6 +14,7 @@ mod waveform;
 mod widgets;
 
 pub use curve_editor::VelocityCurveEditorWidget;
+pub use device_row::device_settings_row;
 pub use language::{Language, setup_vizia_fonts, translate, translate_format};
 pub use midi_learn::{LastCc, LearnArm, apply_midi_cc, build_param_map, build_ptr_to_id_map};
 pub use preset_browser::{

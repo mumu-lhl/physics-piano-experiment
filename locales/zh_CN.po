@@ -96,6 +96,34 @@ msgctxt "gui.theme-light"
 msgid "Light"
 msgstr "浅色"
 
+msgctxt "gui.device-audio-in"
+msgid "Audio In"
+msgstr "音频输入"
+
+msgctxt "gui.device-audio-out"
+msgid "Audio Out"
+msgstr "音频输出"
+
+msgctxt "gui.device-midi-in"
+msgid "MIDI In"
+msgstr "MIDI 输入"
+
+msgctxt "gui.device-midi-out"
+msgid "MIDI Out"
+msgstr "MIDI 输出"
+
+msgctxt "gui.device-default-output"
+msgid "System default"
+msgstr "系统默认"
+
+msgctxt "gui.device-none"
+msgid "None"
+msgstr "无"
+
+msgctxt "gui.device-restart"
+msgid "Restart to apply"
+msgstr "重启后生效"
+
 msgctxt "preset.name.steinway_concert_d"
 msgid "Steinway D Concert Grand"
 msgstr "施坦威 D-274 音乐会三角琴"

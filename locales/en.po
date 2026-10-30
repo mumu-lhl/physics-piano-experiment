@@ -96,6 +96,34 @@ msgctxt "gui.theme-light"
 msgid "Light"
 msgstr "Light"
 
+msgctxt "gui.device-audio-in"
+msgid "Audio In"
+msgstr "Audio In"
+
+msgctxt "gui.device-audio-out"
+msgid "Audio Out"
+msgstr "Audio Out"
+
+msgctxt "gui.device-midi-in"
+msgid "MIDI In"
+msgstr "MIDI In"
+
+msgctxt "gui.device-midi-out"
+msgid "MIDI Out"
+msgstr "MIDI Out"
+
+msgctxt "gui.device-default-output"
+msgid "System default"
+msgstr "System default"
+
+msgctxt "gui.device-none"
+msgid "None"
+msgstr "None"
+
+msgctxt "gui.device-restart"
+msgid "Restart to apply"
+msgstr "Restart to apply"
+
 msgctxt "preset.name.steinway_concert_d"
 msgid "Steinway D Concert Grand"
 msgstr "Steinway D Concert Grand"

@@ -17,7 +17,8 @@ use physics_ui::Language;
 use physics_ui::{
     CancelParamGestureEvent, LastCc, LearnArm, PresetBrowserAction, PresetBrowserItem,
     PresetBrowserSignals, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
-    SpectrumAnalyzerWidget, StereoVuMeterWidget, WaveformWidget, add_base_theme, theme_toggle_button,
+    SpectrumAnalyzerWidget, StereoVuMeterWidget, WaveformWidget, add_base_theme, device_settings_row,
+    theme_toggle_button,
     build_ptr_to_id_map,
     discrete_selector as shared_discrete_selector, filter_browser_items, map_param_history_event,
     parameter_knob, parse_tags_input, preset_browser, preset_browser_categories,
@@ -48,7 +49,7 @@ enum DiscreteParam {
 }
 
 pub const EDITOR_WIDTH: u32 = 1080;
-pub const EDITOR_HEIGHT: u32 = 873;
+pub const EDITOR_HEIGHT: u32 = 904;
 
 fn knob<P: Param + 'static>(
     cx: &mut Context,
@@ -1026,6 +1027,7 @@ pub fn create_vizia_guitar_editor(
         let chord_direction_ui = chord_direction.clone();
         let chord_display_ui = chord_display.clone();
         let zoom_state_ui = zoom_state.clone();
+        let presets_dir_ui = preset_manager.read().user_presets_dir().to_path_buf();
         let peak_l_ui = peak_l.clone();
         let peak_r_ui = peak_r.clone();
         let sample_history_ui = sample_history.clone();
@@ -1064,6 +1066,7 @@ pub fn create_vizia_guitar_editor(
             let zoom_state = zoom_state_ui.clone();
             let theme_signal = zoom_state.theme_signal();
             let theme_state = zoom_state.clone();
+            let presets_dir = presets_dir_ui.clone();
             let peak_l = peak_l_ui.clone();
             let peak_r = peak_r_ui.clone();
             let sample_history = sample_history_ui.clone();
@@ -1199,6 +1202,9 @@ pub fn create_vizia_guitar_editor(
                     theme_toggle_button(cx, theme_state.clone(), lang);
                 })
                 .horizontal_gap(Pixels(8.0));
+
+                // Standalone-only audio/MIDI device row; hidden in plugin builds.
+                device_settings_row(cx, presets_dir, lang);
 
                 HStack::new(cx, |cx| {
                     // Rack 1: INSTRUMENT

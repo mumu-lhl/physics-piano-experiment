@@ -22,7 +22,7 @@ use physics_ui::{
     CancelParamGestureEvent, LastCc, LearnArm, PresetBrowserAction, PresetBrowserItem,
     PresetBrowserSignals, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
     SpectrumAnalyzerWidget, StereoVuMeterWidget, VelocityCurveEditorWidget, WaveformWidget,
-    add_base_theme, theme_toggle_button,
+    add_base_theme, device_settings_row, theme_toggle_button,
     build_ptr_to_id_map, filter_browser_items, map_param_history_event, parameter_knob,
     parse_tags_input, preset_browser, preset_browser_categories, preset_browser_items,
     preset_browser_tags, preset_choices, preset_display_name, preset_panel, redraw_custom_view,
@@ -32,7 +32,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 pub const EDITOR_WIDTH: u32 = 1080;
-pub const EDITOR_HEIGHT: u32 = 794;
+pub const EDITOR_HEIGHT: u32 = 825;
 
 fn knob<P: Param + 'static>(
     cx: &mut Context,
@@ -874,6 +874,7 @@ pub fn create_vizia_piano_editor(
         let can_undo_controls = can_undo_ui.clone();
         let can_redo_controls = can_redo_ui.clone();
         let zoom_state_ui = zoom_state.clone();
+        let presets_dir_ui = manager.read().user_presets_dir().to_path_buf();
 
         Binding::new(cx, language_ui, move |cx| {
             let lang = language_ui.get();
@@ -909,6 +910,7 @@ pub fn create_vizia_piano_editor(
             let zoom_state = zoom_state_ui.clone();
             let theme_signal = zoom_state.theme_signal();
             let theme_state = zoom_state.clone();
+            let presets_dir = presets_dir_ui.clone();
             VStack::new(cx, move |cx| {
                 preset_panel(
                     cx,
@@ -973,6 +975,9 @@ pub fn create_vizia_piano_editor(
                     theme_toggle_button(cx, theme_state.clone(), lang);
                 })
                 .horizontal_gap(Pixels(8.0));
+
+                // Standalone-only audio/MIDI device row; hidden in plugin builds.
+                device_settings_row(cx, presets_dir, lang);
 
                 HStack::new(cx, |cx| {
                     PianoLidWidget::new(cx, params.clone(), lang)
