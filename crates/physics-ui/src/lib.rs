@@ -9,6 +9,7 @@ pub mod skia_compat;
 mod spectrum;
 mod theme;
 mod vu_meter;
+mod waveform;
 mod widgets;
 
 pub use curve_editor::VelocityCurveEditorWidget;
@@ -27,6 +28,7 @@ pub use spectrum::{
 };
 pub use theme::add_base_theme;
 pub use vu_meter::StereoVuMeterWidget;
+pub use waveform::{WAVEFORM_WINDOW, WaveformWidget, downsample_waveform};
 pub use widgets::{
     CancelParamGestureEvent, discrete_selector, map_param_history_event, parameter_knob,
     parameter_slider, preset_choices, preset_display_name, redraw_custom_view, set_param,

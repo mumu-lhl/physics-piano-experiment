@@ -14,7 +14,8 @@ use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
     CancelParamGestureEvent, Language, LastCc, LearnArm, PresetBrowserAction, PresetBrowserItem,
     PresetBrowserSignals, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
-    SpectrumAnalyzerWidget, StereoVuMeterWidget, add_base_theme, build_ptr_to_id_map,
+    SpectrumAnalyzerWidget, StereoVuMeterWidget, WaveformWidget, add_base_theme,
+    build_ptr_to_id_map,
     discrete_selector, filter_browser_items, map_param_history_event, parameter_knob,
     parse_tags_input, preset_browser, preset_browser_categories, preset_browser_items,
     preset_browser_tags, preset_choices, preset_display_name, preset_panel, redraw_custom_view,
@@ -30,7 +31,7 @@ use vizia_plug::widgets::{ParamButton, ParamButtonExt, RawParamEvent, zoom_contr
 use vizia_plug::{ViziaEditor, ViziaTheming, create_vizia_editor};
 
 pub const EDITOR_WIDTH: u32 = 1120;
-pub const EDITOR_HEIGHT: u32 = 870;
+pub const EDITOR_HEIGHT: u32 = 934;
 
 #[derive(Clone)]
 struct DiscreteSelections {
@@ -1068,6 +1069,14 @@ pub fn create_vizia_bass_editor(
                 HStack::new(cx, |cx| {
                     Label::new(cx, translate(lang, "gui.spectrum", "Spectrum")).class("hint-text");
                     SpectrumAnalyzerWidget::new(cx, sample_history.clone(), sample_rate)
+                        .width(Stretch(1.0))
+                        .height(Pixels(56.0));
+                })
+                .height(Pixels(56.0))
+                .horizontal_gap(Pixels(8.0));
+                HStack::new(cx, |cx| {
+                    Label::new(cx, translate(lang, "gui.waveform", "Waveform")).class("hint-text");
+                    WaveformWidget::new(cx, sample_history.clone())
                         .width(Stretch(1.0))
                         .height(Pixels(56.0));
                 })

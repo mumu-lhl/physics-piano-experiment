@@ -906,3 +906,10 @@ msgstr ""
 msgctxt "gui.tags-placeholder"
 msgid "Comma-separated tags"
 msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1266
+#: crates/physics-guitar/src/gui/editor.rs:1668
+#: crates/physics-bass/src/gui.rs:1078
+msgctxt "gui.waveform"
+msgid "Waveform"
+msgstr ""

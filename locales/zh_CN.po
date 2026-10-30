@@ -84,6 +84,10 @@ msgctxt "gui.tags-placeholder"
 msgid "Comma-separated tags"
 msgstr "以逗号分隔的标签"
 
+msgctxt "gui.waveform"
+msgid "Waveform"
+msgstr "波形"
+
 msgctxt "preset.name.steinway_concert_d"
 msgid "Steinway D Concert Grand"
 msgstr "施坦威 D-274 音乐会三角琴"

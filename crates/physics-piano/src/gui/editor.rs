@@ -21,7 +21,8 @@ use physics_ui::Language;
 use physics_ui::{
     CancelParamGestureEvent, LastCc, LearnArm, PresetBrowserAction, PresetBrowserItem,
     PresetBrowserSignals, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
-    SpectrumAnalyzerWidget, StereoVuMeterWidget, VelocityCurveEditorWidget, add_base_theme,
+    SpectrumAnalyzerWidget, StereoVuMeterWidget, VelocityCurveEditorWidget, WaveformWidget,
+    add_base_theme,
     build_ptr_to_id_map, filter_browser_items, map_param_history_event, parameter_knob,
     parse_tags_input, preset_browser, preset_browser_categories, preset_browser_items,
     preset_browser_tags, preset_choices, preset_display_name, preset_panel, redraw_custom_view,
@@ -31,7 +32,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 pub const EDITOR_WIDTH: u32 = 1080;
-pub const EDITOR_HEIGHT: u32 = 730;
+pub const EDITOR_HEIGHT: u32 = 794;
 
 fn knob<P: Param + 'static>(
     cx: &mut Context,
@@ -1256,6 +1257,14 @@ pub fn create_vizia_piano_editor(
                 HStack::new(cx, |cx| {
                     Label::new(cx, translate(lang, "gui.spectrum", "Spectrum")).class("hint-text");
                     SpectrumAnalyzerWidget::new(cx, sample_history.clone(), sample_rate)
+                        .width(Stretch(1.0))
+                        .height(Pixels(56.0));
+                })
+                .height(Pixels(56.0))
+                .horizontal_gap(Pixels(8.0));
+                HStack::new(cx, |cx| {
+                    Label::new(cx, translate(lang, "gui.waveform", "Waveform")).class("hint-text");
+                    WaveformWidget::new(cx, sample_history.clone())
                         .width(Stretch(1.0))
                         .height(Pixels(56.0));
                 })

@@ -17,7 +17,8 @@ use physics_ui::Language;
 use physics_ui::{
     CancelParamGestureEvent, LastCc, LearnArm, PresetBrowserAction, PresetBrowserItem,
     PresetBrowserSignals, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
-    SpectrumAnalyzerWidget, StereoVuMeterWidget, add_base_theme, build_ptr_to_id_map,
+    SpectrumAnalyzerWidget, StereoVuMeterWidget, WaveformWidget, add_base_theme,
+    build_ptr_to_id_map,
     discrete_selector as shared_discrete_selector, filter_browser_items, map_param_history_event,
     parameter_knob, parse_tags_input, preset_browser, preset_browser_categories,
     preset_browser_items, preset_browser_tags, preset_choices, preset_display_name,
@@ -47,7 +48,7 @@ enum DiscreteParam {
 }
 
 pub const EDITOR_WIDTH: u32 = 1080;
-pub const EDITOR_HEIGHT: u32 = 809;
+pub const EDITOR_HEIGHT: u32 = 873;
 
 fn knob<P: Param + 'static>(
     cx: &mut Context,
@@ -1658,6 +1659,14 @@ pub fn create_vizia_guitar_editor(
                 HStack::new(cx, |cx| {
                     Label::new(cx, translate(lang, "gui.spectrum", "Spectrum")).class("hint-text");
                     SpectrumAnalyzerWidget::new(cx, sample_history.clone(), sample_rate)
+                        .width(Stretch(1.0))
+                        .height(Pixels(56.0));
+                })
+                .height(Pixels(56.0))
+                .horizontal_gap(Pixels(8.0));
+                HStack::new(cx, |cx| {
+                    Label::new(cx, translate(lang, "gui.waveform", "Waveform")).class("hint-text");
+                    WaveformWidget::new(cx, sample_history.clone())
                         .width(Stretch(1.0))
                         .height(Pixels(56.0));
                 })
