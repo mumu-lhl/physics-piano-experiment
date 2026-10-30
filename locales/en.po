@@ -76,6 +76,14 @@ msgctxt "gui.no-presets-match"
 msgid "No presets match"
 msgstr "No presets match"
 
+msgctxt "gui.tags"
+msgid "Tags"
+msgstr "Tags"
+
+msgctxt "gui.tags-placeholder"
+msgid "Comma-separated tags"
+msgstr "Comma-separated tags"
+
 msgctxt "preset.name.steinway_concert_d"
 msgid "Steinway D Concert Grand"
 msgstr "Steinway D Concert Grand"

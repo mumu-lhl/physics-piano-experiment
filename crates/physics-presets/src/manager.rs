@@ -11,6 +11,19 @@ use crate::preset::Preset;
 /// drum hi-hat pedal) and stealing them would break playing.
 pub const MIDI_LEARN_EXCLUDED_CCS: [u8; 5] = [64, 66, 67, 11, 4];
 
+/// Normalize user-entered tags: trim whitespace, drop empties, dedupe
+/// preserving first-seen order.
+fn normalize_tags(tags: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for tag in tags {
+        let tag = tag.trim().to_string();
+        if !tag.is_empty() && !out.contains(&tag) {
+            out.push(tag);
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone)]
 pub struct PresetManager {
     instrument: String,
@@ -24,6 +37,11 @@ pub struct PresetManager {
     /// Persisted in `midi_mappings.json` next to the user presets, so a
     /// controller mapping survives restarts and is independent of presets.
     midi_mappings: std::collections::HashMap<u8, String>,
+    /// Tags assigned to presets: preset ID -> tags in entry order.
+    /// Persisted in `preset_tags.json` next to the user presets, so factory
+    /// presets can be tagged without touching their embedded definitions,
+    /// and tagging never migrates the preset format.
+    tags: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl PresetManager {
@@ -43,12 +61,14 @@ impl PresetManager {
             user_presets_dir,
             favorites: std::collections::HashSet::new(),
             midi_mappings: std::collections::HashMap::new(),
+            tags: std::collections::HashMap::new(),
         };
 
         // Attempt to load existing user presets from disk
         let _ = mgr.load_user_presets();
         mgr.load_favorites();
         mgr.load_midi_mappings();
+        mgr.load_tags();
         mgr
     }
 
@@ -69,10 +89,12 @@ impl PresetManager {
             user_presets_dir: dir,
             favorites: std::collections::HashSet::new(),
             midi_mappings: std::collections::HashMap::new(),
+            tags: std::collections::HashMap::new(),
         };
         let _ = mgr.load_user_presets();
         mgr.load_favorites();
         mgr.load_midi_mappings();
+        mgr.load_tags();
         mgr
     }
 
@@ -222,6 +244,81 @@ impl PresetManager {
         Ok(removed)
     }
 
+    /// Path of the tags file (a JSON object of preset ID to tag list).
+    pub fn tags_file(&self) -> PathBuf {
+        self.user_presets_dir.join("preset_tags.json")
+    }
+
+    /// Tags assigned to the given preset, in entry order. Unknown IDs have none.
+    pub fn tags_for(&self, id: &str) -> Vec<String> {
+        if !self.presets.iter().any(|p| p.id == id) {
+            return Vec::new();
+        }
+        self.tags.get(id).cloned().unwrap_or_default()
+    }
+
+    /// Every tag in use, in first-seen order over the preset list.
+    pub fn all_tags(&self) -> Vec<String> {
+        let mut tags = Vec::new();
+        for preset in &self.presets {
+            if let Some(preset_tags) = self.tags.get(&preset.id) {
+                for tag in preset_tags {
+                    if !tags.contains(tag) {
+                        tags.push(tag.clone());
+                    }
+                }
+            }
+        }
+        tags
+    }
+
+    /// Load tags from disk, silently keeping only tags for presets that
+    /// still exist. A missing or malformed file simply means "no tags yet".
+    pub fn load_tags(&mut self) {
+        let Ok(content) = fs::read_to_string(self.tags_file()) else {
+            return;
+        };
+        let Ok(map) =
+            serde_json::from_str::<std::collections::HashMap<String, Vec<String>>>(&content)
+        else {
+            return;
+        };
+        self.tags = map
+            .into_iter()
+            .filter(|(id, _)| self.presets.iter().any(|p| &p.id == id))
+            .map(|(id, tags)| (id, normalize_tags(tags)))
+            .filter(|(_, tags)| !tags.is_empty())
+            .collect();
+    }
+
+    /// Persist the current tags to disk.
+    pub fn save_tags(&self) -> Result<(), std::io::Error> {
+        if !self.user_presets_dir.exists() {
+            fs::create_dir_all(&self.user_presets_dir)?;
+        }
+        let sorted: std::collections::BTreeMap<&String, &Vec<String>> = self.tags.iter().collect();
+        let json = serde_json::to_string_pretty(&sorted)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        fs::write(self.tags_file(), json)
+    }
+
+    /// Replace the tags of a preset and persist them. Returns whether the
+    /// preset exists. Unknown IDs are ignored. An empty list clears the
+    /// preset's tags.
+    pub fn set_tags(&mut self, id: &str, tags: Vec<String>) -> Result<bool, std::io::Error> {
+        if !self.presets.iter().any(|p| p.id == id) {
+            return Ok(false);
+        }
+        let tags = normalize_tags(tags);
+        if tags.is_empty() {
+            self.tags.remove(id);
+        } else {
+            self.tags.insert(id.to_string(), tags);
+        }
+        self.save_tags()?;
+        Ok(true)
+    }
+
     /// Load or reload user presets from disk
     pub fn load_user_presets(&mut self) -> Result<usize, std::io::Error> {
         if !self.user_presets_dir.exists() {
@@ -360,6 +457,11 @@ impl PresetManager {
         }
 
         self.presets.retain(|p| p.id != id || p.is_factory);
+        // Tags are keyed by preset ID; a deleted preset takes its tags
+        // with it (best-effort: the delete itself already succeeded).
+        if self.tags.remove(id).is_some() {
+            let _ = self.save_tags();
+        }
         Ok(true)
     }
 
@@ -527,5 +629,92 @@ mod tests {
         assert_eq!(mgr.unbind_midi_cc(7).unwrap(), false);
         let mgr2 = PresetManager::with_custom_dir("piano", factory_pair(), guard.0.clone());
         assert_eq!(mgr2.midi_mapping(7), None);
+    }
+
+    #[test]
+    fn tags_set_persists_and_reloads() {
+        let guard = TempDirGuard::new("tags-reload");
+        let mut mgr = test_manager(&guard.0);
+        assert!(mgr.tags_for("a").is_empty());
+        assert_eq!(
+            mgr.set_tags("a", vec!["warm".to_string(), "jazz".to_string()])
+                .unwrap(),
+            true
+        );
+        assert_eq!(mgr.tags_for("a"), vec!["warm", "jazz"]);
+        assert_eq!(mgr.all_tags(), vec!["warm", "jazz"]);
+        // A fresh manager over the same dir picks the tags back up.
+        let mgr2 = PresetManager::with_custom_dir("piano", factory_pair(), guard.0.clone());
+        assert_eq!(mgr2.tags_for("a"), vec!["warm", "jazz"]);
+        assert_eq!(mgr2.tags_for("b"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn tags_are_normalized_and_empty_clears() {
+        let guard = TempDirGuard::new("tags-normalize");
+        let mut mgr = test_manager(&guard.0);
+        assert_eq!(
+            mgr.set_tags(
+                "a",
+                vec![
+                    " warm ".to_string(),
+                    "warm".to_string(),
+                    "".to_string(),
+                    "  ".to_string(),
+                    "jazz".to_string(),
+                ]
+            )
+            .unwrap(),
+            true
+        );
+        assert_eq!(mgr.tags_for("a"), vec!["warm", "jazz"]);
+        // Clearing removes the entry entirely, including from all_tags.
+        assert_eq!(mgr.set_tags("a", vec![]).unwrap(), true);
+        assert!(mgr.tags_for("a").is_empty());
+        assert!(mgr.all_tags().is_empty());
+        let mgr2 = PresetManager::with_custom_dir("piano", factory_pair(), guard.0.clone());
+        assert!(mgr2.tags_for("a").is_empty());
+    }
+
+    #[test]
+    fn tags_ignore_unknown_ids() {
+        let guard = TempDirGuard::new("tags-unknown");
+        let mut mgr = test_manager(&guard.0);
+        assert_eq!(mgr.set_tags("nope", vec!["x".to_string()]).unwrap(), false);
+        assert!(mgr.tags_for("nope").is_empty());
+        assert!(mgr.all_tags().is_empty());
+        // Hand-edited entries for unknown IDs are dropped on load.
+        fs::write(mgr.tags_file(), r#"{"nope": ["x"], "a": ["warm"]}"#).unwrap();
+        let mgr2 = PresetManager::with_custom_dir("piano", factory_pair(), guard.0.clone());
+        assert!(mgr2.tags_for("nope").is_empty());
+        assert_eq!(mgr2.tags_for("a"), vec!["warm"]);
+        // Malformed files simply mean "no tags yet".
+        fs::write(mgr.tags_file(), "not json at all").unwrap();
+        let mgr3 = PresetManager::with_custom_dir("piano", factory_pair(), guard.0.clone());
+        assert!(mgr3.all_tags().is_empty());
+    }
+
+    #[test]
+    fn tags_follow_preset_order_and_deletion() {
+        let guard = TempDirGuard::new("tags-order");
+        let mut mgr = test_manager(&guard.0);
+        mgr.set_tags("b", vec!["shared".to_string(), "bright".to_string()])
+            .unwrap();
+        mgr.set_tags("a", vec!["shared".to_string(), "warm".to_string()])
+            .unwrap();
+        // First-seen order follows the preset list (a before b), not
+        // the order the tags were set in.
+        assert_eq!(mgr.all_tags(), vec!["shared", "warm", "bright"]);
+        // Deleting a user preset drops its tags.
+        let mut params = HashMap::new();
+        params.insert("gain".to_string(), 0.5);
+        let user = Preset::new("u1", "User One", "piano", params);
+        mgr.save_user_preset(user).unwrap();
+        mgr.set_tags("u1", vec!["mine".to_string()]).unwrap();
+        assert!(mgr.delete_user_preset("u1").unwrap());
+        assert!(mgr.tags_for("u1").is_empty());
+        assert!(!mgr.all_tags().contains(&"mine".to_string()));
+        let mgr2 = PresetManager::with_custom_dir("piano", factory_pair(), guard.0.clone());
+        assert!(!mgr2.all_tags().contains(&"mine".to_string()));
     }
 }

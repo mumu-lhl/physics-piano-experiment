@@ -13,6 +13,7 @@ pub struct PresetBrowserItem {
     pub name: String,
     pub category: String,
     pub is_favorite: bool,
+    pub tags: Vec<String>,
 }
 
 /// Actions emitted by the preset browser view. Editors map them onto their
@@ -25,6 +26,11 @@ pub enum PresetBrowserAction {
     SetCategory(Option<String>),
     ToggleFavoritesOnly,
     ToggleFavorite(String),
+    ToggleTag(String),
+    /// Live text of the tag editor (no disk write; commit with `SetTags`).
+    SetTagsInput(String),
+    /// Commit the tag editor text as the current preset's tags.
+    SetTags(String),
     Select(String),
 }
 
@@ -38,6 +44,12 @@ pub struct PresetBrowserSignals {
     pub favorites_only: Signal<bool>,
     pub categories: Signal<Vec<String>>,
     pub filtered: Signal<Vec<PresetBrowserItem>>,
+    pub tags: Signal<Vec<String>>,
+    pub selected_tags: Signal<Vec<String>>,
+    /// Live text of the tag editor for the current preset.
+    pub tags_input: Signal<String>,
+    /// Display name of the preset the tag editor edits.
+    pub current_name: Signal<String>,
 }
 
 /// Full browser rows for the current manager state (display names localized).
@@ -50,6 +62,7 @@ pub fn preset_browser_items(manager: &PresetManager, lang: Language) -> Vec<Pres
             name: preset_display_name(preset, lang),
             category: preset.category.clone(),
             is_favorite: manager.is_favorite(&preset.id),
+            tags: manager.tags_for(&preset.id),
         })
         .collect()
 }
@@ -65,14 +78,41 @@ pub fn preset_browser_categories(items: &[PresetBrowserItem]) -> Vec<String> {
     categories
 }
 
-/// Pure filter: favorites-only and the selected category narrow the list,
-/// and the search box matches a case-insensitive substring of name or
-/// category.
+/// Distinct tags in first-seen order over the browser rows.
+pub fn preset_browser_tags(items: &[PresetBrowserItem]) -> Vec<String> {
+    let mut tags = Vec::new();
+    for item in items {
+        for tag in &item.tags {
+            if !tags.contains(tag) {
+                tags.push(tag.clone());
+            }
+        }
+    }
+    tags
+}
+
+/// Parse tag editor text into tags: comma-separated, trimmed, empties and
+/// duplicates dropped, first-seen order kept.
+pub fn parse_tags_input(text: &str) -> Vec<String> {
+    let mut tags = Vec::new();
+    for part in text.split(',') {
+        let tag = part.trim().to_string();
+        if !tag.is_empty() && !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    tags
+}
+
+/// Pure filter: favorites-only, the selected category, and every selected
+/// tag narrow the list, and the search box matches a case-insensitive
+/// substring of name or category.
 pub fn filter_browser_items(
     items: &[PresetBrowserItem],
     search: &str,
     category: Option<&str>,
     favorites_only: bool,
+    selected_tags: &[String],
 ) -> Vec<PresetBrowserItem> {
     let needle = search.trim().to_lowercase();
     items
@@ -85,6 +125,10 @@ pub fn filter_browser_items(
                 if item.category != category {
                     return false;
                 }
+            }
+            if !selected_tags.is_empty() && !selected_tags.iter().all(|tag| item.tags.contains(tag))
+            {
+                return false;
             }
             if !needle.is_empty() {
                 let haystack = format!("{} {}", item.name, item.category).to_lowercase();
@@ -100,8 +144,9 @@ pub fn filter_browser_items(
 
 /// Modal preset browser overlay. Renders nothing while `signals.open` is
 /// false; when open, a dim layer (click closes) sits behind a centered panel
-/// with search, category chips, a favorites filter, and the matching rows.
-/// Clicking a row loads that preset and closes the browser.
+/// with search, category chips, tag chips, a favorites filter, the matching
+/// rows, and a tag editor for the current preset. Clicking a row loads that
+/// preset and closes the browser.
 pub fn preset_browser(cx: &mut Context, lang: Language, signals: PresetBrowserSignals) {
     let open = signals.open;
     Binding::new(cx, open, move |cx| {
@@ -114,6 +159,10 @@ pub fn preset_browser(cx: &mut Context, lang: Language, signals: PresetBrowserSi
         let favorites_only = signals.favorites_only;
         let categories = signals.categories;
         let filtered = signals.filtered;
+        let tags = signals.tags;
+        let selected_tags = signals.selected_tags;
+        let tags_input = signals.tags_input;
+        let current_name = signals.current_name;
         VStack::new(cx, move |cx| {
             // Dim layer: a sibling of the panel (not an ancestor), so clicks
             // inside the panel never reach it.
@@ -180,6 +229,34 @@ pub fn preset_browser(cx: &mut Context, lang: Language, signals: PresetBrowserSi
                     .height(Pixels(28.0))
                     .horizontal_gap(Pixels(6.0));
                 });
+                Binding::new(cx, selected_tags, move |cx| {
+                    let selected = selected_tags.get();
+                    Binding::new(cx, tags, move |cx| {
+                        let all_tags = tags.get();
+                        if all_tags.is_empty() {
+                            Element::new(cx).height(Pixels(0.0));
+                            return;
+                        }
+                        // The row builder runs on every rebuild; clone the
+                        // selection so the Fn closure stays callable.
+                        let selected = selected.clone();
+                        HStack::new(cx, move |cx| {
+                            for tag in all_tags {
+                                let tag_filter = tag.clone();
+                                let is_active = selected.contains(&tag_filter);
+                                let label = tag.clone();
+                                Button::new(cx, move |cx| Label::new(cx, label.clone()))
+                                    .class("browser-chip")
+                                    .toggle_class("browser-chip-active", is_active)
+                                    .on_press(move |cx| {
+                                        cx.emit(PresetBrowserAction::ToggleTag(tag_filter.clone()))
+                                    });
+                            }
+                        })
+                        .height(Pixels(28.0))
+                        .horizontal_gap(Pixels(6.0));
+                    });
+                });
                 ScrollView::new(cx, move |cx| {
                     Binding::new(cx, filtered, move |cx| {
                         let items = filtered.get();
@@ -195,6 +272,7 @@ pub fn preset_browser(cx: &mut Context, lang: Language, signals: PresetBrowserSi
                                 let star_id = item.id.clone();
                                 let row_name = item.name.clone();
                                 let row_category = item.category.clone();
+                                let row_tags = item.tags.join(", ");
                                 let star_label =
                                     if item.is_favorite { "★" } else { "☆" }.to_string();
                                 HStack::new(cx, move |cx| {
@@ -212,6 +290,12 @@ pub fn preset_browser(cx: &mut Context, lang: Language, signals: PresetBrowserSi
                                             Label::new(cx, row_name.clone())
                                                 .class("browser-row-name")
                                                 .width(Stretch(1.0));
+                                            if !row_tags.is_empty() {
+                                                Label::new(cx, row_tags.clone())
+                                                    .class("browser-row-tags")
+                                                    .width(Pixels(130.0))
+                                                    .text_overflow(TextOverflow::Ellipsis);
+                                            }
                                             Label::new(cx, row_category.clone())
                                                 .class("browser-row-category");
                                         })
@@ -233,10 +317,29 @@ pub fn preset_browser(cx: &mut Context, lang: Language, signals: PresetBrowserSi
                 })
                 .width(Stretch(1.0))
                 .height(Pixels(300.0));
+                HStack::new(cx, move |cx| {
+                    Label::new(cx, translate(lang, "gui.tags", "Tags")).class("browser-tags-label");
+                    Label::new(cx, current_name.clone())
+                        .class("browser-tags-label")
+                        .width(Pixels(110.0))
+                        .text_overflow(TextOverflow::Ellipsis);
+                    Textbox::new(cx, tags_input)
+                        .placeholder(translate(
+                            lang,
+                            "gui.tags-placeholder",
+                            "Comma-separated tags",
+                        ))
+                        .on_edit(|cx, text| cx.emit(PresetBrowserAction::SetTagsInput(text)))
+                        .on_submit(|cx, text, _| cx.emit(PresetBrowserAction::SetTags(text)))
+                        .width(Stretch(1.0))
+                        .height(Pixels(26.0));
+                })
+                .height(Pixels(30.0))
+                .horizontal_gap(Pixels(8.0));
             })
             .class("browser-panel")
             .width(Pixels(560.0))
-            .height(Pixels(440.0));
+            .height(Pixels(500.0));
             Element::new(cx).height(Stretch(1.0));
         })
         .position_type(PositionType::Absolute)
@@ -258,7 +361,20 @@ mod tests {
             name: name.to_string(),
             category: category.to_string(),
             is_favorite: favorite,
+            tags: Vec::new(),
         }
+    }
+
+    fn tagged(
+        id: &str,
+        name: &str,
+        category: &str,
+        favorite: bool,
+        tags: &[&str],
+    ) -> PresetBrowserItem {
+        let mut item = item(id, name, category, favorite);
+        item.tags = tags.iter().map(|t| t.to_string()).collect();
+        item
     }
 
     fn sample() -> Vec<PresetBrowserItem> {
@@ -272,12 +388,12 @@ mod tests {
     #[test]
     fn filter_matches_name_and_category_case_insensitively() {
         let items = sample();
-        let out = filter_browser_items(&items, "GRAND", None, false);
+        let out = filter_browser_items(&items, "GRAND", None, false, &[]);
         assert_eq!(out.len(), 3);
-        let out = filter_browser_items(&items, "chamber", None, false);
+        let out = filter_browser_items(&items, "chamber", None, false, &[]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].id, "c");
-        let out = filter_browser_items(&items, "pop", None, false);
+        let out = filter_browser_items(&items, "pop", None, false, &[]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].id, "b");
     }
@@ -285,13 +401,55 @@ mod tests {
     #[test]
     fn filter_category_and_favorites_combine() {
         let items = sample();
-        let out = filter_browser_items(&items, "", Some("Concert Grand"), false);
+        let out = filter_browser_items(&items, "", Some("Concert Grand"), false, &[]);
         assert_eq!(out.len(), 1);
-        let out = filter_browser_items(&items, "", None, true);
+        let out = filter_browser_items(&items, "", None, true, &[]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].id, "a");
-        let out = filter_browser_items(&items, "", Some("Pop Grand"), true);
+        let out = filter_browser_items(&items, "", Some("Pop Grand"), true, &[]);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn filter_selected_tags_require_all() {
+        let items = vec![
+            tagged("a", "Alpha", "General", false, &["warm", "jazz"]),
+            tagged("b", "Beta", "General", false, &["warm"]),
+            tagged("c", "Gamma", "General", false, &["bright"]),
+        ];
+        let warm = vec!["warm".to_string()];
+        let out = filter_browser_items(&items, "", None, false, &warm);
+        assert_eq!(out.len(), 2);
+        let both = vec!["warm".to_string(), "jazz".to_string()];
+        let out = filter_browser_items(&items, "", None, false, &both);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id, "a");
+        // Tags combine with the other filters.
+        let out = filter_browser_items(&items, "beta", None, false, &warm);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id, "b");
+        let missing = vec!["nope".to_string()];
+        let out = filter_browser_items(&items, "", None, false, &missing);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn tags_keep_first_seen_order() {
+        let items = vec![
+            tagged("a", "A", "General", false, &["warm", "jazz"]),
+            tagged("b", "B", "General", false, &["bright", "warm"]),
+        ];
+        assert_eq!(preset_browser_tags(&items), vec!["warm", "jazz", "bright"]);
+    }
+
+    #[test]
+    fn parse_tags_input_splits_and_dedupes() {
+        assert_eq!(
+            parse_tags_input("warm, jazz ,warm,,  ,bright"),
+            vec!["warm", "jazz", "bright"]
+        );
+        assert!(parse_tags_input(" , ,").is_empty());
+        assert!(parse_tags_input("").is_empty());
     }
 
     #[test]

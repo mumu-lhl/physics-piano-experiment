@@ -896,3 +896,13 @@ msgstr ""
 msgctxt "drum.pad-map.hint"
 msgid "35/36 kick · 38 snare · 41–51 kit"
 msgstr ""
+
+#: crates/physics-ui/src/preset_browser.rs:319
+msgctxt "gui.tags"
+msgid "Tags"
+msgstr ""
+
+#: crates/physics-ui/src/preset_browser.rs:326
+msgctxt "gui.tags-placeholder"
+msgid "Comma-separated tags"
+msgstr ""

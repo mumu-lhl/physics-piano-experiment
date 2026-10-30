@@ -16,7 +16,8 @@ pub use language::{Language, setup_vizia_fonts, translate, translate_format};
 pub use midi_learn::{LastCc, LearnArm, apply_midi_cc, build_param_map, build_ptr_to_id_map};
 pub use preset_browser::{
     PresetBrowserAction, PresetBrowserItem, PresetBrowserSignals, filter_browser_items,
-    preset_browser, preset_browser_categories, preset_browser_items,
+    parse_tags_input, preset_browser, preset_browser_categories, preset_browser_items,
+    preset_browser_tags,
 };
 pub use preset_panel::{PresetPanelAction, PresetPanelLayout, PresetPanelSignals, preset_panel};
 pub use spectrum::{

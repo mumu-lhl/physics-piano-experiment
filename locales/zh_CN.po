@@ -76,6 +76,14 @@ msgctxt "gui.no-presets-match"
 msgid "No presets match"
 msgstr "没有匹配的预设"
 
+msgctxt "gui.tags"
+msgid "Tags"
+msgstr "标签"
+
+msgctxt "gui.tags-placeholder"
+msgid "Comma-separated tags"
+msgstr "以逗号分隔的标签"
+
 msgctxt "preset.name.steinway_concert_d"
 msgid "Steinway D Concert Grand"
 msgstr "施坦威 D-274 音乐会三角琴"

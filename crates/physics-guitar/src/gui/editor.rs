@@ -19,8 +19,9 @@ use physics_ui::{
     PresetBrowserSignals, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
     SpectrumAnalyzerWidget, StereoVuMeterWidget, add_base_theme, build_ptr_to_id_map,
     discrete_selector as shared_discrete_selector, filter_browser_items, map_param_history_event,
-    parameter_knob, preset_browser, preset_browser_categories, preset_browser_items,
-    preset_choices, preset_display_name, preset_panel, redraw_custom_view, set_param,
+    parameter_knob, parse_tags_input, preset_browser, preset_browser_categories,
+    preset_browser_items, preset_browser_tags, preset_choices, preset_display_name,
+    preset_panel, redraw_custom_view, set_param,
     setup_vizia_fonts, translate, translate_format,
 };
 use std::collections::{HashMap, HashSet};
@@ -113,6 +114,9 @@ struct GuitarUiState {
     browser_favorites_only: Signal<bool>,
     browser_categories: Signal<Vec<String>>,
     browser_filtered: Signal<Vec<PresetBrowserItem>>,
+    browser_tags: Signal<Vec<String>>,
+    browser_selected_tags: Signal<Vec<String>>,
+    browser_tags_input: Signal<String>,
     language: Signal<Language>,
     language_atom: Arc<AtomicU8>,
     name_input: Signal<String>,
@@ -281,11 +285,13 @@ impl GuitarUiState {
         let items = preset_browser_items(&manager, lang);
         self.browser_categories
             .set(preset_browser_categories(&items));
+        self.browser_tags.set(preset_browser_tags(&items));
         self.browser_filtered.set(filter_browser_items(
             &items,
             &self.browser_search.get(),
             self.browser_category.get().as_deref(),
             self.browser_favorites_only.get(),
+            &self.browser_selected_tags.get(),
         ));
     }
 
@@ -340,6 +346,27 @@ impl Model for GuitarUiState {
             }
             PresetBrowserAction::ToggleFavorite(id) => {
                 let _ = self.manager.write().toggle_favorite(id);
+                self.refresh_preset_signals();
+            }
+            PresetBrowserAction::ToggleTag(tag) => {
+                let mut selected = self.browser_selected_tags.get();
+                if let Some(pos) = selected.iter().position(|t| t == tag) {
+                    selected.remove(pos);
+                } else {
+                    selected.push(tag.clone());
+                }
+                self.browser_selected_tags.set(selected);
+                self.refresh_preset_signals();
+            }
+            PresetBrowserAction::SetTagsInput(text) => {
+                self.browser_tags_input.set(text.clone());
+            }
+            PresetBrowserAction::SetTags(text) => {
+                let tags = parse_tags_input(text);
+                let id = self.selected_id.get();
+                let _ = self.manager.write().set_tags(&id, tags);
+                self.browser_tags_input
+                    .set(self.manager.read().tags_for(&id).join(", "));
                 self.refresh_preset_signals();
             }
             PresetBrowserAction::Select(id) => {
@@ -478,6 +505,8 @@ impl Model for GuitarUiState {
                     let display_name = preset_display_name(&preset, self.language.get());
                     self.selected_name.set(display_name.clone());
                     self.name_input.set(display_name);
+                    self.browser_tags_input
+                        .set(self.manager.read().tags_for(id).join(", "));
                     self.is_user_preset
                         .set(self.manager.read().is_user_preset(id));
                     self.refresh_preset_signals();
@@ -526,6 +555,7 @@ impl Model for GuitarUiState {
                     self.selected_id.set(id);
                     self.selected_name.set(name.clone());
                     self.name_input.set(name);
+                    self.browser_tags_input.set(String::new());
                     self.is_user_preset.set(true);
                     self.refresh_preset_signals();
                 }
@@ -881,6 +911,14 @@ pub fn create_vizia_guitar_editor(
         let browser_category = Signal::new(None);
         let browser_favorites_only = Signal::new(false);
         let browser_categories = Signal::new(preset_browser_categories(&browser_items_initial));
+        let browser_tags = Signal::new(preset_browser_tags(&browser_items_initial));
+        let browser_selected_tags = Signal::new(Vec::new());
+        let browser_tags_input = Signal::new(
+            preset_manager
+                .read()
+                .tags_for("strat_clean_chime")
+                .join(", "),
+        );
         let browser_filtered = Signal::new(browser_items_initial);
         let language = Signal::new(lang);
         let language_view = language.clone();
@@ -930,6 +968,9 @@ pub fn create_vizia_guitar_editor(
             browser_favorites_only: browser_favorites_only.clone(),
             browser_categories: browser_categories.clone(),
             browser_filtered: browser_filtered.clone(),
+            browser_tags: browser_tags.clone(),
+            browser_selected_tags: browser_selected_tags.clone(),
+            browser_tags_input: browser_tags_input.clone(),
             language,
             language_atom: language_atom.clone(),
             name_input: name_input.clone(),
@@ -971,6 +1012,9 @@ pub fn create_vizia_guitar_editor(
         let browser_favorites_only_ui = browser_favorites_only.clone();
         let browser_categories_ui = browser_categories.clone();
         let browser_filtered_ui = browser_filtered.clone();
+        let browser_tags_ui = browser_tags.clone();
+        let browser_selected_tags_ui = browser_selected_tags.clone();
+        let browser_tags_input_ui = browser_tags_input.clone();
         let language_view_ui = language_view.clone();
         let is_user_preset_controls = is_user_preset_ui.clone();
         let can_undo_controls = can_undo_ui.clone();
@@ -1002,6 +1046,10 @@ pub fn create_vizia_guitar_editor(
             let browser_favorites_only = browser_favorites_only_ui.clone();
             let browser_categories = browser_categories_ui.clone();
             let browser_filtered = browser_filtered_ui.clone();
+            let browser_tags = browser_tags_ui.clone();
+            let browser_selected_tags = browser_selected_tags_ui.clone();
+            let browser_tags_input = browser_tags_input_ui.clone();
+            let browser_current_name = initial_preset_name.clone();
             let name_input = name_input_ui.clone();
             let language_view = language_view_ui.clone();
             let is_user_preset = is_user_preset_controls.clone();
@@ -1627,6 +1675,10 @@ pub fn create_vizia_guitar_editor(
                     favorites_only: browser_favorites_only,
                     categories: browser_categories,
                     filtered: browser_filtered,
+                    tags: browser_tags,
+                    selected_tags: browser_selected_tags,
+                    tags_input: browser_tags_input,
+                    current_name: browser_current_name,
                 },
             );
         });
