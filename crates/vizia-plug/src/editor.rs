@@ -174,6 +174,42 @@ impl Editor for ViziaEditor {
                     let vizia_state = vizia_state_for_idle.clone();
                     let applied_user_scale = Arc::new(AtomicCell::new(user_scale_factor));
                     move |cx| {
+                        // Free resize: when the OS window is resized by dragging an edge, the
+                        // backend updates the root bounds without changing the user scale.
+                        // Derive the scale from the new bounds so the content reflows. The
+                        // `SetUserScale` emission below then snaps the window back to the
+                        // design aspect ratio, so the min() here also defines the snap.
+                        // `GeometryChanged` cannot be used for this: it propagates `Direct`,
+                        // so it only ever reaches the resized entity itself.
+                        let (base_width, base_height) = vizia_state.inner_logical_size();
+                        if base_width > 0 && base_height > 0 {
+                            let mut resize_cx = EventContext::new(cx);
+                            let bounds = resize_cx.cache.get_bounds(Entity::root());
+                            let dpi_factor = resize_cx.scale_factor() as f64;
+                            if dpi_factor > 0.0 && bounds.width() > 0.0 && bounds.height() > 0.0 {
+                                // `dpi_factor` already includes the current user scale, so the
+                                // root bounds divided by it is the base size whenever the
+                                // window is in a consistent state. An external resize shows up
+                                // as a *ratio* against that state: multiply back by the
+                                // current scale. (Deriving the scale from the bounds alone
+                                // collapses to 1.0 once the new scale is applied, because the
+                                // backend then re-reports the resize with the updated DPI.)
+                                let current = vizia_state.user_scale_factor();
+                                let derived = current
+                                    * ((bounds.width() as f64 / dpi_factor) / base_width as f64)
+                                        .min(
+                                            (bounds.height() as f64 / dpi_factor)
+                                                / base_height as f64,
+                                        );
+                                // Epsilon beats integer-pixel rounding (<= ~0.5/base); the
+                                // clamp is a safety rail against degenerate window sizes.
+                                if derived.is_finite() && (derived - current).abs() > 0.002 {
+                                    vizia_state
+                                        .set_user_scale_factor(derived.clamp(0.2, 5.0));
+                                }
+                            }
+                        }
+
                         let requested_user_scale = vizia_state.user_scale_factor();
                         let current_user_scale = applied_user_scale.load();
                         if (requested_user_scale - current_user_scale).abs() > f64::EPSILON {

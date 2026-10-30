@@ -96,6 +96,11 @@ pub struct ViziaState {
     /// This can be used to allow GUIs to be scaled uniformly.
     #[serde(with = "nice_plug_core::params::persist::serialize_atomic_cell")]
     scale_factor: AtomicCell<f64>,
+    /// Reactive mirror of `scale_factor`, so views (e.g. the zoom stepper) stay in sync when the
+    /// scale changes from anywhere: the stepper, a host resize, or a dragged window edge. Not
+    /// persisted itself; it is re-synced from `scale_factor` whenever state is restored.
+    #[serde(skip, default = "default_scale_signal")]
+    scale_signal: SyncSignal<f64>,
     /// Whether the editor's window is currently open.
     #[serde(skip)]
     open: AtomicBool,
@@ -104,6 +109,12 @@ pub struct ViziaState {
 /// A default implementation for `size_fn` needed to be able to derive the `Deserialize` trait.
 fn empty_size_fn() -> Box<dyn Fn() -> (u32, u32) + Send + Sync> {
     Box::new(|| (0, 0))
+}
+
+/// Default for the skipped `scale_signal` field on deserialize; re-synced from `scale_factor`
+/// by the `PersistentField` implementation when state is restored.
+fn default_scale_signal() -> SyncSignal<f64> {
+    SyncSignal::new(1.0)
 }
 
 impl Debug for ViziaState {
@@ -120,7 +131,7 @@ impl Debug for ViziaState {
 
 impl<'a> PersistentField<'a, ViziaState> for Arc<ViziaState> {
     fn set(&self, new_value: ViziaState) {
-        self.scale_factor.store(new_value.scale_factor.load());
+        self.set_user_scale_factor(new_value.scale_factor.load());
     }
 
     fn map<F, R>(&self, f: F) -> R
@@ -140,6 +151,7 @@ impl ViziaState {
         Arc::new(ViziaState {
             size_fn: Box::new(size_fn),
             scale_factor: AtomicCell::new(1.0),
+            scale_signal: SyncSignal::new(1.0),
             open: AtomicBool::new(false),
         })
     }
@@ -154,6 +166,7 @@ impl ViziaState {
         Arc::new(ViziaState {
             size_fn: Box::new(size_fn),
             scale_factor: AtomicCell::new(default_scale_factor),
+            scale_signal: SyncSignal::new(default_scale_factor),
             open: AtomicBool::new(false),
         })
     }
@@ -195,6 +208,13 @@ impl ViziaState {
     /// `style.dpi_factor`, and refreshing the render surface in lockstep.
     pub fn set_user_scale_factor(&self, factor: f64) {
         self.scale_factor.store(factor);
+        self.scale_signal.set(factor);
+    }
+
+    /// Reactive mirror of the user scale factor. Views bind to this instead of snapshotting
+    /// [`Self::user_scale_factor`] so they track scale changes from every source.
+    pub fn scale_signal(&self) -> SyncSignal<f64> {
+        self.scale_signal.clone()
     }
 
     /// Whether the GUI is currently visible.

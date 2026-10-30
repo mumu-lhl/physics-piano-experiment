@@ -36,7 +36,9 @@ fn nearest_step(factor: f64) -> usize {
 /// percentage, and a `+` button. The end buttons disable at the extremes.
 pub fn zoom_control(cx: &mut Context, state: Arc<ViziaState>, label: &str) {
     let label = label.to_owned();
-    let current = SyncSignal::new(state.user_scale_factor());
+    // Shared with `ViziaState`: the stepper display tracks scale changes from every source
+    // (stepper presses, host resizes, dragged window edges), not just its own buttons.
+    let current = state.scale_signal();
     HStack::new(cx, move |cx| {
         Label::new(cx, label).class("zoom-label");
         let state_down = state.clone();
@@ -50,7 +52,6 @@ pub fn zoom_control(cx: &mut Context, state: Arc<ViziaState>, label: &str) {
             )
             .on_press(move |_| {
                 let next = ZOOM_FACTORS[nearest_step(current_down.get()).saturating_sub(1)];
-                current_down.set(next);
                 state_down.set_user_scale_factor(next);
             })
             .width(Pixels(28.0));
@@ -72,7 +73,6 @@ pub fn zoom_control(cx: &mut Context, state: Arc<ViziaState>, label: &str) {
             .on_press(move |_| {
                 let next =
                     ZOOM_FACTORS[(nearest_step(current_up.get()) + 1).min(ZOOM_FACTORS.len() - 1)];
-                current_up.set(next);
                 state_up.set_user_scale_factor(next);
             })
             .width(Pixels(28.0));
