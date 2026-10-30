@@ -109,7 +109,6 @@ pub fn setup_vizia_fonts(cx: &mut vizia_plug::vizia::prelude::Context) {
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
         "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
-        "/home/mumulhl/.local/share/fonts/LXGWWenKai-Regular.ttf",
         "C:\\Windows\\Fonts\\msyh.ttc",
         "C:\\Windows\\Fonts\\simsun.ttc",
         "C:\\Windows\\Fonts\\simhei.ttf",
