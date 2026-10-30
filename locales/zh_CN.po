@@ -570,7 +570,7 @@ msgid "Body mix"
 msgstr "琴体混合"
 
 msgctxt "bass.slap_note"
-msgid "Slap uses the same bounded contact state as the FDTD string"
+msgid "Slap shares the FDTD contact state"
 msgstr "击弦使用与 FDTD 琴弦相同的有界接触状态"
 
 msgctxt "bass.output"
@@ -582,8 +582,8 @@ msgid "Master gain"
 msgstr "总输出增益"
 
 msgctxt "bass.output_note"
-msgid "Electric: finite-gap pickup · Acoustic: A0 / B1 / bridge hill"
-msgstr "电贝斯：有限磁隙拾音 · 木贝斯：A0 / B1 / 琴桥峰"
+msgid "Electric: drive & pickup · Acoustic: cavity"
+msgstr "电贝斯：驱动与拾音 · 木贝斯：共鸣腔"
 
 msgctxt "bass.fretboard_hint"
 msgid "Open notes + 24 frets · MIDI pitch bend remains available"

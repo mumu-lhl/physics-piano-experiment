@@ -742,7 +742,7 @@ msgstr ""
 
 #: crates/physics-bass/src/gui.rs:579
 msgctxt "bass.slap_note"
-msgid "Slap uses the same bounded contact state as the FDTD string"
+msgid "Slap shares the FDTD contact state"
 msgstr ""
 
 #: crates/physics-bass/src/gui.rs:585
@@ -757,7 +757,7 @@ msgstr ""
 
 #: crates/physics-bass/src/gui.rs:587
 msgctxt "bass.output_note"
-msgid "Electric: finite-gap pickup · Acoustic: A0 / B1 / bridge hill"
+msgid "Electric: drive & pickup · Acoustic: cavity"
 msgstr ""
 
 #: crates/physics-bass/src/gui.rs:597

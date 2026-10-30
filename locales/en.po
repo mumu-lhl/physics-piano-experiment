@@ -570,8 +570,8 @@ msgid "Body mix"
 msgstr "Body mix"
 
 msgctxt "bass.slap_note"
-msgid "Slap uses the same bounded contact state as the FDTD string"
-msgstr "Slap uses the same bounded contact state as the FDTD string"
+msgid "Slap shares the FDTD contact state"
+msgstr "Slap shares the FDTD contact state"
 
 msgctxt "bass.output"
 msgid "OUTPUT"
@@ -582,8 +582,8 @@ msgid "Master gain"
 msgstr "Master gain"
 
 msgctxt "bass.output_note"
-msgid "Electric: finite-gap pickup · Acoustic: A0 / B1 / bridge hill"
-msgstr "Electric: finite-gap pickup · Acoustic: A0 / B1 / bridge hill"
+msgid "Electric: drive & pickup · Acoustic: cavity"
+msgstr "Electric: drive & pickup · Acoustic: cavity"
 
 msgctxt "bass.fretboard_hint"
 msgid "Open notes + 24 frets · MIDI pitch bend remains available"

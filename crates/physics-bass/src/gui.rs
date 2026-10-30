@@ -29,7 +29,7 @@ use vizia_plug::widgets::{ParamButton, ParamButtonExt, RawParamEvent, zoom_contr
 use vizia_plug::{ViziaEditor, ViziaTheming, create_vizia_editor};
 
 pub const EDITOR_WIDTH: u32 = 1120;
-pub const EDITOR_HEIGHT: u32 = 830;
+pub const EDITOR_HEIGHT: u32 = 870;
 
 #[derive(Clone)]
 struct DiscreteSelections {
@@ -970,7 +970,7 @@ pub fn create_vizia_bass_editor(
                             parameter_knob(cx, translate(lang, "bass.body_mix", "Body mix"), &params.body_mix, 120.0, translate(lang, "bass.tooltip.body_mix", "Body resonance mix: how much of the instrument body sound is blended in."), Some(learn.clone()));
                         })
                         .horizontal_gap(Pixels(8.0));
-                        Label::new(cx, translate(lang, "bass.slap_note", "Slap uses the same bounded contact state as the FDTD string")).class("small-note");
+                        Label::new(cx, translate(lang, "bass.slap_note", "Slap shares the FDTD contact state")).class("small-note");
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
@@ -982,14 +982,14 @@ pub fn create_vizia_bass_editor(
                             parameter_knob(cx, translate(lang, "bass.master_gain", "Master gain"), &params.master_gain, 120.0, translate(lang, "bass.tooltip.master_gain", "Overall output volume."), Some(learn.clone()));
                         })
                         .horizontal_gap(Pixels(8.0));
-                        Label::new(cx, translate(lang, "bass.output_note", "Electric: tube/FET drive & pickup · Acoustic: cavity")).class("small-note");
+                        Label::new(cx, translate(lang, "bass.output_note", "Electric: drive & pickup · Acoustic: cavity")).class("small-note");
                     })
                     .class("rack-box")
                     .width(Stretch(1.0));
                 })
                 .class("rack-row")
                 .width(Stretch(1.0))
-                .height(Pixels(145.0))
+                .height(Pixels(185.0))
                 .horizontal_gap(Pixels(8.0));
 
                 VStack::new(cx, |cx| {
