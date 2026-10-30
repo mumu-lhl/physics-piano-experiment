@@ -14,7 +14,7 @@ use physics_presets::{ParamTransition, Preset, PresetManager, UndoManager};
 use physics_ui::{
     CancelParamGestureEvent, Language, LastCc, LearnArm, PresetBrowserAction, PresetBrowserItem,
     PresetBrowserSignals, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
-    SpectrumAnalyzerWidget, StereoVuMeterWidget, WaveformWidget, add_base_theme,
+    SpectrumAnalyzerWidget, StereoVuMeterWidget, WaveformWidget, add_base_theme, theme_toggle_button,
     build_ptr_to_id_map,
     discrete_selector, filter_browser_items, map_param_history_event, parameter_knob,
     parse_tags_input, preset_browser, preset_browser_categories, preset_browser_items,
@@ -867,6 +867,8 @@ pub fn create_vizia_bass_editor(
             let browser_tags_input = browser_tags_input_ui.clone();
             let browser_current_name = selected_name_ui.clone();
             let zoom_state = zoom_state_ui.clone();
+            let theme_signal = zoom_state.theme_signal();
+            let theme_state = zoom_state.clone();
             let peak_l = peak_l_ui.clone();
             let peak_r = peak_r_ui.clone();
             let sample_history = sample_history_ui.clone();
@@ -933,6 +935,10 @@ pub fn create_vizia_bass_editor(
                         .width(Pixels(64.0));
                     });
                     Label::new(cx, learn_status.clone()).class("small-note");
+                    Element::new(cx)
+                        .width(Stretch(1.0))
+                        .pointer_events(PointerEvents::None);
+                    theme_toggle_button(cx, theme_state.clone(), lang);
                 })
                 .horizontal_gap(Pixels(8.0));
 
@@ -1084,6 +1090,7 @@ pub fn create_vizia_bass_editor(
                 .horizontal_gap(Pixels(8.0));
             })
             .class("root")
+            .toggle_class("theme-light", theme_signal)
             .width(Stretch(1.0))
             .height(Stretch(1.0));
 

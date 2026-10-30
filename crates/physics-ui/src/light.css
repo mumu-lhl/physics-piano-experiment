@@ -1,0 +1,287 @@
+/* Light theme for Piano, Guitar, Bass, and Drum. Loaded once at startup
+   next to theme.css; every rule is scoped under `.theme-light` so the
+   dark theme stays the default and toggling the class on the root entity
+   switches themes with no stylesheet reload. Scoped two-class selectors
+   beat the single-class dark rules regardless of load order.
+   Canvas-drawn widgets (fretboard, keyboard, spectrum/waveform tracks)
+   keep their own palettes; only CSS-painted chrome flips. */
+
+.theme-light {
+    background-color: #f7f7f5;
+    color: #26282e;
+}
+
+.theme-light label {
+    color: #3c3f47;
+}
+
+.theme-light .title {
+    color: #8a6d1f;
+}
+
+.theme-light .subtitle {
+    color: #5c6068;
+}
+
+.theme-light .status {
+    color: #5a6a80;
+}
+
+.theme-light .param-label {
+    color: #4a4e5a;
+}
+
+.theme-light .rack-box {
+    background-color: #ffffff;
+    border-color: #d2d4da;
+}
+
+.theme-light .rack-title {
+    color: #8a6d1f;
+}
+
+.theme-light .knob-label {
+    color: #4a4e5a;
+}
+
+.theme-light .knob-value {
+    color: #8a6d1f;
+}
+
+.theme-light .instrument-view {
+    background-color: #f0ede6;
+    border-color: #c8c4b8;
+}
+
+.theme-light .small-note,
+.theme-light .hint-text {
+    color: #5c6068;
+}
+
+.theme-light button {
+    background-color: #ffffff;
+    border-color: #c4c7ce;
+    color: #26282e;
+}
+
+.theme-light button:hover {
+    background-color: #eef0f4;
+    border-color: #9aa0ac;
+}
+
+.theme-light button:active {
+    background-color: #ffd778;
+    color: #121318;
+}
+
+.theme-light button:active label {
+    color: #121318;
+}
+
+.theme-light button:disabled {
+    background-color: #e8e9ec;
+    border-color: #d5d7dd;
+    color: #9a9da8;
+}
+
+.theme-light button:disabled label {
+    color: #9a9da8;
+}
+
+.theme-light .btn-cycle {
+    color: #8a6d1f;
+    background-color: #ffffff;
+    border-color: #c4c7ce;
+}
+
+.theme-light .btn-cycle:hover {
+    background-color: #eef0f4;
+    border-color: #9aa0ac;
+}
+
+.theme-light .btn-action {
+    color: #26282e;
+    background-color: #ffffff;
+    border-color: #c4c7ce;
+}
+
+.theme-light .btn-action:hover {
+    background-color: #eef0f4;
+    border-color: #9aa0ac;
+}
+
+.theme-light .btn-action:disabled {
+    background-color: #e8e9ec;
+    border-color: #d5d7dd;
+    color: #9a9da8;
+}
+
+.theme-light .btn-action:disabled label {
+    color: #9a9da8;
+}
+
+.theme-light .btn-disabled {
+    background-color: #e8e9ec;
+    border-color: #d5d7dd;
+    color: #9a9da8;
+}
+
+.theme-light .btn-disabled label {
+    color: #9a9da8;
+}
+
+.theme-light param-slider {
+    border-color: #c0c2c8;
+    background-color: #e8e9ec;
+}
+
+.theme-light param-slider:hover {
+    border-color: #9aa0ac;
+    background-color: #dfe1e6;
+}
+
+.theme-light param-slider .value {
+    color: #26282e;
+}
+
+.theme-light textbox {
+    background-color: #ffffff;
+    border-color: #b8bcc4;
+    color: #1a1c22;
+}
+
+.theme-light textbox:focus {
+    border-color: #c9a227;
+}
+
+.theme-light popup {
+    background-color: #ffffff;
+    border-color: #c0c2c8;
+}
+
+.theme-light .preset-dropdown {
+    background-color: #ffffff;
+    border-color: #b8bcc4;
+}
+
+.theme-light .preset-dropdown:hover {
+    border-color: #c9a227;
+    background-color: #f2f3f5;
+}
+
+.theme-light .preset-dropdown:active label {
+    color: #8a6d1f;
+}
+
+.theme-light .preset-dropdown-label {
+    color: #8a6d1f;
+}
+
+.theme-light .preset-item {
+    color: #26282e;
+    background-color: #ffffff;
+}
+
+.theme-light .preset-item:hover {
+    background-color: #eceef2;
+    color: #8a6d1f;
+}
+
+.theme-light .browser-dim {
+    background-color: rgba(40, 45, 60, 0.35);
+}
+
+.theme-light .browser-panel {
+    background-color: #fbfbfc;
+    border-color: #c8cad2;
+}
+
+.theme-light .browser-title {
+    color: #8a6d1f;
+}
+
+.theme-light .browser-chip {
+    color: #26282e;
+    background-color: #ffffff;
+    border-color: #c0c2c8;
+}
+
+.theme-light .browser-chip:hover {
+    background-color: #eceef2;
+}
+
+.theme-light .browser-chip-active {
+    border-color: #c9a227;
+    color: #8a6d1f;
+}
+
+.theme-light .browser-star {
+    color: #8a6d1f;
+    background-color: #fbfbfc;
+}
+
+.theme-light .browser-row {
+    background-color: #fbfbfc;
+}
+
+.theme-light .browser-row:hover {
+    background-color: #eceef2;
+}
+
+.theme-light .browser-row-button {
+    background-color: #fbfbfc;
+}
+
+.theme-light .browser-row-name {
+    color: #26282e;
+}
+
+.theme-light .browser-row-category {
+    color: #5c6068;
+}
+
+.theme-light .browser-empty {
+    color: #5c6068;
+}
+
+.theme-light .browser-row-tags {
+    color: #5c6068;
+}
+
+.theme-light .browser-tags-label {
+    color: #5c6068;
+}
+
+/* Knobs and zoom controls from vizia-plug's widgets.css. */
+
+.theme-light param-knob knob .knob-track {
+    color: #c9a227;
+}
+
+.theme-light param-knob knob .knob-head {
+    background-color: #ffffff;
+    border-color: #9aa0ac;
+}
+
+.theme-light param-knob knob .knob-tick {
+    background-color: #8a6d1f;
+}
+
+.theme-light .zoom-label {
+    color: #26282e;
+}
+
+.theme-light .btn-zoom {
+    color: #26282e;
+    background-color: #ffffff;
+    border-color: #c0c2c8;
+}
+
+.theme-light .btn-zoom:hover {
+    background-color: #eef0f4;
+    border-color: #9aa0ac;
+}
+
+.theme-light .zoom-value {
+    color: #8a6d1f;
+}

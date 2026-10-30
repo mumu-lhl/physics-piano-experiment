@@ -26,7 +26,7 @@ pub use spectrum::{
     SPECTRUM_HISTORY_LEN, SpectrumAnalyzer, SpectrumAnalyzerWidget, bar_center_frequencies,
     db_to_norm,
 };
-pub use theme::add_base_theme;
+pub use theme::{add_base_theme, theme_toggle_button};
 pub use vu_meter::StereoVuMeterWidget;
 pub use waveform::{WAVEFORM_WINDOW, WaveformWidget, downsample_waveform};
 pub use widgets::{

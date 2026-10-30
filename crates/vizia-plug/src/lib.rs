@@ -101,6 +101,14 @@ pub struct ViziaState {
     /// persisted itself; it is re-synced from `scale_factor` whenever state is restored.
     #[serde(skip, default = "default_scale_signal")]
     scale_signal: SyncSignal<f64>,
+    /// Whether the light theme is active. Persisted; the dark theme is the default.
+    #[serde(with = "nice_plug_core::params::persist::serialize_atomic_cell")]
+    light_theme: AtomicCell<bool>,
+    /// Reactive mirror of `light_theme`, so views (the theme toggle button and the root
+    /// container's `theme-light` class) stay in sync. Not persisted itself; it is re-synced
+    /// from `light_theme` whenever state is restored.
+    #[serde(skip, default = "default_theme_signal")]
+    theme_signal: SyncSignal<bool>,
     /// Whether the editor's window is currently open.
     #[serde(skip)]
     open: AtomicBool,
@@ -117,6 +125,12 @@ fn default_scale_signal() -> SyncSignal<f64> {
     SyncSignal::new(1.0)
 }
 
+/// Default for the skipped `theme_signal` field on deserialize; re-synced from `light_theme`
+/// by the `PersistentField` implementation when state is restored.
+fn default_theme_signal() -> SyncSignal<bool> {
+    SyncSignal::new(false)
+}
+
 impl Debug for ViziaState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (width, height) = (self.size_fn)();
@@ -124,6 +138,7 @@ impl Debug for ViziaState {
         f.debug_struct("ViziaState")
             .field("size_fn", &format!("<fn> ({}, {})", width, height))
             .field("scale_factor", &self.scale_factor)
+            .field("light_theme", &self.light_theme)
             .field("open", &self.open)
             .finish()
     }
@@ -132,6 +147,7 @@ impl Debug for ViziaState {
 impl<'a> PersistentField<'a, ViziaState> for Arc<ViziaState> {
     fn set(&self, new_value: ViziaState) {
         self.set_user_scale_factor(new_value.scale_factor.load());
+        self.set_light_theme(new_value.light_theme.load());
     }
 
     fn map<F, R>(&self, f: F) -> R
@@ -152,6 +168,8 @@ impl ViziaState {
             size_fn: Box::new(size_fn),
             scale_factor: AtomicCell::new(1.0),
             scale_signal: SyncSignal::new(1.0),
+            light_theme: AtomicCell::new(false),
+            theme_signal: SyncSignal::new(false),
             open: AtomicBool::new(false),
         })
     }
@@ -167,6 +185,8 @@ impl ViziaState {
             size_fn: Box::new(size_fn),
             scale_factor: AtomicCell::new(default_scale_factor),
             scale_signal: SyncSignal::new(default_scale_factor),
+            light_theme: AtomicCell::new(false),
+            theme_signal: SyncSignal::new(false),
             open: AtomicBool::new(false),
         })
     }
@@ -217,9 +237,64 @@ impl ViziaState {
         self.scale_signal.clone()
     }
 
+    /// Whether the light theme is active. The dark theme is the default.
+    pub fn light_theme(&self) -> bool {
+        self.light_theme.load()
+    }
+
+    /// Set the active theme. Views bound to [`Self::theme_signal`] (the theme toggle button
+    /// label and the root container's `theme-light` class) update immediately, and the
+    /// choice is persisted with the plugin state.
+    pub fn set_light_theme(&self, light: bool) {
+        self.light_theme.store(light);
+        self.theme_signal.set(light);
+    }
+
+    /// Reactive mirror of the active theme. Views bind to this instead of snapshotting
+    /// [`Self::light_theme`] so they track theme changes from every source.
+    pub fn theme_signal(&self) -> SyncSignal<bool> {
+        self.theme_signal.clone()
+    }
+
     /// Whether the GUI is currently visible.
     // Called `is_open()` instead of `open()` to avoid the ambiguity.
     pub fn is_open(&self) -> bool {
         self.open.load(Ordering::Acquire)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_defaults_to_dark() {
+        let state = ViziaState::new(|| (800, 600));
+        assert!(!state.light_theme());
+        assert!(!state.theme_signal().get());
+    }
+
+    #[test]
+    fn set_light_theme_syncs_value_and_signal() {
+        let state = ViziaState::new(|| (800, 600));
+        state.set_light_theme(true);
+        assert!(state.light_theme());
+        assert!(state.theme_signal().get());
+        state.set_light_theme(false);
+        assert!(!state.light_theme());
+        assert!(!state.theme_signal().get());
+    }
+
+    #[test]
+    fn restored_state_resyncs_theme_signal() {
+        use nice_plug_core::params::persist::PersistentField;
+
+        let state = ViziaState::new(|| (800, 600));
+        let restored = ViziaState::new(|| (800, 600));
+        restored.set_light_theme(true);
+        let restored = Arc::try_unwrap(restored).unwrap();
+        state.set(restored);
+        assert!(state.light_theme());
+        assert!(state.theme_signal().get());
     }
 }

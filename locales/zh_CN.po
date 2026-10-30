@@ -88,6 +88,14 @@ msgctxt "gui.waveform"
 msgid "Waveform"
 msgstr "波形"
 
+msgctxt "gui.theme-dark"
+msgid "Dark"
+msgstr "深色"
+
+msgctxt "gui.theme-light"
+msgid "Light"
+msgstr "浅色"
+
 msgctxt "preset.name.steinway_concert_d"
 msgid "Steinway D Concert Grand"
 msgstr "施坦威 D-274 音乐会三角琴"

@@ -22,7 +22,7 @@ use physics_ui::{
     CancelParamGestureEvent, LastCc, LearnArm, PresetBrowserAction, PresetBrowserItem,
     PresetBrowserSignals, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
     SpectrumAnalyzerWidget, StereoVuMeterWidget, VelocityCurveEditorWidget, WaveformWidget,
-    add_base_theme,
+    add_base_theme, theme_toggle_button,
     build_ptr_to_id_map, filter_browser_items, map_param_history_event, parameter_knob,
     parse_tags_input, preset_browser, preset_browser_categories, preset_browser_items,
     preset_browser_tags, preset_choices, preset_display_name, preset_panel, redraw_custom_view,
@@ -907,6 +907,8 @@ pub fn create_vizia_piano_editor(
             let can_undo = can_undo_controls.clone();
             let can_redo = can_redo_controls.clone();
             let zoom_state = zoom_state_ui.clone();
+            let theme_signal = zoom_state.theme_signal();
+            let theme_state = zoom_state.clone();
             VStack::new(cx, move |cx| {
                 preset_panel(
                     cx,
@@ -965,6 +967,10 @@ pub fn create_vizia_piano_editor(
                         .width(Pixels(64.0));
                     });
                     Label::new(cx, learn_status.clone()).class("small-note");
+                    Element::new(cx)
+                        .width(Stretch(1.0))
+                        .pointer_events(PointerEvents::None);
+                    theme_toggle_button(cx, theme_state.clone(), lang);
                 })
                 .horizontal_gap(Pixels(8.0));
 
@@ -1270,7 +1276,8 @@ pub fn create_vizia_piano_editor(
                 })
                 .height(Pixels(56.0))
                 .horizontal_gap(Pixels(8.0));
-            });
+            })
+            .toggle_class("theme-light", theme_signal);
 
             preset_browser(
                 cx,

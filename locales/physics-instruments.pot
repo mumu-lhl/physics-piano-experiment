@@ -913,3 +913,13 @@ msgstr ""
 msgctxt "gui.waveform"
 msgid "Waveform"
 msgstr ""
+
+#: crates/physics-ui/src/theme.rs:27
+msgctxt "gui.theme-light"
+msgid "Light"
+msgstr ""
+
+#: crates/physics-ui/src/theme.rs:29
+msgctxt "gui.theme-dark"
+msgid "Dark"
+msgstr ""
