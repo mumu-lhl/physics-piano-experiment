@@ -94,7 +94,10 @@ pub struct ViziaState {
     size_fn: Box<dyn Fn() -> (u32, u32) + Send + Sync>,
     /// A scale factor that should be applied to `size` separate from from any system HiDPI scaling.
     /// This can be used to allow GUIs to be scaled uniformly.
-    #[serde(with = "nice_plug_core::params::persist::serialize_atomic_cell")]
+    #[serde(
+        with = "nice_plug_core::params::persist::serialize_atomic_cell",
+        default = "default_scale_factor"
+    )]
     scale_factor: AtomicCell<f64>,
     /// Reactive mirror of `scale_factor`, so views (e.g. the zoom stepper) stay in sync when the
     /// scale changes from anywhere: the stepper, a host resize, or a dragged window edge. Not
@@ -102,7 +105,12 @@ pub struct ViziaState {
     #[serde(skip, default = "default_scale_signal")]
     scale_signal: SyncSignal<f64>,
     /// Whether the light theme is active. Persisted; the dark theme is the default.
-    #[serde(with = "nice_plug_core::params::persist::serialize_atomic_cell")]
+    /// Missing in state saved before the theme was added: `default` restores
+    /// `false` (dark) instead of failing the whole restore.
+    #[serde(
+        with = "nice_plug_core::params::persist::serialize_atomic_cell",
+        default
+    )]
     light_theme: AtomicCell<bool>,
     /// Reactive mirror of `light_theme`, so views (the theme toggle button and the root
     /// container's `theme-light` class) stay in sync. Not persisted itself; it is re-synced
@@ -117,6 +125,17 @@ pub struct ViziaState {
 /// A default implementation for `size_fn` needed to be able to derive the `Deserialize` trait.
 fn empty_size_fn() -> Box<dyn Fn() -> (u32, u32) + Send + Sync> {
     Box::new(|| (0, 0))
+}
+
+/// Default for a missing `scale_factor` field when restoring state saved
+/// before it existed, or any old blob without it: 1.0 (no zoom). A bare
+/// `#[serde(default)]` would give 0.0 via `AtomicCell`'s `Default`, which
+/// would collapse the window, so the default is spelled out explicitly.
+/// Used alongside the `serialize_atomic_cell` helper: serde calls this
+/// only when the field is absent, and the helper's `deserialize` when it
+/// is present.
+fn default_scale_factor() -> AtomicCell<f64> {
+    AtomicCell::new(1.0)
 }
 
 /// Default for the skipped `scale_signal` field on deserialize; re-synced from `scale_factor`
@@ -226,7 +245,16 @@ impl ViziaState {
     /// [`vizia::prelude::WindowEvent::SetUserScale`] from the same handler. The
     /// `vizia_baseview` backend handles that event by resizing the embedded window, bumping
     /// `style.dpi_factor`, and refreshing the render surface in lockstep.
+    /// Non-finite factors restore to 1.0 and finite factors are clamped
+    /// to the same 0.2–5.0 range the live resize path uses, so a
+    /// deserialized or otherwise unvalidated factor can neither collapse
+    /// nor blow up the window on the next host size query.
     pub fn set_user_scale_factor(&self, factor: f64) {
+        let factor = if factor.is_finite() {
+            factor.clamp(0.2, 5.0)
+        } else {
+            1.0
+        };
         self.scale_factor.store(factor);
         self.scale_signal.set(factor);
     }
@@ -296,5 +324,60 @@ mod tests {
         state.set(restored);
         assert!(state.light_theme());
         assert!(state.theme_signal().get());
+    }
+
+    #[test]
+    fn state_round_trips_through_serde() {
+        use nice_plug_core::params::persist::{deserialize_field, serialize_field};
+
+        let state = ViziaState::new(|| (800, 600));
+        state.set_user_scale_factor(1.5);
+        state.set_light_theme(true);
+        let json = serialize_field(&*state).unwrap();
+        let restored: ViziaState = deserialize_field(&json).unwrap();
+        assert_eq!(restored.user_scale_factor(), 1.5);
+        assert!(restored.light_theme());
+    }
+
+    #[test]
+    fn old_blob_without_light_theme_restores_scale() {
+        use nice_plug_core::params::persist::{PersistentField, deserialize_field};
+
+        // State saved before the theme field existed: only `scale_factor`.
+        // The restore must succeed, keep the saved zoom, and default the
+        // theme to dark instead of failing the whole struct.
+        let state = ViziaState::new(|| (800, 600));
+        let restored: ViziaState = deserialize_field(r#"{"scale_factor": 1.5}"#).unwrap();
+        assert_eq!(restored.user_scale_factor(), 1.5);
+        assert!(!restored.light_theme());
+        state.set(restored);
+        assert_eq!(state.user_scale_factor(), 1.5);
+        assert_eq!(state.scale_signal().get(), 1.5);
+        assert!(!state.light_theme());
+        assert!(!state.theme_signal().get());
+
+        // A blob with neither persisted field restores the 1.0 zoom
+        // default (not 0.0) and the dark theme.
+        let empty: ViziaState = deserialize_field("{}").unwrap();
+        assert_eq!(empty.user_scale_factor(), 1.0);
+        assert!(!empty.light_theme());
+    }
+
+    #[test]
+    fn set_user_scale_factor_clamps_to_valid_range() {
+        let state = ViziaState::new(|| (800, 600));
+        state.set_user_scale_factor(0.0);
+        assert_eq!(state.user_scale_factor(), 0.2);
+        state.set_user_scale_factor(-1.0);
+        assert_eq!(state.user_scale_factor(), 0.2);
+        state.set_user_scale_factor(f64::NAN);
+        assert_eq!(state.user_scale_factor(), 1.0);
+        state.set_user_scale_factor(f64::INFINITY);
+        assert_eq!(state.user_scale_factor(), 1.0);
+        state.set_user_scale_factor(100.0);
+        assert_eq!(state.user_scale_factor(), 5.0);
+        state.set_user_scale_factor(2.0);
+        assert_eq!(state.user_scale_factor(), 2.0);
+        assert_eq!(state.scale_signal().get(), 2.0);
     }
 }

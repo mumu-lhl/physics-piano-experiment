@@ -13,10 +13,18 @@ fn main() {
     #[cfg(target_os = "linux")]
     {
         let help = args.iter().any(|arg| arg == "-h" || arg == "--help");
-        if !help && !args.iter().any(|arg| arg == "-b" || arg == "--backend") {
+        if !help
+            && !args.iter().any(|arg| {
+                arg == "-b" || arg == "--backend" || arg.starts_with("--backend=")
+            })
+        {
             args.extend(["-b".into(), "alsa".into()]);
         }
-        if !help && !args.iter().any(|arg| arg == "-p" || arg == "--period-size") {
+        if !help
+            && !args.iter().any(|arg| {
+                arg == "-p" || arg == "--period-size" || arg.starts_with("--period-size=")
+            })
+        {
             args.extend(["-p".into(), "1024".into()]);
         }
     }
