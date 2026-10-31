@@ -42,12 +42,29 @@ fn pitch_to_midi(name: &str) -> Option<u8> {
     }
 }
 
+fn print_usage() {
+    eprintln!("Usage:");
+    eprintln!("  physics-guitar-rs render <pitch> <duration> <out.wav> [electric|acoustic]");
+    eprintln!("  physics-guitar-rs strum <duration> <out.wav> [electric|acoustic]");
+}
+
+/// Parses a duration argument. A present-but-invalid number errors
+/// out with usage instead of silently falling back to a default.
+fn parse_duration(arg: &str) -> f64 {
+    match arg.parse::<f64>() {
+        Ok(dur) => dur,
+        Err(_) => {
+            eprintln!("error: invalid duration {arg:?}: expected a number of seconds");
+            print_usage();
+            std::process::exit(2);
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage:");
-        eprintln!("  physics-guitar-rs render <pitch> <duration> <out.wav> [electric|acoustic]");
-        eprintln!("  physics-guitar-rs strum <duration> <out.wav> [electric|acoustic]");
+        print_usage();
         return;
     }
 
@@ -56,7 +73,7 @@ fn main() {
 
     if cmd == "render" {
         let pitch = args.get(2).map(|s| s.as_str()).unwrap_or("E2");
-        let dur: f64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(3.0);
+        let dur: f64 = args.get(3).map(|s| parse_duration(s)).unwrap_or(3.0);
         let out_path = args
             .get(4)
             .map(|s| s.as_str())
@@ -104,7 +121,7 @@ fn main() {
         writer.finalize().unwrap();
         println!("Rendered output saved to: {}", out_path);
     } else if cmd == "strum" {
-        let dur: f64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3.5);
+        let dur: f64 = args.get(2).map(|s| parse_duration(s)).unwrap_or(3.5);
         let out_path = args
             .get(3)
             .map(|s| s.as_str())

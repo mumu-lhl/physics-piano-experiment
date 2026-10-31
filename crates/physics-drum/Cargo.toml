@@ -2,7 +2,7 @@
 name = "physics-drum"
 version.workspace = true
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 authors = ["Mumulhl"]
 description = "Archived experimental physical-modeling drum kit synthesizer"
 

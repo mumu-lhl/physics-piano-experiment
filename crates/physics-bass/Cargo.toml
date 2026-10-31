@@ -2,7 +2,7 @@
 name = "physics-bass"
 version.workspace = true
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 authors = ["Mumulhl"]
 description = "Real-time physical-modeling electric and acoustic bass synthesizer"
 

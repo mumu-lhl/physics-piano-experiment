@@ -258,7 +258,7 @@ impl GuitarAmpCab {
             presence: 0.5,
             sag: 0.35,
             oversampling: OversamplingFactor::X2,
-            ir_engine: UpolsConvolutionEngine::new(),
+            ir_engine: UpolsConvolutionEngine::new(sample_rate),
             use_ir_cabinet: false,
             oversampler1: HalfbandOversampler2x::new(),
             oversampler2: HalfbandOversampler2x::new(),
@@ -295,7 +295,7 @@ impl GuitarAmpCab {
     }
 
     pub fn load_ir_profile(&mut self, profile: CabinetIrProfile) {
-        self.ir_engine.load_preset(profile);
+        self.ir_engine.load_preset(profile, self.sample_rate);
     }
 
     pub fn load_custom_ir(&mut self, ir: &[f64]) {
@@ -316,9 +316,18 @@ impl GuitarAmpCab {
         }
         self.cabinet.set_model(model);
         match model {
-            CabinetModel::Vintage30 => self.ir_engine.load_preset(CabinetIrProfile::CelestionVintage30),
-            CabinetModel::TwinReverb => self.ir_engine.load_preset(CabinetIrProfile::FenderTwinReverb),
-            CabinetModel::Greenback => self.ir_engine.load_preset(CabinetIrProfile::MarshallGreenback),
+            CabinetModel::Vintage30 => self.ir_engine.load_preset(
+                CabinetIrProfile::CelestionVintage30,
+                self.sample_rate,
+            ),
+            CabinetModel::TwinReverb => self.ir_engine.load_preset(
+                CabinetIrProfile::FenderTwinReverb,
+                self.sample_rate,
+            ),
+            CabinetModel::Greenback => self.ir_engine.load_preset(
+                CabinetIrProfile::MarshallGreenback,
+                self.sample_rate,
+            ),
         }
     }
 

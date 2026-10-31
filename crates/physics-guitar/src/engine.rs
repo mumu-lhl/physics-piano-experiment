@@ -186,11 +186,14 @@ impl GuitarEngine {
         self.feedback_buffer = [0.0; 2048];
         self.feedback_write_idx = 0;
         self.amp_cab.reset();
-        // The body and pickup have no reset method: rebuild them
-        // fresh, preserving their settings.
-        let resonance_gain = self.body.resonance_gain;
-        self.body = AcousticGuitarBody::new(self.sample_rate);
-        self.body.set_resonance_gain(resonance_gain);
+        // Reset the body in place: rebuilding it heap-allocates the
+        // diffusion/dispersion buffers, which the no-allocation guard
+        // on the audio thread forbids (this aborted the debug
+        // standalone at startup). reset() preserves the settings.
+        self.body.reset();
+        // The pickup and squeak generator have no reset method:
+        // rebuild them fresh, preserving their settings. Neither
+        // constructor heap-allocates, so this stays inside the guard.
         let pickup_type = self.pickup.pickup_type;
         let selector = self.pickup.selector;
         let pole_width = self.pickup.pole_width;
@@ -253,10 +256,7 @@ impl GuitarEngine {
                 self.squeak.trigger_shift(str_idx, delta, 1.0);
             }
             self.active_notes_on_string[str_idx] = Some(midi_note);
-            // A fresh strike supersedes any sostenuto capture: notes
-            // started after the pedal went down are not held by it.
-            self.sostenuto_strings[str_idx] = false;
-            self.sostenuto_deferred[str_idx] = false;
+            self.clear_sostenuto_capture(str_idx);
 
             let is_mpe = FretboardRouter::mpe_member_string_index(channel).is_some();
             if self.strummer.strum_speed_ms <= 1.0 {
@@ -356,6 +356,16 @@ impl GuitarEngine {
         }
     }
 
+    /// A fresh strike on a string supersedes any sostenuto capture:
+    /// notes started after the pedal went down are not held by it.
+    /// Every excitation path (MIDI note-on, strummer drain, groove
+    /// pluck, GUI strike) must clear the capture for the struck
+    /// string, or pedal-up later releases a freshly sounding string.
+    pub(crate) fn clear_sostenuto_capture(&mut self, str_idx: usize) {
+        self.sostenuto_strings[str_idx] = false;
+        self.sostenuto_deferred[str_idx] = false;
+    }
+
     /// Release a string, deferring to the sostenuto pedal when it holds
     /// this string: the note-off is remembered and applied on pedal-up.
     fn release_or_defer(&mut self, str_idx: usize) {
@@ -423,6 +433,10 @@ impl GuitarEngine {
     /// `mpe_pitch_bend_semitones`) so the strummer drain can
     /// re-apply it instead of the global bend.
     pub fn pitch_bend(&mut self, channel: u8, semitones: f64) {
+        // Clamped to ±24 semitones like bass; the string layer clamps
+        // too, but the stored global/MPE values must be clamped here
+        // or the strummer drain would keep re-applying the raw value.
+        let semitones = semitones.clamp(-24.0, 24.0);
         if let Some(str_idx) = FretboardRouter::mpe_member_string_index(channel) {
             let string = &mut self.strings[str_idx];
             string.set_pitch_bend(semitones);
@@ -542,6 +556,7 @@ impl GuitarEngine {
                 }
                 if count > 0 {
                     let target_idx = held[string_rel_index % count];
+                    self.clear_sostenuto_capture(target_idx);
                     let s = &mut self.strings[target_idx];
                     s.palm_mute_depth = self.palm_mute_depth;
                     s.pluck(&self.exciter, self.pluck_pos_ratio, velocity);
@@ -554,6 +569,12 @@ impl GuitarEngine {
         let global_bend = self.global_pitch_bend;
         for p in self.ready_plucks.drain(..) {
             if p.string_index < 6 {
+                // Same as `clear_sostenuto_capture`, as direct field
+                // writes: `drain(..)` borrows `self` for the loop,
+                // so the helper (which takes `&mut self`) cannot be
+                // called here.
+                self.sostenuto_strings[p.string_index] = false;
+                self.sostenuto_deferred[p.string_index] = false;
                 let s = &mut self.strings[p.string_index];
                 s.set_fret(p.fret);
                 // Re-apply this string's own MPE bend when it has one:
@@ -628,9 +649,26 @@ impl GuitarEngine {
                     let idx1 = (idx0 + 1) % 2048;
                     let frac = read_idx_float - read_idx_float.floor();
                     let delayed_pressure = self.feedback_buffer[idx0] * (1.0 - frac) + self.feedback_buffer[idx1] * frac;
+                    // Bound the closed feedback loop. The pressure is
+                    // read post tube-amp + cabinet, where peaking
+                    // filters can exceed unity, so clamp it to a
+                    // finite range (a non-finite value becomes
+                    // silence) and attenuate the coupling: with
+                    // `feedback_gain` in [0, 1] (see
+                    // `set_acoustic_feedback`) and the amp saturating
+                    // in tanh stages, the loop gain stays below unity
+                    // in the stable region (feedback_gain <= 1,
+                    // drive <= 1). The clamp bounds the worst case
+                    // instead of letting high feedback + high drive
+                    // howl or run away.
+                    let delayed_pressure = if delayed_pressure.is_finite() {
+                        delayed_pressure.clamp(-2.0, 2.0)
+                    } else {
+                        0.0
+                    };
                     self.feedback_write_idx = (self.feedback_write_idx + 1) % 2048;
 
-                    let fb_coupling = self.feedback_gain * 0.08;
+                    let fb_coupling = self.feedback_gain * 0.04;
                     for s in &mut self.strings {
                         if s.is_held || s.total_energy() > 1e-7 {
                             s.inject_acoustic_pressure(delayed_pressure, fb_coupling);
@@ -871,5 +909,170 @@ mod tests {
             assert_eq!(l, 0.0);
             assert_eq!(r, 0.0);
         }
+    }
+
+    #[test]
+    fn sostenuto_capture_cleared_by_strummer_drain() {
+        let mut engine = new_engine();
+        engine.note_on(0, 64, 0.9);
+        let str_idx = engine
+            .active_notes_on_string
+            .iter()
+            .position(|&n| n == Some(64))
+            .expect("note allocated to a string");
+        for _ in 0..3000 {
+            engine.process_sample();
+            if engine.strings[str_idx].is_held {
+                break;
+            }
+        }
+        assert!(engine.strings[str_idx].is_held);
+
+        engine.set_sostenuto_pedal(true);
+        engine.note_off(0, 64);
+        assert!(engine.sostenuto_deferred[str_idx]);
+        assert!(engine.strings[str_idx].is_held);
+
+        // Re-strike through the strummer: the drain must clear the
+        // sostenuto capture, or pedal-up releases this fresh note.
+        engine.note_on(0, 64, 0.9);
+        let mut cleared = false;
+        for _ in 0..4000 {
+            engine.process_sample();
+            if !engine.sostenuto_strings[str_idx] && !engine.sostenuto_deferred[str_idx] {
+                cleared = true;
+                break;
+            }
+        }
+        assert!(cleared, "strummer drain did not clear the sostenuto capture");
+
+        engine.set_sostenuto_pedal(false);
+        for _ in 0..100 {
+            engine.process_sample();
+        }
+        assert!(
+            engine.strings[str_idx].is_held,
+            "re-struck string was released on pedal-up"
+        );
+        assert_eq!(engine.active_notes_on_string[str_idx], Some(64));
+        assert!(engine.strings[str_idx].total_energy() > 1e-6);
+    }
+
+    #[test]
+    fn sostenuto_capture_cleared_by_groove_pluck() {
+        let mut engine = new_engine();
+        engine.strummer.set_strum_speed_ms(0.0);
+        engine.note_on(0, 64, 0.9);
+        let str_idx = engine
+            .active_notes_on_string
+            .iter()
+            .position(|&n| n == Some(64))
+            .expect("note allocated to a string");
+        for _ in 0..100 {
+            engine.process_sample();
+        }
+        assert!(engine.strings[str_idx].is_held);
+
+        engine.set_sostenuto_pedal(true);
+        engine.note_off(0, 64);
+        assert!(engine.sostenuto_deferred[str_idx]);
+
+        // BalladArp68's first step is a PluckString on a held string.
+        engine.groove.set_pattern(GroovePattern::BalladArp68);
+        engine.groove.set_bpm(240.0);
+        let mut cleared = false;
+        for _ in 0..6000 {
+            engine.process_sample();
+            if !engine.sostenuto_strings[str_idx] && !engine.sostenuto_deferred[str_idx] {
+                cleared = true;
+                break;
+            }
+        }
+        assert!(cleared, "groove pluck did not clear the sostenuto capture");
+
+        engine.set_sostenuto_pedal(false);
+        for _ in 0..100 {
+            engine.process_sample();
+        }
+        assert!(
+            engine.strings[str_idx].is_held,
+            "groove-plucked string was released on pedal-up"
+        );
+        assert_eq!(engine.active_notes_on_string[str_idx], Some(64));
+    }
+
+    #[test]
+    fn feedback_loop_stays_bounded_at_max_gain_and_drive() {
+        let mut engine = new_engine();
+        engine.strummer.set_strum_speed_ms(0.0);
+        engine.set_acoustic_feedback(1.0, 4.5);
+        engine.amp_cab.drive = 1.0;
+        engine.note_on(6, 40, 1.0);
+        for n in 0..88_200 {
+            let (l, r) = engine.process_sample();
+            assert!(l.is_finite() && r.is_finite(), "non-finite output at {n}");
+            assert!(l.abs() < 1.0 && r.abs() < 1.0, "output exceeded soft limit at {n}");
+            if n % 1024 == 0 {
+                assert!(
+                    engine
+                        .strings
+                        .iter()
+                        .flat_map(|s| s
+                            .state_t
+                            .iter()
+                            .chain(s.state_p.iter())
+                            .flat_map(|st| [st.q, st.v]))
+                        .all(|v| v.is_finite()),
+                    "non-finite modal state at {n}"
+                );
+            }
+        }
+        let energy = engine.strings.iter().map(|s| s.total_energy()).sum::<f64>();
+        assert!(energy.is_finite() && energy < 1e12, "feedback energy ran away: {energy}");
+        assert!(engine.feedback_buffer.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn pitch_bend_clamped_to_plus_minus_24_semitones() {
+        let mut engine = new_engine();
+        engine.pitch_bend(0, 100.0);
+        assert_eq!(engine.global_pitch_bend, 24.0);
+        assert!(engine
+            .strings
+            .iter()
+            .all(|s| s.pitch_bend_semitones == 24.0));
+
+        engine.pitch_bend(3, -100.0);
+        assert_eq!(engine.strings[2].pitch_bend_semitones, -24.0);
+        assert_eq!(engine.strings[2].mpe_pitch_bend_semitones, Some(-24.0));
+        assert!(engine
+            .strings
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != 2)
+            .all(|(_, s)| s.pitch_bend_semitones == 24.0));
+    }
+}
+
+#[cfg(all(test, debug_assertions))]
+mod no_alloc_regression_tests {
+    // Regression test for the debug-standalone startup abort:
+    // GuitarEngine::reset() runs under nice-plug's no-allocation
+    // guard, and rebuilding AcousticGuitarBody there heap-allocated
+    // the diffusion/dispersion buffers, aborting the process. In
+    // test builds the guard only counts violations (warn_debug).
+    use super::*;
+    use nice_assert_no_alloc::{assert_no_alloc, violation_count};
+
+    #[test]
+    fn reset_does_not_allocate() {
+        let mut engine = GuitarEngine::new(
+            44100.0,
+            GuitarStringSetType::Electric010,
+            GuitarInstrumentMode::Electric,
+        );
+        let before = violation_count();
+        assert_no_alloc(|| engine.reset());
+        assert_eq!(violation_count(), before);
     }
 }

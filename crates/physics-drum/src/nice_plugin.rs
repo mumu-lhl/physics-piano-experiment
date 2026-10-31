@@ -249,11 +249,17 @@ impl Plugin for PhysicsDrum {
                 }
                 match event {
                     NoteEvent::NoteOn { key, velocity, .. } => {
-                        let note = key.number().unwrap_or(0);
+                        let Some(note) = key.number() else {
+                            next_event = context.next_event();
+                            continue;
+                        };
                         self.engine.trigger(note, velocity as f64);
                     }
                     NoteEvent::NoteOff { key, .. } => {
-                        let note = key.number().unwrap_or(0);
+                        let Some(note) = key.number() else {
+                            next_event = context.next_event();
+                            continue;
+                        };
                         self.engine.release(note);
                     }
                     NoteEvent::MidiCC { cc, value, .. } if cc == 4 => {

@@ -36,6 +36,15 @@ impl LinkwitzRiley4thOrder {
         let high = self.hp2.process(self.hp1.process(input));
         (low, high)
     }
+
+    /// Zeroes the four biquad states in place; coefficients are untouched.
+    /// Allocation-free.
+    pub fn reset(&mut self) {
+        self.lp1.reset();
+        self.lp2.reset();
+        self.hp1.reset();
+        self.hp2.reset();
+    }
 }
 
 /// Single decoupled analytical modal oscillator for Christensen 3-DOF body modes.
@@ -100,6 +109,14 @@ impl BodyModalOscillator {
         // with ZERO direct string force feedthrough!
         self.v * self.omega * self.output_weight
     }
+
+    /// Zeroes the modal state in place; the coefficients are untouched.
+    /// Allocation-free, so it is safe to call from `reset()` on the
+    /// audio thread under nice-plug's no-allocation guard.
+    pub fn reset(&mut self) {
+        self.q = 0.0;
+        self.v = 0.0;
+    }
 }
 
 /// Christensen 3-DOF coupled fluid-structure acoustic body resonator.
@@ -135,6 +152,14 @@ impl Christensen3DofBody {
             total_rad += mode.step(bridge_force);
         }
         total_rad
+    }
+
+    /// Zeroes all modal state in place; coefficients are untouched.
+    /// Allocation-free (see [`BodyModalOscillator::reset`]).
+    pub fn reset(&mut self) {
+        for mode in &mut self.modes {
+            mode.reset();
+        }
     }
 }
 
@@ -179,6 +204,14 @@ impl WoodDiffusionBank {
         }
         out
     }
+
+    /// Zeroes all modal state in place, keeping the allocated buffer;
+    /// coefficients are untouched. Allocation-free.
+    pub fn reset(&mut self) {
+        for m in &mut self.modes {
+            m.reset();
+        }
+    }
 }
 
 /// All-pass acoustic dispersion filter for high-frequency wood grain diffuse scattering.
@@ -205,6 +238,13 @@ impl AllpassDispersion {
         self.buffer[self.index] = input + self.gain * out;
         self.index = (self.index + 1) % self.buffer.len();
         out
+    }
+
+    /// Clears the delay line in place, keeping the allocated buffer.
+    /// Allocation-free.
+    pub fn reset(&mut self) {
+        self.buffer.fill(0.0);
+        self.index = 0;
     }
 }
 
@@ -237,8 +277,16 @@ impl AcousticGuitarBody {
             dispersion1: AllpassDispersion::new(11, 0.35),
             dispersion2: AllpassDispersion::new(23, 0.30),
             dispersion3: AllpassDispersion::new(47, 0.22),
-            air_damping_l: BiquadFilter::lowpass(sample_rate, 10500.0, std::f64::consts::FRAC_1_SQRT_2),
-            air_damping_r: BiquadFilter::lowpass(sample_rate, 10500.0, std::f64::consts::FRAC_1_SQRT_2),
+            air_damping_l: BiquadFilter::lowpass(
+                sample_rate,
+                10500.0,
+                std::f64::consts::FRAC_1_SQRT_2,
+            ),
+            air_damping_r: BiquadFilter::lowpass(
+                sample_rate,
+                10500.0,
+                std::f64::consts::FRAC_1_SQRT_2,
+            ),
             resonance_gain: 1.0,
         }
     }
@@ -246,6 +294,23 @@ impl AcousticGuitarBody {
     /// Sets the body resonance strength (0.0 = bone dry, 1.0 = standard Martin D-28, 1.5 = resonant jumbo).
     pub fn set_resonance_gain(&mut self, gain: f64) {
         self.resonance_gain = gain.clamp(0.0, 2.5);
+    }
+
+    /// Resets all acoustic state in place without allocating, so it is
+    /// safe to call from `reset()` under nice-plug's no-allocation
+    /// guard. Equivalent to rebuilding with `new()` at the same sample
+    /// rate: every sub-filter's coefficients are pure functions of the
+    /// (unchanged) sample rate and fixed parameters, so only state is
+    /// cleared. Settings (`resonance_gain`) are preserved.
+    pub fn reset(&mut self) {
+        self.crossover.reset();
+        self.christensen_low.reset();
+        self.wood_high.reset();
+        self.dispersion1.reset();
+        self.dispersion2.reset();
+        self.dispersion3.reset();
+        self.air_damping_l.reset();
+        self.air_damping_r.reset();
     }
 
     /// Returns the soundboard velocity at the bridge (m/s) for inter-string sympathetic resonance.

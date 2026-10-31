@@ -1,7 +1,6 @@
 use hound::{SampleFormat, WavSpec, WavWriter};
 use physics_drum::DrumEngine;
 use std::fs;
-use std::path::Path;
 
 const PADS: [(u8, &str); 10] = [
     (36, "kick"),
@@ -19,14 +18,7 @@ const PADS: [(u8, &str); 10] = [
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_dir = std::env::args().nth(1).map(std::path::PathBuf::from)
         .or_else(|| std::env::var("AUDIT_OUT_DIR").ok().map(std::path::PathBuf::from))
-        .unwrap_or_else(|| {
-            let brain_path = Path::new("/home/mumulhl/.gemini/antigravity-cli/brain/fce7533b-06fe-4465-a2c5-2abe23665bdb/audio/audit");
-            if brain_path.parent().map_or(false, |p| p.exists()) {
-                brain_path.to_path_buf()
-            } else {
-                std::path::PathBuf::from("target/audio_audit")
-            }
-        });
+        .unwrap_or_else(|| std::path::PathBuf::from("target/audio_audit"));
     fs::create_dir_all(&output_dir)?;
 
     let sample_rate = 48_000.0;

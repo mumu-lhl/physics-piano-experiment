@@ -4,10 +4,11 @@ use atomic_float::AtomicF32;
 use nice_plug::prelude::*;
 use physics_dsp::{
     FxChain, GUITAR_BEND_RANGE_SEMITONES, SOSTENUTO_CC, bend_semitones, cc_pedal_down,
+    sanitize_floating_point_environment,
 };
 use physics_presets::{PresetManager, UndoManager, guitar_factory_presets};
 use physics_ui::{LastCc, apply_midi_cc, build_param_map};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 use vizia_plug::ViziaState;
@@ -370,6 +371,15 @@ fn soft_limit(x: f64) -> f64 {
     }
 }
 
+/// Clamps a host event's sample offset to the last sample of the
+/// block. Events timestamped at/past the block end are played at
+/// the block end instead of being dropped with the block (and
+/// everything after them).
+#[inline]
+fn clamp_event_timing(timing: u32, num_samples: usize) -> u32 {
+    timing.min(num_samples.saturating_sub(1) as u32)
+}
+
 pub struct PhysicsGuitar {
     pub params: Arc<PhysicsGuitarParams>,
     pub engine: GuitarEngine,
@@ -449,6 +459,16 @@ impl Default for PhysicsGuitar {
 
         let params = Arc::new(PhysicsGuitarParams::default());
         let param_map = build_param_map(&params);
+        let mut preset_manager = PresetManager::new("guitar", guitar_factory_presets());
+        // Prune Learn bindings whose param id no longer exists (e.g.
+        // after a rename), so stale bindings do not accumulate in
+        // midi_mappings.json and silently no-op on CC input.
+        let valid_param_ids: HashSet<String> = params
+            .param_map()
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        preset_manager.prune_stale_midi_mappings(&valid_param_ids);
 
         Self {
             params,
@@ -466,10 +486,7 @@ impl Default for PhysicsGuitar {
             gui_event_tx,
             gui_event_rx,
             language: Arc::new(AtomicU8::new(lang_code)),
-            preset_manager: Arc::new(parking_lot::RwLock::new(PresetManager::new(
-                "guitar",
-                guitar_factory_presets(),
-            ))),
+            preset_manager: Arc::new(parking_lot::RwLock::new(preset_manager)),
             undo_manager: Arc::new(parking_lot::RwLock::new(UndoManager::default())),
             pending_gui_midi_note_offs: [0; 128],
             pending_gui_string_note_offs: [0; 7],
@@ -480,11 +497,24 @@ impl Default for PhysicsGuitar {
 impl PhysicsGuitar {
     /// Apply one incoming MIDI CC: always record it for the editor's Learn
     /// polling, drive the sostenuto pedal when CC66 arrives, and drive
-    /// the bound parameter when one is learned. The manager lock is only
-    /// tried, never waited on, so a contended GUI thread can't stall the
-    /// audio thread; the next CC movement retries.
+    /// the bound parameter when one is learned. Reserved pedal /
+    /// expression CCs (64/67/11) are recorded but otherwise ignored,
+    /// mirroring the piano. The manager lock is only tried, never
+    /// waited on, so a contended GUI thread can't stall the audio
+    /// thread; the next CC movement retries.
     fn handle_midi_cc(&mut self, cc: u8, value: f32) {
         self.last_cc.record(cc);
+        // Reserved pedal/expression CCs, mirroring the piano: CC64
+        // (sustain), CC67 (soft pedal) and CC11 (expression) change
+        // no parameter and cannot be Learn-bound (the manager
+        // refuses excluded CCs). Guitar implements no sustain /
+        // soft-pedal / expression semantics, so the reservation is
+        // the whole fix: the pedal must not be stealable by Learn
+        // and must behave the same on every instrument. CC66
+        // (sostenuto) keeps its own handling below.
+        if cc == 64 || cc == 67 || cc == 11 {
+            return;
+        }
         if cc == SOSTENUTO_CC {
             self.engine.set_sostenuto_pedal(cc_pedal_down(value as f64));
             return;
@@ -525,6 +555,7 @@ impl Plugin for PhysicsGuitar {
         buffer_config: &BufferConfig,
         _context: &mut impl ActivateContext<Self>,
     ) -> bool {
+        sanitize_floating_point_environment();
         self.sample_rate = buffer_config.sample_rate;
         let mode_val = self.params.mode.value();
         let (initial_set, initial_mode) = if mode_val == 1 {
@@ -563,6 +594,7 @@ impl Plugin for PhysicsGuitar {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        sanitize_floating_point_environment();
         let debounce_samples = (self.engine.sample_rate * 0.045) as usize; // 45ms auto-repeat filter window
 
         // 1. Process GUI manual fret events from lock-free queue
@@ -584,6 +616,9 @@ impl Plugin for PhysicsGuitar {
                         let s_i = (string_index - 1) as usize;
                         let open_note = self.engine.router.open_notes[s_i];
                         let midi_note = open_note + fret;
+                        // A GUI re-strike supersedes any sostenuto
+                        // capture, exactly as `note_on` does.
+                        self.engine.clear_sostenuto_capture(s_i);
                         self.engine.strings[s_i].set_fret(fret);
                         self.engine.strings[s_i].pluck(
                             &self.engine.exciter,
@@ -745,7 +780,7 @@ impl Plugin for PhysicsGuitar {
         let mut max_r = 0.0f32;
         for (sample_idx, channel_samples) in buffer.iter_samples().enumerate() {
             while let Some(event) = next_event {
-                if event.timing() > sample_idx as u32 {
+                if clamp_event_timing(event.timing(), num_samples) > sample_idx as u32 {
                     break;
                 }
                 match event {
@@ -755,17 +790,35 @@ impl Plugin for PhysicsGuitar {
                         velocity,
                         ..
                     } => {
-                        let note = key.number().unwrap_or(0);
+                        // A missing key/channel is "no value", never
+                        // note 0 / channel 0 (the piano's pattern).
+                        // The pending event must be advanced before
+                        // `continue`, or this loop spins on it.
+                        let Some(note) = key.number() else {
+                            next_event = context.next_event();
+                            continue;
+                        };
+                        let Some(channel_number) = channel.number() else {
+                            next_event = context.next_event();
+                            continue;
+                        };
                         let n = note as usize;
                         if n < 128 {
                             self.pending_gui_midi_note_offs[n] = 0;
                         }
                         self.engine
-                            .note_on(channel.number().unwrap_or(0), note, velocity as f64);
+                            .note_on(channel_number, note, velocity as f64);
                     }
                     NoteEvent::NoteOff { channel, key, .. } => {
-                        let note = key.number().unwrap_or(0);
-                        self.engine.note_off(channel.number().unwrap_or(0), note);
+                        let Some(note) = key.number() else {
+                            next_event = context.next_event();
+                            continue;
+                        };
+                        let Some(channel_number) = channel.number() else {
+                            next_event = context.next_event();
+                            continue;
+                        };
+                        self.engine.note_off(channel_number, note);
                     }
                     NoteEvent::MidiPitchBend { channel, value, .. } => {
                         // nice-plug normalizes value to [0.0, 1.0], where 0.5 is center (0 bend)
@@ -989,6 +1042,49 @@ mod midi_learn_tests {
     }
 
     #[test]
+    fn reserved_ccs_are_recorded_but_change_nothing_and_cannot_be_bound() {
+        // The manager refuses to bind excluded CCs at all.
+        let dir = TempDirGuard::new("guitar-reserved");
+        let mut plugin = PhysicsGuitar::default();
+        plugin.preset_manager = Arc::new(parking_lot::RwLock::new(PresetManager::with_custom_dir(
+            "guitar",
+            guitar_factory_presets(),
+            dir.0.clone(),
+        )));
+        for cc in [64u8, 67, 11] {
+            assert!(
+                !plugin
+                    .preset_manager
+                    .write()
+                    .bind_midi_cc(cc, "tone")
+                    .unwrap(),
+                "CC{cc} must not be bindable"
+            );
+        }
+        // And the handler never drives a parameter or the pedal with
+        // them, mirroring the piano: they are recorded for Learn
+        // polling only, so a sustain pedal can never be stolen by
+        // Learn or move a knob on guitar.
+        assert!(
+            plugin
+                .preset_manager
+                .write()
+                .bind_midi_cc(7, "tone")
+                .unwrap()
+        );
+        let tone_before = plugin.params.tone.value();
+        for cc in [64u8, 67, 11] {
+            plugin.handle_midi_cc(cc, 1.0);
+            assert_eq!(plugin.last_cc.cc(), cc);
+            assert!(!plugin.engine.sostenuto_down);
+            assert_eq!(plugin.params.tone.value(), tone_before);
+        }
+        // Sostenuto (CC66) keeps working.
+        plugin.handle_midi_cc(66, 1.0);
+        assert!(plugin.engine.sostenuto_down);
+    }
+
+    #[test]
     fn param_map_covers_all_param_ids() {
         let plugin = PhysicsGuitar::default();
         let ids = plugin.params.param_map();
@@ -997,6 +1093,20 @@ mod midi_learn_tests {
         for (id, _, _) in &ids {
             assert!(plugin.param_map.contains_key(id), "missing {id}");
         }
+    }
+}
+
+#[cfg(test)]
+mod event_timing_tests {
+    use super::clamp_event_timing;
+
+    #[test]
+    fn event_timing_clamped_to_last_sample_of_block() {
+        assert_eq!(clamp_event_timing(0, 128), 0);
+        assert_eq!(clamp_event_timing(127, 128), 127);
+        assert_eq!(clamp_event_timing(128, 128), 127);
+        assert_eq!(clamp_event_timing(10_000, 128), 127);
+        assert_eq!(clamp_event_timing(5, 1), 0);
     }
 }
 

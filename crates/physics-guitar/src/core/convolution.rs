@@ -128,10 +128,48 @@ pub struct UpolsConvolutionEngine {
     pub profile: CabinetIrProfile,
     pub is_enabled: bool,
     pub mix: f64,
+    /// Sample rate the current IR was synthesized at. Factory IRs are
+    /// synthesized on this time grid (`t = i / sample_rate`) with the
+    /// tap count scaled to the rate, so the cabinet tone does not
+    /// shift with the host rate.
+    pub sample_rate: f64,
+}
+
+/// Synthesizes a factory cabinet impulse response on a
+/// `sample_rate` time grid: `t = i / sample_rate`, so the 105 Hz
+/// mechanical thump, 420 Hz wood resonance and 2.8 kHz presence
+/// bite keep their frequencies at any host rate. The tap count
+/// scales with the rate (512 taps at 44.1 kHz, ~11.6 ms) and is
+/// capped by the caller's buffer, so the IR duration stays
+/// constant instead of shrinking at high rates. Returns the
+/// number of taps written.
+fn synthesize_preset_ir(
+    profile: CabinetIrProfile,
+    sample_rate: f64,
+    out: &mut [f64],
+) -> usize {
+    let rate = sample_rate.max(1.0);
+    let taps = ((512.0 * rate / 44100.0).round() as usize).clamp(1, out.len());
+    let decay_rate = match profile {
+        CabinetIrProfile::CelestionVintage30 => 120.0,
+        CabinetIrProfile::FenderTwinReverb => 85.0,
+        CabinetIrProfile::MarshallGreenback => 105.0,
+        CabinetIrProfile::Custom => 100.0,
+    };
+    // Synthesize authentic cabinet resonance envelope with speaker cone damping
+    for (i, sample) in out.iter_mut().take(taps).enumerate() {
+        let t = i as f64 / rate;
+        let envelope = (-decay_rate * t).exp();
+        let mechanical_thump = (2.0 * PI * 105.0 * t).sin() * 0.45;
+        let presence_bite = (2.0 * PI * 2800.0 * t).sin() * 0.35 * (-450.0 * t).exp();
+        let wood_resonance = (2.0 * PI * 420.0 * t).sin() * 0.25;
+        *sample = envelope * (mechanical_thump + presence_bite + wood_resonance);
+    }
+    taps
 }
 
 impl UpolsConvolutionEngine {
-    pub fn new() -> Self {
+    pub fn new(sample_rate: f64) -> Self {
         let mut engine = Self {
             partitions: vec![[Complex::default(); UPOLS_FFT_SIZE]; MAX_PARTITIONS],
             num_partitions: 1,
@@ -145,31 +183,21 @@ impl UpolsConvolutionEngine {
             profile: CabinetIrProfile::CelestionVintage30,
             is_enabled: true,
             mix: 1.0,
+            sample_rate: sample_rate.max(1.0),
         };
-        engine.load_preset(CabinetIrProfile::CelestionVintage30);
+        let rate = engine.sample_rate;
+        engine.load_preset(CabinetIrProfile::CelestionVintage30, rate);
         engine
     }
 
-    /// Loads a factory cabinet impulse response profile.
-    pub fn load_preset(&mut self, profile: CabinetIrProfile) {
+    /// Loads a factory cabinet impulse response profile, synthesized
+    /// at `sample_rate` (see [`synthesize_preset_ir`]).
+    pub fn load_preset(&mut self, profile: CabinetIrProfile, sample_rate: f64) {
+        self.sample_rate = sample_rate.max(1.0);
         self.profile = profile;
-        let mut ir = [0.0_f64; 512];
-        let decay_rate = match profile {
-            CabinetIrProfile::CelestionVintage30 => 120.0,
-            CabinetIrProfile::FenderTwinReverb => 85.0,
-            CabinetIrProfile::MarshallGreenback => 105.0,
-            CabinetIrProfile::Custom => 100.0,
-        };
-        // Synthesize authentic cabinet resonance envelope with speaker cone damping
-        for (i, sample) in ir.iter_mut().enumerate() {
-            let t = i as f64 / 44100.0;
-            let envelope = (-decay_rate * t).exp();
-            let mechanical_thump = (2.0 * PI * 105.0 * t).sin() * 0.45;
-            let presence_bite = (2.0 * PI * 2800.0 * t).sin() * 0.35 * (-450.0 * t).exp();
-            let wood_resonance = (2.0 * PI * 420.0 * t).sin() * 0.25;
-            *sample = envelope * (mechanical_thump + presence_bite + wood_resonance);
-        }
-        self.load_ir(&ir);
+        let mut ir = [0.0_f64; MAX_PARTITIONS * UPOLS_BLOCK_SIZE];
+        let taps = synthesize_preset_ir(profile, self.sample_rate, &mut ir);
+        self.load_ir(&ir[..taps]);
     }
 
     /// Partitions and transforms a time-domain impulse response into UPOLS frequency blocks.
@@ -273,6 +301,85 @@ impl UpolsConvolutionEngine {
         // Shift input buffer: move current block to previous block position
         for i in 0..UPOLS_BLOCK_SIZE {
             self.input_buffer[i] = self.input_buffer[UPOLS_BLOCK_SIZE + i];
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preset_ir_tap_count_scales_with_sample_rate() {
+        let mut buf = [0.0f64; MAX_PARTITIONS * UPOLS_BLOCK_SIZE];
+        assert_eq!(
+            synthesize_preset_ir(CabinetIrProfile::CelestionVintage30, 44100.0, &mut buf),
+            512
+        );
+        assert_eq!(
+            synthesize_preset_ir(CabinetIrProfile::CelestionVintage30, 48000.0, &mut buf),
+            557
+        );
+        // 512 * 96000 / 44100 = 1114 taps, capped by the 1024-tap buffer.
+        assert_eq!(
+            synthesize_preset_ir(CabinetIrProfile::CelestionVintage30, 96000.0, &mut buf),
+            1024
+        );
+        // Engine partition counts follow the tap counts (64 taps each).
+        assert_eq!(UpolsConvolutionEngine::new(44100.0).num_partitions, 8);
+        assert_eq!(UpolsConvolutionEngine::new(48000.0).num_partitions, 9);
+        assert_eq!(UpolsConvolutionEngine::new(96000.0).num_partitions, 16);
+        // IR duration stays constant (~11.6 ms) instead of shrinking
+        // with the rate (96 kHz is capped slightly short, 10.7 ms).
+        assert!((557.0f64 / 48000.0 - 512.0 / 44100.0).abs() < 1e-4);
+        assert!((1024.0f64 / 96000.0 - 512.0 / 44100.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn preset_ir_thump_frequency_stable_across_sample_rates() {
+        // A direct spectral comparison cannot resolve the 105 Hz thump
+        // from the old hardcoded-grid 114 Hz (at 48 kHz) over an
+        // 11.6 ms IR: the main-lobe width is ~86 Hz. The checkable
+        // invariant is the synthesis time grid itself: samples at
+        // different rates must equal the same continuous-time
+        // waveform evaluated at t = i / sample_rate, which is what
+        // keeps every resonance frequency rate-independent.
+        for rate in [44100.0, 48000.0, 96000.0] {
+            let mut buf = [0.0f64; MAX_PARTITIONS * UPOLS_BLOCK_SIZE];
+            let taps = synthesize_preset_ir(CabinetIrProfile::CelestionVintage30, rate, &mut buf);
+            for &i in &[0usize, 1, 17, 100, 255, 511] {
+                if i >= taps {
+                    continue;
+                }
+                let t = i as f64 / rate;
+                let expected = (-120.0 * t).exp()
+                    * ((2.0 * PI * 105.0 * t).sin() * 0.45
+                        + (2.0 * PI * 2800.0 * t).sin() * 0.35 * (-450.0 * t).exp()
+                        + (2.0 * PI * 420.0 * t).sin() * 0.25);
+                assert!(
+                    (buf[i] - expected).abs() < 1e-12,
+                    "rate {rate} tap {i}: {} vs {expected}",
+                    buf[i]
+                );
+            }
+
+            // The engine stores the rate it synthesized at, and a
+            // preset reload at a new rate re-synthesizes on that grid.
+            let engine = UpolsConvolutionEngine::new(rate);
+            assert_eq!(engine.sample_rate, rate);
+            let mut reloaded = UpolsConvolutionEngine::new(44100.0);
+            reloaded.load_preset(CabinetIrProfile::FenderTwinReverb, rate);
+            assert_eq!(reloaded.sample_rate, rate);
+
+            // Impulse smoke test at this rate: finite, nonzero output.
+            let mut engine = UpolsConvolutionEngine::new(rate);
+            let mut energy = 0.0f64;
+            for n in 0..512 {
+                let y = engine.process_sample(if n == 0 { 1.0 } else { 0.0 });
+                assert!(y.is_finite(), "non-finite IR output at {rate} Hz");
+                energy += y * y;
+            }
+            assert!(energy > 0.0, "silent IR at {rate} Hz");
         }
     }
 }

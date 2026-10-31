@@ -164,9 +164,7 @@ impl ChordShape {
             .iter()
             .enumerate()
             .rev()
-            .filter_map(|(low_to_high_idx, fret)| {
-                fret.map(|f| (5 - low_to_high_idx, f))
-            })
+            .filter_map(|(low_to_high_idx, fret)| fret.map(|f| (5 - low_to_high_idx, f)))
             .collect()
     }
 
@@ -221,10 +219,24 @@ fn open_shape(root: ChordRoot, quality: ChordQuality) -> Option<ChordShape> {
 fn e_shape(f: u8, quality: ChordQuality) -> ChordShape {
     use ChordQuality::*;
     let frets: Frets = match quality {
-        Major => [Some(f), Some(f + 2), Some(f + 2), Some(f + 1), Some(f), Some(f)],
+        Major => [
+            Some(f),
+            Some(f + 2),
+            Some(f + 2),
+            Some(f + 1),
+            Some(f),
+            Some(f),
+        ],
         Minor => [Some(f), Some(f + 2), Some(f + 2), Some(f), Some(f), Some(f)],
         Dominant7 => [Some(f), Some(f + 2), Some(f), Some(f + 1), Some(f), Some(f)],
-        Major7 => [Some(f), Some(f + 2), Some(f + 1), Some(f + 1), Some(f), Some(f)],
+        Major7 => [
+            Some(f),
+            Some(f + 2),
+            Some(f + 1),
+            Some(f + 1),
+            Some(f),
+            Some(f),
+        ],
         Minor7 => [Some(f), Some(f + 2), Some(f), Some(f), Some(f), Some(f)],
     };
     ChordShape { frets }
@@ -234,10 +246,31 @@ fn e_shape(f: u8, quality: ChordQuality) -> ChordShape {
 fn a_shape(f: u8, quality: ChordQuality) -> ChordShape {
     use ChordQuality::*;
     let frets: Frets = match quality {
-        Major => [None, Some(f), Some(f + 2), Some(f + 2), Some(f + 2), Some(f)],
-        Minor => [None, Some(f), Some(f + 2), Some(f + 2), Some(f + 1), Some(f)],
+        Major => [
+            None,
+            Some(f),
+            Some(f + 2),
+            Some(f + 2),
+            Some(f + 2),
+            Some(f),
+        ],
+        Minor => [
+            None,
+            Some(f),
+            Some(f + 2),
+            Some(f + 2),
+            Some(f + 1),
+            Some(f),
+        ],
         Dominant7 => [None, Some(f), Some(f + 2), Some(f), Some(f + 2), Some(f)],
-        Major7 => [None, Some(f), Some(f + 2), Some(f + 1), Some(f + 2), Some(f)],
+        Major7 => [
+            None,
+            Some(f),
+            Some(f + 2),
+            Some(f + 1),
+            Some(f + 2),
+            Some(f),
+        ],
         Minor7 => [None, Some(f), Some(f + 2), Some(f), Some(f + 1), Some(f)],
     };
     ChordShape { frets }

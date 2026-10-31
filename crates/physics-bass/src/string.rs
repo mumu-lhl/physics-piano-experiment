@@ -318,6 +318,25 @@ impl FdtdString {
         self.reset();
     }
 
+    /// Re-triggers a still-ringing string without the hard reset of
+    /// [`FdtdString::trigger`]: the fresh excitation is written as
+    /// usual, then the old grid (attenuated to 0.25, like the
+    /// guitar's pluck blend) is added back, so a fast repeat during
+    /// the release tail has no single-sample discontinuity. Callers
+    /// must have re-fretted (via `configure_length`) already if the
+    /// fret changed.
+    pub fn retrigger(&mut self, velocity: f64, style: PluckStyle, position: f64) {
+        let old_prev = self.u_prev;
+        let old_curr = self.u_curr;
+        let old_next = self.u_next;
+        self.trigger(velocity, style, position);
+        for i in 0..MAX_GRID_POINTS {
+            self.u_curr.data[i] += 0.25 * old_curr.data[i];
+            self.u_prev.data[i] += 0.25 * old_prev.data[i];
+            self.u_next.data[i] += 0.25 * old_next.data[i];
+        }
+    }
+
     /// Plucks the string with a normalized MIDI velocity in `[0, 1]`.
     pub fn trigger(&mut self, velocity: f64, style: PluckStyle, position: f64) {
         self.reset();
@@ -476,6 +495,10 @@ impl FdtdString {
         self.is_held = true;
         self.is_active = true;
         self.is_releasing = false;
+        // Wake a sleeping string: `step()` returns early while
+        // sleeping, so bowing a sleeping string would never sound.
+        self.is_sleeping = false;
+        self.silence_counter = 0;
         self.bow_active = true;
         self.bow_velocity = velocity.clamp(0.01, 1.5);
         self.bow_pressure = pressure.clamp(0.1, 20.0);
@@ -1138,27 +1161,9 @@ impl FdtdString {
     }
 }
 
-#[inline(always)]
-#[allow(dead_code)]
-fn grid_sample(grid: &AlignedGrid, index: isize, segments: usize) -> f64 {
-    if index == 0 {
-        0.0
-    } else if index == segments as isize {
-        grid.data[segments]
-    } else if index < 0 {
-        let mirror = (-index) as usize;
-        -grid.data[mirror.min(MAX_GRID_POINTS - 1)]
-    } else if index > segments as isize {
-        let mirror = (2 * segments as isize - index).max(0) as usize;
-        2.0 * grid.data[segments] - grid.data[mirror.min(MAX_GRID_POINTS - 1)]
-    } else {
-        grid.data[index as usize]
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{FdtdString, PluckStyle};
+    use super::{FdtdString, MAX_GRID_POINTS, PluckStyle};
     use crate::params::BassStringParams;
 
     #[test]
@@ -1246,5 +1251,75 @@ mod tests {
             let _ = string.step();
         }
         assert!(string.energy() < before_release);
+    }
+
+    #[test]
+    fn bowing_wakes_a_sleeping_string() {
+        let mut string = FdtdString::new(BassStringParams::electric_four()[0], 48_000.0);
+        string.trigger(1.0, PluckStyle::Finger, 0.19);
+        string.release();
+        // A full-velocity bass string rings for seconds; step until
+        // the silence culling retires it (capped at 10 s) rather than
+        // assuming a fixed decay time.
+        for _ in 0..480_000 {
+            if string.is_sleeping {
+                break;
+            }
+            let _ = string.step();
+        }
+        assert!(
+            string.is_sleeping,
+            "release tail must retire the string to sleep for this test"
+        );
+        assert_eq!(string.step(), 0.0, "a sleeping string is silent");
+
+        string.start_bowing(0.5, 5.0, 0.15);
+        assert!(!string.is_sleeping, "bowing must wake a sleeping string");
+        assert!(string.bow_active);
+        let mut peak = 0.0f64;
+        for _ in 0..4800 {
+            peak = peak.max(string.step().abs());
+        }
+        assert!(peak > 0.0, "bowed string never sounded");
+        assert!(string.energy() > 0.0);
+    }
+
+    #[test]
+    fn retrigger_blends_the_old_grid_instead_of_resetting() {
+        // The old grid survives attenuated to 0.25 with the fresh
+        // excitation added; a hard reset would leave exactly the
+        // fresh excitation and zero history in `u_next`.
+        let params = BassStringParams::electric_four()[0];
+        let mut ringing = FdtdString::new(params, 48_000.0);
+        ringing.trigger(0.9, PluckStyle::Pick, 0.19);
+        for _ in 0..100 {
+            let _ = ringing.step();
+        }
+        let old_curr = ringing.u_curr.data;
+        let old_prev = ringing.u_prev.data;
+        let old_next = ringing.u_next.data;
+
+        let mut fresh = FdtdString::new(params, 48_000.0);
+        fresh.trigger(0.9, PluckStyle::Pick, 0.19);
+
+        ringing.retrigger(0.9, PluckStyle::Pick, 0.19);
+        for i in 0..MAX_GRID_POINTS {
+            let expected_curr = 0.25 * old_curr[i] + fresh.u_curr.data[i];
+            assert!(
+                (ringing.u_curr.data[i] - expected_curr).abs() < 1e-12,
+                "u_curr[{i}] not blended"
+            );
+            let expected_prev = 0.25 * old_prev[i] + fresh.u_prev.data[i];
+            assert!(
+                (ringing.u_prev.data[i] - expected_prev).abs() < 1e-12,
+                "u_prev[{i}] not blended"
+            );
+            let expected_next = 0.25 * old_next[i] + fresh.u_next.data[i];
+            assert!(
+                (ringing.u_next.data[i] - expected_next).abs() < 1e-12,
+                "u_next[{i}] not attenuated"
+            );
+        }
+        assert!(ringing.is_held && ringing.is_active && !ringing.is_sleeping);
     }
 }

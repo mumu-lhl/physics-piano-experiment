@@ -890,7 +890,7 @@ fn test_guitar_dynamic_silence_culling_and_sleep() {
 fn test_guitar_upols_convolution_engine() {
     use physics_guitar::core::convolution::UpolsConvolutionEngine;
 
-    let mut engine = UpolsConvolutionEngine::new();
+    let mut engine = UpolsConvolutionEngine::new(44100.0);
     assert_eq!(engine.num_partitions, 8);
 
     // Feed a unit impulse: x[0] = 1.0, x[n] = 0.0

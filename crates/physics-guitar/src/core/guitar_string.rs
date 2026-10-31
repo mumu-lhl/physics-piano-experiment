@@ -48,6 +48,12 @@ pub struct GuitarString {
     // Non-linear tension modulation
     pub current_delta_t: f64,
     pub geom_tension_coeff: f64,
+    /// Bend-adjusted tension (`params.tension * 2^(2·bend/12)`) as
+    /// computed by [`GuitarString::recalculate_modal_operators`]. The
+    /// modal frequencies use this tension; the bridge-force
+    /// accumulation in [`GuitarString::step`] must use it too, or the
+    /// radiated level jumps with bend alone.
+    pub effective_tension: f64,
 
     // Articulations
     /// Palm mute depth [0.0 = open ring, 1.0 = heavy palm mute]
@@ -85,23 +91,32 @@ impl GuitarString {
     pub fn new(params: GuitarStringParams, sample_rate: f64) -> Self {
         let dt = 1.0 / sample_rate;
         let scale_length = params.scale_length;
+        // Pre-size every operator/state Vec to the full mode count:
+        // recalculate_modal_operators() clears and re-pushes them on
+        // every call — including once per sample during slides — so
+        // any growth past the warmed capacity would heap-allocate on
+        // the audio thread (downward bends admit more modes than the
+        // construction-time count). Capacity never needs to exceed
+        // params.num_modes, the loop bound in recalculate.
+        let num_modes = params.num_modes;
         let mut s = Self {
             effective_length: scale_length,
             current_f0: params.open_f0,
             num_modes: params.num_modes,
+            effective_tension: params.tension,
             params,
             sample_rate,
             dt,
             current_fret: 0,
-            phi_t: Vec::new(),
-            gamma_t: Vec::new(),
-            omega_t: Vec::new(),
-            phi_p: Vec::new(),
-            gamma_p: Vec::new(),
-            omega_p: Vec::new(),
-            state_t: Vec::new(),
-            state_p: Vec::new(),
-            bridge_phi: Vec::new(),
+            phi_t: Vec::with_capacity(num_modes),
+            gamma_t: Vec::with_capacity(num_modes),
+            omega_t: Vec::with_capacity(num_modes),
+            phi_p: Vec::with_capacity(num_modes),
+            gamma_p: Vec::with_capacity(num_modes),
+            omega_p: Vec::with_capacity(num_modes),
+            state_t: Vec::with_capacity(num_modes),
+            state_p: Vec::with_capacity(num_modes),
+            bridge_phi: Vec::with_capacity(num_modes),
             current_delta_t: 0.0,
             geom_tension_coeff: 0.0,
             palm_mute_depth: 0.0,
@@ -134,8 +149,11 @@ impl GuitarString {
     }
 
     /// Sets pitch bend in semitones (e.g. +2.0 for whole step bend).
+    /// Clamped to ±24 semitones like bass: unclamped extremes collapse
+    /// `num_modes` to 0 (a silent string) via the Nyquist break in
+    /// [`GuitarString::recalculate_modal_operators`].
     pub fn set_pitch_bend(&mut self, semitones: f64) {
-        self.pitch_bend_semitones = semitones;
+        self.pitch_bend_semitones = semitones.clamp(-24.0, 24.0);
         self.recalculate_modal_operators();
     }
 
@@ -169,6 +187,9 @@ impl GuitarString {
         // Apply pitch bend to tension: f ~ sqrt(T), so T = T0 * 2^(2 * semitones / 12)
         let bend_factor = 2.0f64.powf(2.0 * self.pitch_bend_semitones / 12.0);
         let tension = self.params.tension * bend_factor;
+        // Remember the bend-adjusted tension for the bridge-force
+        // accumulation in `step()` (see `effective_tension`).
+        self.effective_tension = tension;
         let e = self.params.youngs_modulus;
         let i_area = self.params.moment_of_inertia;
         let b = (PI.powi(3) * e * i_area) / (4.0 * tension * length.powi(2));
@@ -472,6 +493,13 @@ impl GuitarString {
                 let f0_start = self.params.frequency_at_fret(self.current_fret);
                 let f0_target = self.params.frequency_at_fret(self.slide_target_fret);
                 self.current_f0 = f0_start * (f0_target / f0_start).powf(smooth_p);
+                // The sounded pitch comes from the modal operators
+                // (phi_t/phi_p), not from `current_f0` alone, so they
+                // must be recomputed as the length/frequency glide or
+                // the slide sounds at the start pitch until it ends
+                // and then jumps. State values survive the rebuild
+                // (`resize` keeps existing entries).
+                self.recalculate_modal_operators();
 
                 // Slight fret friction dissipation on string during slide
                 let slide_speed = (self.slide_target_length - self.slide_start_length).abs()
@@ -512,10 +540,12 @@ impl GuitarString {
             sp.q = q_next_p;
             sp.v = v_next_p;
 
-            // Bridge shear force accumulation: F_bridge = T0 * d/dx phi(L)
+            // Bridge shear force accumulation: F_bridge = T_eff * d/dx phi(L),
+            // with the bend-adjusted tension so bending does not change
+            // the radiated level (modal frequencies already use T_eff).
             let grad = self.bridge_phi[m];
-            force_bridge_t += self.params.tension * st.q * grad;
-            force_bridge_p += self.params.tension * sp.q * grad;
+            force_bridge_t += self.effective_tension * st.q * grad;
+            force_bridge_p += self.effective_tension * sp.q * grad;
 
             // Accumulate square wave numbers for geometric tension modulation
             modal_sq_sum += wave_num.powi(2) * (st.q.powi(2) + sp.q.powi(2));
@@ -684,3 +714,146 @@ impl GuitarString {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::pluck::{PluckExciter, PluckStyle};
+    use crate::params::{GuitarStringSetType, generate_guitar_string_set};
+
+    fn lowest_string() -> GuitarString {
+        let params = generate_guitar_string_set(GuitarStringSetType::Electric010, 30);
+        let lowest = params
+            .iter()
+            .min_by(|a, b| a.open_f0.partial_cmp(&b.open_f0).unwrap())
+            .unwrap()
+            .clone();
+        GuitarString::new(lowest, 44100.0)
+    }
+
+    #[test]
+    fn bridge_force_uses_bend_adjusted_tension() {
+        // At +12 semitones the modal frequencies use 4x tension; the
+        // bridge force must too, or bending alone changes the level
+        // by ~12 dB. A single known modal displacement isolates the
+        // force law from the exciter and the state evolution.
+        let mut plain = lowest_string();
+        let mut bent = lowest_string();
+        bent.set_pitch_bend(12.0);
+        assert!((bent.effective_tension - 4.0 * plain.effective_tension).abs() < 1e-6);
+
+        for string in [&mut plain, &mut bent] {
+            string.fret_buzz_sensitivity = 0.0;
+            string.is_held = true;
+            string.state_t[0].q = 1e-3;
+            string.state_t[0].v = 0.0;
+        }
+        let (force_plain, _) = plain.step();
+        let (force_bent, _) = bent.step();
+        let ratio = force_bent / force_plain;
+        assert!(
+            (3.8..4.2).contains(&ratio),
+            "bridge force ratio with +12 semitones bend: {ratio} (expected ~4.0)"
+        );
+    }
+
+    #[test]
+    fn slide_recomputes_modal_operators_so_pitch_glides() {
+        let mut string = lowest_string();
+        let exciter = PluckExciter::new(PluckStyle::Plectrum);
+        string.pluck(&exciter, 0.15, 0.8);
+        for _ in 0..10 {
+            string.step();
+        }
+        let f_start = string.omega_t[0] / (2.0 * PI);
+        assert!(f_start > 0.0);
+
+        string.start_slide(12, 200.0);
+        // Halfway through the slide the sounded fundamental (from the
+        // modal operators) must have glided about halfway (in log
+        // frequency) toward the octave above, not stayed at the start.
+        for _ in 0..4410 {
+            string.step();
+        }
+        let f_mid = string.omega_t[0] / (2.0 * PI);
+        let mid_ratio = f_mid / f_start;
+        assert!(
+            (1.3..1.55).contains(&mid_ratio),
+            "mid-slide fundamental ratio: {mid_ratio} (expected ~1.414)"
+        );
+
+        // Finishing the slide lands on the target fret's pitch.
+        for _ in 0..4510 {
+            string.step();
+        }
+        assert!(!string.slide_active);
+        let f_end = string.omega_t[0] / (2.0 * PI);
+        let end_ratio = f_end / f_start;
+        assert!(
+            (1.95..2.05).contains(&end_ratio),
+            "end-of-slide fundamental ratio: {end_ratio} (expected ~2.0)"
+        );
+    }
+
+    #[test]
+    fn pitch_bend_clamped_to_plus_minus_24_semitones() {
+        let mut string = lowest_string();
+        string.set_pitch_bend(100.0);
+        assert_eq!(string.pitch_bend_semitones, 24.0);
+        assert!(string.num_modes > 0, "extreme bend must not silence the string");
+        assert!(string.effective_tension.is_finite());
+
+        string.set_pitch_bend(-100.0);
+        assert_eq!(string.pitch_bend_semitones, -24.0);
+        assert!(string.num_modes > 0, "extreme bend must not silence the string");
+        assert!(string.effective_tension.is_finite());
+    }
+}
+
+#[cfg(all(test, debug_assertions))]
+mod no_alloc_regression_tests {
+    // The operator Vecs are cleared and re-pushed on every
+    // recalculate_modal_operators() call, including once per sample
+    // during slides. If a downward bend or slide admits more modes
+    // than the construction-time count, the Vecs must already have
+    // the capacity — otherwise the growth reallocates on the audio
+    // thread and trips nice-plug's no-allocation guard. In test
+    // builds the guard only counts violations (warn_debug).
+    use super::*;
+    use crate::params::{GuitarStringSetType, generate_guitar_string_set};
+    use nice_assert_no_alloc::{assert_no_alloc, violation_count};
+
+    /// Highest open string at a low sample rate: fewest modes under
+    /// Nyquist at construction, so a downward bend grows the
+    /// operator Vecs the most.
+    fn highest_string_at(sample_rate: f64) -> GuitarString {
+        let params = generate_guitar_string_set(GuitarStringSetType::Electric010, 30);
+        let highest = params
+            .iter()
+            .max_by(|a, b| a.open_f0.partial_cmp(&b.open_f0).unwrap())
+            .unwrap()
+            .clone();
+        GuitarString::new(highest, sample_rate)
+    }
+
+    #[test]
+    fn deep_downward_bend_recalculation_does_not_allocate() {
+        let mut string = highest_string_at(8000.0);
+        let before = violation_count();
+        assert_no_alloc(|| string.set_pitch_bend(-24.0));
+        assert_eq!(violation_count(), before);
+    }
+
+    #[test]
+    fn slide_stepping_does_not_allocate() {
+        let mut string = highest_string_at(44100.0);
+        string.set_fret(12);
+        string.start_slide(0, 200.0);
+        let before = violation_count();
+        assert_no_alloc(|| {
+            for _ in 0..4096 {
+                let _ = string.step();
+            }
+        });
+        assert_eq!(violation_count(), before);
+    }
+}

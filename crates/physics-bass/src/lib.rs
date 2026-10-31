@@ -14,10 +14,11 @@ pub mod presets;
 pub mod string;
 
 pub use acoustic::{AcousticBassBody, BassPickup, BassPickupType};
-pub use engine::{
-    BassEngine, BassEvent, BassFrame, BassMode, BassStringVoice,
-    sanitize_floating_point_environment,
-};
+pub use engine::{BassEngine, BassEvent, BassFrame, BassMode, BassStringVoice};
+/// The floating-point sanitizer lives in `physics-dsp` (shared by all
+/// instruments); re-exported here so existing users of the bass path
+/// keep working.
+pub use physics_dsp::sanitize_floating_point_environment;
 pub use params::BassStringParams;
 pub use presets::factory_presets;
 pub use string::{AlignedGrid, FdtdString, MAX_GRID_POINTS, PluckStyle};

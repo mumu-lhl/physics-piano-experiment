@@ -270,7 +270,11 @@ impl BassPickup {
         let d0 = k * k + a1 * k + a0;
         let d1 = -2.0 * k * k + 2.0 * a0;
         let d2 = k * k - a1 * k + a0;
-        self.filter = Biquad::from_coefficients(
+        // State-preserving: replacing the filter with a fresh
+        // `Biquad` here zeroed its history on every tone/pickup
+        // change (an audible click). `set_coefficients` keeps the
+        // input/output history and only retunes the circuit.
+        self.filter.set_coefficients(
             numerator_gain / d0,
             2.0 * numerator_gain / d0,
             numerator_gain / d0,
@@ -358,5 +362,47 @@ mod tests {
         }
         assert!(peak.is_finite());
         assert!(peak > 0.0);
+    }
+
+    #[test]
+    fn tone_change_preserves_filter_state() {
+        // Regression: `update_filter` used to replace the pickup
+        // filter with a fresh zero-state `Biquad` on every tone
+        // change, clicking and discarding history mid-signal.
+        fn run(initial_tone: f64, change: Option<(usize, f64)>) -> Vec<f64> {
+            let mut pickup = BassPickup::new(48_000.0);
+            pickup.set_tone(initial_tone);
+            let mut out = Vec::with_capacity(512);
+            for n in 0..512 {
+                if let Some((at, tone)) = change {
+                    if n == at {
+                        pickup.set_tone(tone);
+                    }
+                }
+                let input = (2.0 * PI * 1000.0 * n as f64 / 48_000.0).sin();
+                out.push(pickup.filter.process(input));
+            }
+            out
+        }
+        let changed = run(0.9, Some((256, 0.3)));
+        let fresh = run(0.3, None);
+        let unchanged = run(0.9, None);
+        fn tail(out: &[f64]) -> &[f64] {
+            &out[256..]
+        }
+        let max_diff = |a: &[f64], b: &[f64]| {
+            a.iter()
+                .zip(b)
+                .map(|(x, y)| (x - y).abs())
+                .fold(0.0, f64::max)
+        };
+        assert!(
+            max_diff(tail(&changed), tail(&fresh)) > 1e-6,
+            "tone change zeroed filter state (tail matches a fresh filter)"
+        );
+        assert!(
+            max_diff(tail(&changed), tail(&unchanged)) > 1e-6,
+            "tone change did not update coefficients"
+        );
     }
 }

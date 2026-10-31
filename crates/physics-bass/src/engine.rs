@@ -68,6 +68,26 @@ impl BassStringVoice {
         self.current_note = Some(note);
     }
 
+    /// Fast retrigger of a still-ringing string: blends the old grid
+    /// (see [`FdtdString::retrigger`]) instead of hard-resetting it.
+    /// Re-frets without wiping the grid when the fret changed
+    /// (unlike `trigger`, whose `set_fret` resets); the grid
+    /// survives on the fixed-size arrays and `configure_length`
+    /// rebuilds only coefficients and fret contacts.
+    pub fn retrigger(&mut self, note: u8, velocity: f64, style: PluckStyle, position: f64) {
+        let fret = note.saturating_sub(self.open_midi).min(24);
+        if fret != self.current_fret {
+            self.current_fret = fret;
+            self.string.current_fret = fret;
+            self.string.configure_length(
+                self.string.params.length_at_fret(fret),
+                self.string.params.frequency_at_fret(fret),
+            );
+        }
+        self.string.retrigger(velocity, style, position);
+        self.current_note = Some(note);
+    }
+
     pub fn legato_to_note(&mut self, note: u8, velocity: f64) {
         let fret = note.saturating_sub(self.open_midi).min(24);
         self.current_fret = fret;
@@ -229,6 +249,26 @@ impl BassEngine {
         }
 
         if self.strings[index].current_note.is_some() {
+            // A released-but-still-ringing string is re-triggered by
+            // blending: the old grid is attenuated instead of
+            // zeroed, so a fast repeat during the release tail has
+            // no single-sample discontinuity. A truly idle string
+            // (retired: inactive or negligible energy) still takes
+            // the hard reset below.
+            let ringing = {
+                let string = &self.strings[index].string;
+                string.is_active && string.energy() > 1e-11
+            };
+            if ringing {
+                self.strings[index].string.fret_buzz = self.fret_buzz;
+                self.strings[index].retrigger(
+                    note,
+                    velocity,
+                    self.pluck_style,
+                    self.pluck_position,
+                );
+                return;
+            }
             self.strings[index].reset();
         }
         self.strings[index].string.fret_buzz = self.fret_buzz;
@@ -471,7 +511,12 @@ impl BassEngine {
         assert!(out_right.len() >= num_samples);
         let mut event_index = 0;
         for sample in 0..num_samples {
-            while event_index < events.len() && event_time(events[event_index]) <= sample {
+            // Events timestamped at/past the block end are clamped
+            // to the last sample instead of being dropped with the
+            // block (and everything after them).
+            while event_index < events.len()
+                && event_time(events[event_index]).min(num_samples.saturating_sub(1)) <= sample
+            {
                 self.dispatch(events[event_index]);
                 event_index += 1;
             }
@@ -504,28 +549,6 @@ impl BassEngine {
             BassEvent::NoteOff { note, .. } => self.note_off(note),
             BassEvent::PitchBend { semitones, .. } => self.set_pitch_bend(semitones),
         }
-    }
-}
-
-/// Enables FTZ/DAZ on x86 audio threads. Other targets already use their
-/// normal finite-value handling and need no platform-specific instruction.
-#[inline]
-pub fn sanitize_floating_point_environment() {
-    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-    unsafe {
-        use std::arch::asm;
-        let mut control_word: u32 = 0;
-        asm!(
-            "stmxcsr [{ptr}]",
-            ptr = in(reg) &mut control_word,
-            options(nostack, preserves_flags)
-        );
-        control_word |= 0x8040;
-        asm!(
-            "ldmxcsr [{ptr}]",
-            ptr = in(reg) &control_word,
-            options(nostack, preserves_flags)
-        );
     }
 }
 
@@ -596,5 +619,71 @@ mod tests {
         assert!(left.iter().all(|sample| sample.is_finite()));
         assert!(left.iter().skip(17).any(|sample| sample.abs() > 1e-9));
         assert!(engine.total_energy().is_finite());
+    }
+
+    #[test]
+    fn retrigger_during_release_tail_has_no_single_sample_discontinuity() {
+        let mut engine = BassEngine::new(48_000.0, BassMode::Electric, true);
+        engine.note_on_string(1, 5, 0.9);
+        for _ in 0..200 {
+            engine.process_sample();
+        }
+        engine.note_off_string(1);
+        assert!(engine.strings[1].string.is_releasing);
+        for _ in 0..50 {
+            engine.process_sample();
+        }
+        assert!(
+            engine.strings[1].string.energy() > 1e-11,
+            "string must still be ringing for this test"
+        );
+        let mut before = Vec::with_capacity(8);
+        for _ in 0..8 {
+            before.push(engine.process_sample().0);
+        }
+        let scale = before
+            .iter()
+            .map(|v| v.abs())
+            .fold(0.0f64, f64::max)
+            .max(1e-6);
+
+        engine.note_on_string(1, 5, 0.9);
+        assert!(engine.strings[1].string.is_held);
+        assert_eq!(engine.strings[1].current_note, Some(33));
+        let mut after = Vec::with_capacity(8);
+        for _ in 0..8 {
+            after.push(engine.process_sample().0);
+        }
+        assert!(after.iter().all(|v| v.is_finite()));
+        let jump = (after[0] - before[7]).abs();
+        assert!(
+            jump < 8.0 * scale,
+            "retrigger discontinuity: jump {jump} vs recent scale {scale}"
+        );
+        assert!(engine.strings[1].string.energy() > 0.0);
+    }
+
+    #[test]
+    fn events_at_or_past_block_end_are_not_lost() {
+        // An event timestamped exactly at (or beyond) the block end
+        // plays at the last sample instead of vanishing.
+        for time in [2_048usize, 5_000] {
+            let mut engine = BassEngine::new(48_000.0, BassMode::Electric, false);
+            let mut left = [0.0; 2_048];
+            let mut right = [0.0; 2_048];
+            let events = [BassEvent::NoteOn {
+                time,
+                note: 28,
+                velocity: 0.9,
+            }];
+            engine.process_block(2_048, &events, &mut left, &mut right);
+            assert_eq!(
+                engine.strings[1].current_note,
+                Some(28),
+                "NoteOn at time {time} was lost"
+            );
+            assert!(engine.total_energy() > 0.0);
+            assert!(left.iter().all(|sample| sample.is_finite()));
+        }
     }
 }
