@@ -5,21 +5,16 @@ on:
     branches: [ "**" ]
     tags: [ "v*" ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
   contents: write
-  actions: write
 
 jobs:
   test-and-build:
     name: Build & Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: "sccache"
-      CARGO_INCREMENTAL: "0"
     strategy:
       fail-fast: false
       matrix:
@@ -61,16 +56,32 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
 
       - name: Rust Cache
         uses: swatinem/rust-cache@v2
         with:
           cache-targets: false
 
+      - name: Check all targets
+        run: cargo check --workspace --all-targets
+
+      # Advisory only: the tree carries rustfmt reflow drift, so a red
+      # formatting gate would fail on pre-existing layout. Fix the drift
+      # before ever removing continue-on-error here.
+      - name: Check formatting (advisory)
+        continue-on-error: true
+        run: cargo fmt --all --check
+
+      # The drum crate is excluded: its timbre_eval tests need reference
+      # audio downloaded with tools/download_drum_references.py (see
+      # AGENTS.md). This is the same gate developers run locally.
       - name: Run unit & integration tests for active instruments
-        run: cargo test --workspace --exclude physics-drum
+        run: CI=1 cargo nextest run --workspace --exclude physics-drum
+
+      - name: Run doctests for active instruments
+        run: cargo test --doc --workspace --exclude physics-drum
 
       - name: Bundle piano CLAP & VST3 plugins
         run: cargo xtask bundle physics-piano --release
@@ -131,15 +142,111 @@ jobs:
             tar -czf "release-${instrument}-${RUNNER_OS}-${RUNNER_ARCH}.tar.gz" -C release-bundle "$instrument"
           done
 
-      - name: Show sccache statistics
-        run: sccache --show-stats
-
       - name: Upload separate instrument archives for this platform
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ runner.os }}-${{ runner.arch }}
           path: release-physics-*
           if-no-files-found: error
+
+  # Advisory only: clippy currently reports hundreds of style warnings
+  # (mostly `.clone()` on Copy Vizia signal handles). This job must stay
+  # without `-D warnings` and without failing the build until the
+  # warnings are fixed or explicitly allowed.
+  clippy:
+    name: Clippy (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux Dependencies (ALSA, JACK, X11, Wayland, OpenGL)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libjack-jackd2-dev \
+            libfreetype6-dev \
+            libfontconfig1-dev \
+            libwayland-dev \
+            libgl1-mesa-dev \
+            libx11-xcb-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxcb-glx0-dev \
+            libxcb-icccm4-dev \
+            libxcb-dri2-0-dev \
+            libxcb-dri3-dev \
+            libxcb-present-dev \
+            libxcb-sync-dev \
+            libxshmfence-dev \
+            libxcursor-dev \
+            libxkbcommon-dev
+          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig" >> $GITHUB_ENV
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+
+      - name: Run clippy (advisory)
+        continue-on-error: true
+        run: cargo clippy --workspace --all-targets
+
+  # The declared MSRV is 1.88 (see rust-version in the member manifests):
+  # the lockfile's dependencies require it. This job pins the toolchain
+  # in the workflow only; there is deliberately no rust-toolchain.toml,
+  # so local toolchains are not overridden.
+  msrv:
+    name: MSRV check (Rust 1.88)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux Dependencies (ALSA, JACK, X11, Wayland, OpenGL)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libjack-jackd2-dev \
+            libfreetype6-dev \
+            libfontconfig1-dev \
+            libwayland-dev \
+            libgl1-mesa-dev \
+            libx11-xcb-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxcb-glx0-dev \
+            libxcb-icccm4-dev \
+            libxcb-dri2-0-dev \
+            libxcb-dri3-dev \
+            libxcb-present-dev \
+            libxcb-sync-dev \
+            libxshmfence-dev \
+            libxcursor-dev \
+            libxkbcommon-dev
+          echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig" >> $GITHUB_ENV
+
+      - name: Install Rust 1.88 toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88"
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          cache-targets: false
+
+      - name: Check active instruments on Rust 1.88
+        run: cargo check --locked --workspace --exclude physics-drum
 
   python-verification:
     name: Python Physics Benchmark
