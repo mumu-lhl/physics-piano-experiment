@@ -82,7 +82,8 @@ fn main() {
         );
 
         let mut engine = GuitarEngine::new(sample_rate, set_type, mode);
-        engine.note_on(1, midi_note, 0.85);
+        // Channel 0 = master/global: ergonomic string allocation.
+        engine.note_on(0, midi_note, 0.85);
 
         let total_samples = (dur * sample_rate) as usize;
         let spec = WavSpec {
@@ -152,7 +153,7 @@ fn main() {
             // Trigger each string with progressive downward strum delay
             for (idx, &note) in chord_notes.iter().enumerate() {
                 if n == idx * strum_delay_samples {
-                    engine.note_on(1, note, 0.82);
+                    engine.note_on(0, note, 0.82);
                 }
             }
 

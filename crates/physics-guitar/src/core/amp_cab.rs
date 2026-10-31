@@ -176,6 +176,16 @@ impl GuitarCabinet {
         }
     }
 
+    /// Clears filter history only; model, mic distance and coefficients
+    /// (i.e. the current cabinet voicing) are preserved.
+    pub fn reset(&mut self) {
+        self.highpass.reset();
+        self.thump.reset();
+        self.presence.reset();
+        self.lowpass.reset();
+        self.proximity.reset();
+    }
+
     pub fn set_mic_distance(&mut self, distance_cm: f64) {
         let d = distance_cm.clamp(0.0, 30.0);
         if (self.mic_distance_cm - d).abs() > 0.05 {
@@ -293,6 +303,17 @@ impl GuitarAmpCab {
     }
 
     pub fn set_cabinet_model(&mut self, model: CabinetModel) {
+        // Guarded: reloading the IR preset rebuilds the convolution
+        // partitions and clears its delay lines, so re-applying the
+        // current model must be a no-op. This makes it cheap and safe
+        // for the plugin to call every audio block. The initial IR
+        // (Vintage30) is already loaded by `UpolsConvolutionEngine::new`,
+        // so skipping the first same-model call loses nothing; a custom
+        // IR loaded via `load_custom_ir` likewise survives until the
+        // model actually changes.
+        if self.cabinet.model == model {
+            return;
+        }
         self.cabinet.set_model(model);
         match model {
             CabinetModel::Vintage30 => self.ir_engine.load_preset(CabinetIrProfile::CelestionVintage30),
@@ -305,13 +326,34 @@ impl GuitarAmpCab {
         self.cabinet.set_mic_distance(distance_cm);
     }
 
+    /// Clears all DSP state (tone-stack and cabinet filter histories,
+    /// oversamplers, bias drift / power sag, convolution delay lines).
+    /// Settings (drive, tone-stack knobs, cabinet model, loaded IR
+    /// partitions) are preserved.
+    pub fn reset(&mut self) {
+        self.cabinet.reset();
+        self.bass_filter.reset();
+        self.mid_filter.reset();
+        self.treble_filter.reset();
+        self.oversampler1.reset();
+        self.oversampler2.reset();
+        self.bias_drift = 0.0;
+        self.power_sag = 0.0;
+        self.ir_engine.reset();
+    }
+
     fn update_tone_filters(&mut self) {
         let bass_db = (self.bass - 0.5) * 12.0;
         let mid_db = (self.middle - 0.5) * 10.0;
         let treble_db = (self.treble - 0.5) * 12.0;
         self.bass_filter.set_peaking(self.sample_rate, 110.0, 0.75, bass_db);
         self.mid_filter.set_peaking(self.sample_rate, 650.0, 0.9, mid_db);
-        self.treble_filter = Biquad::high_shelf(self.sample_rate, 3200.0, treble_db);
+        // State-preserving like the other bands: replacing the filter
+        // with a fresh zero-state `Biquad` here destroyed the treble
+        // filter's history on every call (the plugin calls
+        // `set_tone_stack` every block).
+        self.treble_filter
+            .set_high_shelf(self.sample_rate, 3200.0, treble_db);
     }
 
     #[inline(always)]
@@ -366,5 +408,153 @@ impl GuitarAmpCab {
         } else {
             saturated
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sine_input(len: usize) -> Vec<f64> {
+        (0..len)
+            .map(|n| (2.0 * std::f64::consts::PI * 220.0 * n as f64 / 44100.0).sin())
+            .collect()
+    }
+
+    #[test]
+    fn set_cabinet_model_changes_filters_and_ir_preset() {
+        let mut amp = GuitarAmpCab::new(44100.0);
+        assert_eq!(amp.cabinet.model, CabinetModel::Vintage30);
+        assert_eq!(
+            amp.ir_engine.profile,
+            CabinetIrProfile::CelestionVintage30
+        );
+
+        amp.set_cabinet_model(CabinetModel::TwinReverb);
+        assert_eq!(amp.cabinet.model, CabinetModel::TwinReverb);
+        assert_eq!(
+            amp.ir_engine.profile,
+            CabinetIrProfile::FenderTwinReverb
+        );
+
+        // A different model must actually sound different through both
+        // cabinet paths (analytic biquads and IR convolution).
+        let input = sine_input(512);
+        let mut analytic = GuitarAmpCab::new(44100.0);
+        analytic.set_cabinet_model(CabinetModel::Greenback);
+        let mut ir = GuitarAmpCab::new(44100.0);
+        ir.set_use_ir_cabinet(true);
+        ir.set_cabinet_model(CabinetModel::Greenback);
+        let mut baseline = GuitarAmpCab::new(44100.0);
+        let mut baseline_ir = GuitarAmpCab::new(44100.0);
+        baseline_ir.set_use_ir_cabinet(true);
+        let mut max_diff = 0.0f64;
+        let mut max_diff_ir = 0.0f64;
+        for &x in &input {
+            max_diff = max_diff.max((analytic.process(x) - baseline.process(x)).abs());
+            max_diff_ir = max_diff_ir.max((ir.process(x) - baseline_ir.process(x)).abs());
+        }
+        assert!(max_diff > 1e-6, "cabinet model change had no audible effect");
+        assert!(
+            max_diff_ir > 1e-6,
+            "IR preset change had no audible effect"
+        );
+    }
+
+    #[test]
+    fn set_cabinet_model_same_model_is_a_noop_for_ir_history() {
+        // Regression: `set_cabinet_model` used to reload the IR preset
+        // unconditionally, clearing the convolution delay lines. Calling
+        // it with the current model (as the plugin does every block)
+        // must not disturb a running IR stream.
+        let input = sine_input(1024);
+        let mut with_repeat = GuitarAmpCab::new(44100.0);
+        with_repeat.set_use_ir_cabinet(true);
+        with_repeat.set_cabinet_model(CabinetModel::TwinReverb);
+        let mut plain = GuitarAmpCab::new(44100.0);
+        plain.set_use_ir_cabinet(true);
+        plain.set_cabinet_model(CabinetModel::TwinReverb);
+        let mut out_repeat = Vec::with_capacity(input.len());
+        let mut out_plain = Vec::with_capacity(input.len());
+        for (i, &x) in input.iter().enumerate() {
+            if i == 512 {
+                with_repeat.set_cabinet_model(CabinetModel::TwinReverb);
+            }
+            out_repeat.push(with_repeat.process(x));
+            out_plain.push(plain.process(x));
+        }
+        assert_eq!(out_repeat, out_plain);
+    }
+
+    #[test]
+    fn treble_filter_state_survives_unchanged_tone_stack_updates() {
+        // Regression: the treble filter used to be replaced with a fresh
+        // zero-state `Biquad` on every `set_tone_stack` call, destroying
+        // its history mid-signal even when the knobs never moved.
+        // Treble is non-zero so the shelf has memory to lose.
+        let input = sine_input(512);
+        let mut updated = GuitarAmpCab::new(44100.0);
+        updated.set_tone_stack(0.5, 0.5, 0.9, 0.5);
+        let mut untouched = GuitarAmpCab::new(44100.0);
+        untouched.set_tone_stack(0.5, 0.5, 0.9, 0.5);
+        let mut out_updated = Vec::with_capacity(input.len());
+        let mut out_untouched = Vec::with_capacity(input.len());
+        for (i, &x) in input.iter().enumerate() {
+            if i == 256 {
+                // What the plugin does every block with unchanged knobs.
+                updated.set_tone_stack(0.5, 0.5, 0.9, 0.5);
+            }
+            out_updated.push(updated.process(x));
+            out_untouched.push(untouched.process(x));
+        }
+        assert_eq!(out_updated, out_untouched);
+    }
+
+    #[test]
+    fn treble_change_updates_coefficients_without_zeroing_state() {
+        let input = sine_input(512);
+        // Amp A: treble 0.9 for the first half, then 0.3.
+        let mut changed = GuitarAmpCab::new(44100.0);
+        changed.set_tone_stack(0.5, 0.5, 0.9, 0.5);
+        // Amp B: treble 0.3 from the start (fresh filter state).
+        let mut fresh = GuitarAmpCab::new(44100.0);
+        fresh.set_tone_stack(0.5, 0.5, 0.3, 0.5);
+        // Amp C: treble 0.9 throughout (no change).
+        let mut unchanged = GuitarAmpCab::new(44100.0);
+        unchanged.set_tone_stack(0.5, 0.5, 0.9, 0.5);
+        let mut tail_changed = Vec::new();
+        let mut tail_fresh = Vec::new();
+        let mut tail_unchanged = Vec::new();
+        for (i, &x) in input.iter().enumerate() {
+            if i == 256 {
+                changed.set_tone_stack(0.5, 0.5, 0.3, 0.5);
+            }
+            let a = changed.process(x);
+            let b = fresh.process(x);
+            let c = unchanged.process(x);
+            if i >= 256 {
+                tail_changed.push(a);
+                tail_fresh.push(b);
+                tail_unchanged.push(c);
+            }
+        }
+        let diff_vs_fresh: f64 = tail_changed
+            .iter()
+            .zip(&tail_fresh)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f64::max);
+        let diff_vs_unchanged: f64 = tail_changed
+            .iter()
+            .zip(&tail_unchanged)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f64::max);
+        assert!(
+            diff_vs_fresh > 1e-6,
+            "treble change zeroed filter state (tail matches a fresh filter)"
+        );
+        assert!(
+            diff_vs_unchanged > 1e-6,
+            "treble change did not update coefficients"
+        );
     }
 }

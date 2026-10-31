@@ -42,6 +42,29 @@ impl FretboardRouter {
         Self::default()
     }
 
+    /// Maps a 0-based MIDI channel value (as returned by
+    /// `Channel::number()` in nice-plug-core: master = 0, members =
+    /// 1..=14) to the per-string MPE member index it addresses, or
+    /// `None` for master/global traffic.
+    ///
+    /// MPE member channels 1..=6 address strings 1..=6
+    /// (`string_idx = channel - 1`). There are only six strings, so
+    /// member channels 7..=14 have no string to address: they are
+    /// deliberately treated as global/master-zone traffic (the
+    /// fallback paths in the engine still sound their notes via
+    /// ergonomic allocation and apply their pitch bends globally)
+    /// rather than being dropped. Channel 0 is the MPE master channel
+    /// and is likewise global. This helper is the single source of
+    /// truth for the mapping; every MPE routing site in the engine
+    /// must go through it.
+    pub fn mpe_member_string_index(channel: u8) -> Option<usize> {
+        if (1..=6).contains(&channel) {
+            Some((channel - 1) as usize)
+        } else {
+            None
+        }
+    }
+
     /// Sets the current hand position explicitly (e.g. for barre chords or high solos).
     pub fn set_hand_position(&mut self, pos: u8) {
         self.hand_position = pos.clamp(0, 24);
@@ -143,21 +166,72 @@ impl FretboardRouter {
         }
     }
 
-    /// MPE allocation: Maps MPE channel (Channel 2..=7) directly to strings 1..=6.
+    /// MPE allocation: maps the MPE member channel (0-based channel
+    /// values 1..=6) directly to strings 1..=6. Channel 0 (master)
+    /// and channels 7..=14 (no string) return `None`; see
+    /// [`FretboardRouter::mpe_member_string_index`].
     pub fn allocate_mpe_note(&self, channel: u8, midi_note: u8) -> Option<FretboardLocation> {
-        if (2..=7).contains(&channel) {
-            let string_idx = channel - 1; // Channel 2 -> String 1, Channel 7 -> String 6
-            let open = self.open_notes[(string_idx - 1) as usize];
-            if midi_note >= open {
-                let fret = midi_note - open;
-                if fret <= 24 {
-                    return Some(FretboardLocation {
-                        string_index: string_idx,
-                        fret,
-                    });
-                }
+        let string_idx = Self::mpe_member_string_index(channel)? + 1; // Channel 1 -> String 1, Channel 6 -> String 6
+        let open = self.open_notes[string_idx - 1];
+        if midi_note >= open {
+            let fret = midi_note - open;
+            if fret <= 24 {
+                return Some(FretboardLocation {
+                    string_index: string_idx as u8,
+                    fret,
+                });
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mpe_member_string_index_covers_all_channels() {
+        // 0-based `Channel::number()` values: 0 = master, 1..=6 =
+        // members for strings 1..=6, 7..=15 = no string (global).
+        assert_eq!(FretboardRouter::mpe_member_string_index(0), None);
+        for channel in 1..=6u8 {
+            assert_eq!(
+                FretboardRouter::mpe_member_string_index(channel),
+                Some((channel - 1) as usize),
+                "channel {channel}"
+            );
+        }
+        for channel in 7..=15u8 {
+            assert_eq!(
+                FretboardRouter::mpe_member_string_index(channel),
+                None,
+                "channel {channel}"
+            );
+        }
+    }
+
+    #[test]
+    fn allocate_mpe_note_uses_zero_based_member_channels() {
+        let router = FretboardRouter::new();
+        // Channel 1 -> String 1 (E4 open), Channel 6 -> String 6 (E2 open).
+        let loc = router
+            .allocate_mpe_note(1, 64)
+            .expect("channel 1 should allocate String 1");
+        assert_eq!(loc.string_index, 1);
+        assert_eq!(loc.fret, 0);
+        let loc = router
+            .allocate_mpe_note(6, 45)
+            .expect("channel 6 should allocate String 6");
+        assert_eq!(loc.string_index, 6);
+        assert_eq!(loc.fret, 5); // E2 + 5 semitones = A2
+        // Master channel and out-of-zone member channels allocate nothing
+        // per-string; the engine falls back to global handling for them.
+        assert_eq!(router.allocate_mpe_note(0, 64), None);
+        assert_eq!(router.allocate_mpe_note(7, 45), None);
+        assert_eq!(router.allocate_mpe_note(14, 45), None);
+        // A note below the addressed string's open note is unplayable
+        // on that string.
+        assert_eq!(router.allocate_mpe_note(1, 40), None);
     }
 }

@@ -54,6 +54,13 @@ pub struct GuitarString {
     pub palm_mute_depth: f64,
     /// Pitch bend offset (semitones, e.g. +2.0 for whole-step bend)
     pub pitch_bend_semitones: f64,
+    /// Per-string MPE pitch bend (semitones) last received on this
+    /// string's MPE member channel, if any. The engine re-applies it
+    /// when the strummer drains a pluck so a strummed note does not
+    /// fall back to the global bend; `None` means "use the global
+    /// bend". Cleared by global bends, non-MPE note-ons on this
+    /// string, mode changes and [`GuitarString::reset`].
+    pub mpe_pitch_bend_semitones: Option<f64>,
     /// Whether natural harmonic node is active (0 = none, 2 = 12th fret octave, 3 = 7th fret, 4 = 5th fret)
     pub harmonic_node: u8,
     /// Fret buzz sensitivity [0.0 = clean/disabled, 1.0 = heavy metallic buzz on hard plucks]
@@ -99,6 +106,7 @@ impl GuitarString {
             geom_tension_coeff: 0.0,
             palm_mute_depth: 0.0,
             pitch_bend_semitones: 0.0,
+            mpe_pitch_bend_semitones: None,
             harmonic_node: 0,
             fret_buzz_sensitivity: 0.35,
             is_held: false,
@@ -129,6 +137,30 @@ impl GuitarString {
     pub fn set_pitch_bend(&mut self, semitones: f64) {
         self.pitch_bend_semitones = semitones;
         self.recalculate_modal_operators();
+    }
+
+    /// Clears all vibrational and articulation state so the string is
+    /// silent. Fretting, palm-mute depth and fret-buzz sensitivity
+    /// (playing settings, re-applied by the engine) are preserved;
+    /// pitch bend and any MPE bend are cleared.
+    pub fn reset(&mut self) {
+        self.pitch_bend_semitones = 0.0;
+        self.mpe_pitch_bend_semitones = None;
+        self.harmonic_node = 0;
+        self.slide_active = false;
+        self.slide_target_fret = 0;
+        self.slide_samples_total = 0;
+        self.slide_samples_left = 0;
+        self.slide_friction_noise = 0.0;
+        self.current_delta_t = 0.0;
+        self.is_held = false;
+        self.is_releasing = false;
+        self.is_sleeping = false;
+        self.silence_counter = 0;
+        self.recalculate_modal_operators();
+        for state in self.state_t.iter_mut().chain(self.state_p.iter_mut()) {
+            *state = ModalState::default();
+        }
     }
 
     /// Re-evaluates analytical modal frequencies, inharmonicity, and discrete state transition operators.

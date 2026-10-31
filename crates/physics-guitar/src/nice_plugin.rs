@@ -352,6 +352,24 @@ pub enum GuiGuitarEvent {
     },
 }
 
+/// Transparent tanh-based soft limiter ensuring output never exceeds 0.99 (0.0 dBFS).
+/// Same curve as the piano plugin. Applied AFTER the insert FX in the
+/// sample loop: the EQ can add up to +12 dB per band to the engine
+/// output, so the engine's own limiter (which runs before the FX)
+/// cannot bound the final output. The engine-level limiter is kept:
+/// it bounds `GuitarEngine` output for engine-only consumers.
+#[inline]
+fn soft_limit(x: f64) -> f64 {
+    if x.abs() <= 0.82 {
+        x
+    } else {
+        let sign = x.signum();
+        let mag = x.abs();
+        let excess = mag - 0.82;
+        sign * (0.82 + 0.17 * (excess / 0.17).tanh())
+    }
+}
+
 pub struct PhysicsGuitar {
     pub params: Arc<PhysicsGuitarParams>,
     pub engine: GuitarEngine,
@@ -526,6 +544,7 @@ impl Plugin for PhysicsGuitar {
     }
 
     fn reset(&mut self) {
+        self.engine.reset();
         while self.gui_event_rx.try_recv().is_ok() {}
         self.pending_gui_midi_note_offs.fill(0);
         self.pending_gui_string_note_offs.fill(0);
@@ -691,11 +710,14 @@ impl Plugin for PhysicsGuitar {
         );
         self.engine.amp_cab.sag = self.params.amp_sag.value() as f64;
         self.engine.amp_cab.cab_enabled = self.params.cab_enabled.value();
-        self.engine.amp_cab.cabinet.model = match self.params.cabinet_model.value() {
+        // Route through `set_cabinet_model` (change-guarded, reloads
+        // the IR preset) instead of assigning the field directly,
+        // which left the cabinet filters and IR on the old model.
+        self.engine.set_cabinet_model(match self.params.cabinet_model.value() {
             1 => crate::core::amp_cab::CabinetModel::TwinReverb,
             2 => crate::core::amp_cab::CabinetModel::Greenback,
             _ => crate::core::amp_cab::CabinetModel::Vintage30,
-        };
+        });
         self.engine
             .amp_cab
             .set_use_ir_cabinet(self.params.use_ir_cab.value());
@@ -705,7 +727,9 @@ impl Plugin for PhysicsGuitar {
         // Insert FX (3-band EQ + reverb) on the engine output. Neutral by
         // default (0 dB EQ, dry mix), so existing presets sound unchanged
         // until FX is dialed in. EQ and reverb are linear, so placing FX
-        // after the master volume is equivalent to placing it before.
+        // after the master volume is equivalent to placing it before;
+        // the final output is soft-limited after the FX in the sample
+        // loop below, since the EQ can add +12 dB per band.
         self.fx.set_sample_rate(self.sample_rate as f64);
         self.fx.set_params(
             self.params.fx_eq_low.value() as f64,
@@ -760,6 +784,10 @@ impl Plugin for PhysicsGuitar {
 
             let (sl, sr) = self.engine.process_sample();
             let (sl, sr) = self.fx.process_sample(sl, sr);
+            // Soft-limit AFTER the FX (same ordering and 0.99 bound as
+            // the piano plugin): the engine limits before the FX, and
+            // the EQ can add +12 dB/band after it.
+            let (sl, sr) = (soft_limit(sl), soft_limit(sr));
             let mut channels = channel_samples.into_iter();
             if let Some(left) = channels.next() {
                 *left = sl as f32;
@@ -969,5 +997,74 @@ mod midi_learn_tests {
         for (id, _, _) in &ids {
             assert!(plugin.param_map.contains_key(id), "missing {id}");
         }
+    }
+}
+
+#[cfg(test)]
+mod output_limiter_tests {
+    use super::*;
+
+    #[test]
+    fn soft_limit_bounds_output_at_piano_ceiling() {
+        assert_eq!(soft_limit(0.5), 0.5);
+        assert_eq!(soft_limit(-0.5), -0.5);
+        // The tanh curve asymptotes to exactly 0.99 from below.
+        assert!(soft_limit(10.0) <= 0.99 && soft_limit(10.0) > 0.98);
+        assert!(soft_limit(-10.0) >= -0.99 && soft_limit(-10.0) < -0.98);
+    }
+
+    #[test]
+    fn boosted_fx_output_is_bounded_after_soft_limit() {
+        // The plugin's `process` loop cannot be driven without a host
+        // `ProcessContext`, so this tests the exact composition that
+        // loop performs: engine output -> FxChain -> `soft_limit`.
+        let mut fx = FxChain::new(44100.0);
+        fx.set_params(12.0, 12.0, 12.0, 0.0, 0.5);
+        let mut peak_unlimited = 0.0f64;
+        let mut peak_limited = 0.0f64;
+        for n in 0..44100 {
+            // 1 kHz (mid-band centre) at 0.9: +12 dB must push the
+            // FX output well past full scale without the limiter.
+            let x = 0.9 * (2.0 * std::f64::consts::PI * 1000.0 * n as f64 / 44100.0).sin();
+            let (l, _) = fx.process_sample(x, x);
+            peak_unlimited = peak_unlimited.max(l.abs());
+            peak_limited = peak_limited.max(soft_limit(l).abs());
+        }
+        assert!(
+            peak_unlimited > 0.99,
+            "boosted FX output did not exceed the ceiling (peak={peak_unlimited}); test would not catch a missing limiter"
+        );
+        assert!(peak_limited <= 0.99, "limited peak={peak_limited}");
+
+        // Same bound for a loud engine signal through boosted FX.
+        let mut engine = GuitarEngine::new(
+            44100.0,
+            GuitarStringSetType::Electric010,
+            GuitarInstrumentMode::Electric,
+        );
+        engine.strummer.set_strum_speed_ms(0.0);
+        engine.note_on(6, 40, 1.0);
+        let mut fx = FxChain::new(44100.0);
+        fx.set_params(12.0, 12.0, 12.0, 0.0, 0.5);
+        for _ in 0..44100 {
+            let (l, r) = engine.process_sample();
+            let (l, r) = fx.process_sample(l, r);
+            assert!(soft_limit(l).abs() <= 0.99);
+            assert!(soft_limit(r).abs() <= 0.99);
+        }
+    }
+
+    #[test]
+    fn plugin_reset_clears_engine_state() {
+        let mut plugin = PhysicsGuitar::default();
+        plugin.engine.strummer.set_strum_speed_ms(0.0);
+        plugin.engine.note_on(6, 40, 0.9);
+        for _ in 0..100 {
+            plugin.engine.process_sample();
+        }
+        assert!(plugin.engine.strings.iter().any(|s| s.total_energy() > 0.0));
+        plugin.reset();
+        assert!(plugin.engine.strings.iter().all(|s| s.total_energy() == 0.0));
+        assert_eq!(plugin.engine.active_notes_on_string, [None; 6]);
     }
 }

@@ -107,16 +107,17 @@ fn test_fretboard_routing_and_mpe() {
     assert_eq!(loc_c4.string_index, 2);
     assert_eq!(loc_c4.fret, 1);
 
-    // MPE Routing: Channel 2 is String 1, Channel 7 is String 6
+    // MPE Routing: Channel 1 is String 1, Channel 6 is String 6
+    // (Channel::number() is 0-based: 0 = master, 1..=6 = members)
     let mpe_loc = router
-        .allocate_mpe_note(2, 64)
-        .expect("MPE Channel 2 should allocate String 1");
+        .allocate_mpe_note(1, 64)
+        .expect("MPE Channel 1 should allocate String 1");
     assert_eq!(mpe_loc.string_index, 1);
     assert_eq!(mpe_loc.fret, 0);
 
     let mpe_loc_s6 = router
-        .allocate_mpe_note(7, 45)
-        .expect("MPE Channel 7 should allocate String 6");
+        .allocate_mpe_note(6, 45)
+        .expect("MPE Channel 6 should allocate String 6");
     assert_eq!(mpe_loc_s6.string_index, 6);
     assert_eq!(mpe_loc_s6.fret, 5); // E2 + 5 semitones = A2
 }
@@ -197,9 +198,9 @@ fn test_guitar_engine_rendering_stability() {
         GuitarInstrumentMode::Acoustic,
     );
 
-    // Trigger open E2 note
-    engine_elec.note_on(1, 40, 0.9);
-    engine_acous.note_on(1, 40, 0.9);
+    // Trigger open E2 note (channel 0 = master/global: ergonomic allocation)
+    engine_elec.note_on(0, 40, 0.9);
+    engine_acous.note_on(0, 40, 0.9);
 
     let mut left = [0.0f32; 256];
     let mut right = [0.0f32; 256];
@@ -237,7 +238,7 @@ fn test_default_guitar_output_stays_below_digital_full_scale() {
     ] {
         let mut engine = GuitarEngine::new(44100.0, set_type, mode);
         engine.strummer.set_strum_speed_ms(0.0);
-        engine.note_on(1, 40, 1.0);
+        engine.note_on(0, 40, 1.0);
 
         let mut peak = 0.0_f64;
         for _ in 0..44100 {
@@ -410,7 +411,7 @@ fn test_acoustic_stereo_spatial_radiation() {
         GuitarStringSetType::Acoustic012,
         GuitarInstrumentMode::Acoustic,
     );
-    engine.note_on(1, 40, 0.9); // Low E2
+    engine.note_on(0, 40, 0.9); // Low E2
 
     let mut left = [0.0f32; 1024];
     let mut right = [0.0f32; 1024];
@@ -440,18 +441,18 @@ fn test_single_channel_pitch_bend_and_pre_bend() {
         GuitarInstrumentMode::Acoustic,
     );
 
-    // 1. Send pitch bend on standard MIDI channel 1 (Channel 1, +2.0 semitones) BEFORE playing
-    engine.pitch_bend(1, 2.0);
+    // 1. Send pitch bend on the master channel (channel value 0, +2.0 semitones) BEFORE playing
+    engine.pitch_bend(0, 2.0);
     assert_eq!(engine.global_pitch_bend, 2.0);
 
-    // 2. Play note on Channel 1 (Low E2 -> String 6)
-    engine.note_on(1, 40, 0.8);
+    // 2. Play note on the master channel (Low E2 -> String 6)
+    engine.note_on(0, 40, 0.8);
 
     // String 6 (index 5) must have pitch bend applied (+2 semitones)
     assert!((engine.strings[5].pitch_bend_semitones - 2.0).abs() < 1e-4);
 
     // 3. Modulate bend while sounding to +4.0 semitones
-    engine.pitch_bend(1, 4.0);
+    engine.pitch_bend(0, 4.0);
     assert!((engine.strings[5].pitch_bend_semitones - 4.0).abs() < 1e-4);
 }
 
@@ -845,7 +846,7 @@ fn test_guitar_cabinet_models_and_mic_proximity() {
     assert_eq!(engine.amp_cab.cabinet.mic_distance_cm, 25.0);
 
     // Render audio through cabinet
-    engine.note_on(1, 60, 0.8);
+    engine.note_on(0, 60, 0.8);
     let mut max_abs = 0.0_f64;
     for _ in 0..600 {
         let (l, r) = engine.process_sample();

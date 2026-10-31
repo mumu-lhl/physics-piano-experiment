@@ -155,9 +155,58 @@ impl GuitarEngine {
                     self.strings[i].params = p;
                     self.strings[i].set_fret(fret);
                     self.strings[i].set_pitch_bend(self.global_pitch_bend);
+                    // A mode change re-voices every string from the
+                    // global bend; no per-string MPE bend survives it.
+                    self.strings[i].mpe_pitch_bend_semitones = None;
                 }
             }
         }
+    }
+
+    /// Clears all sounding and sequencing state (transport stop /
+    /// seek / restart): strings, pending strummer plucks, groove
+    /// position, sostenuto, pitch bends, feedback delay line and
+    /// amp/cabinet/body/pickup/squeak DSP state. Playing settings
+    /// (mode, volumes, knob values, pickup selection, cabinet model)
+    /// are preserved.
+    pub fn reset(&mut self) {
+        for string in &mut self.strings {
+            string.reset();
+        }
+        self.ready_plucks.clear();
+        self.strummer.pending_plucks.clear();
+        self.strummer.accum_buffer.clear();
+        self.strummer.accum_timer = 0;
+        self.groove.reset();
+        self.active_notes_on_string = [None; 6];
+        self.global_pitch_bend = 0.0;
+        self.sostenuto_down = false;
+        self.sostenuto_strings = [false; 6];
+        self.sostenuto_deferred = [false; 6];
+        self.feedback_buffer = [0.0; 2048];
+        self.feedback_write_idx = 0;
+        self.amp_cab.reset();
+        // The body and pickup have no reset method: rebuild them
+        // fresh, preserving their settings.
+        let resonance_gain = self.body.resonance_gain;
+        self.body = AcousticGuitarBody::new(self.sample_rate);
+        self.body.set_resonance_gain(resonance_gain);
+        let pickup_type = self.pickup.pickup_type;
+        let selector = self.pickup.selector;
+        let pole_width = self.pickup.pole_width;
+        let humbucker_spacing = self.pickup.humbucker_spacing;
+        let stratitis_strength = self.pickup.stratitis_strength;
+        let rwrp_quack = self.pickup.rwrp_quack;
+        let tone_knob = self.pickup.tone_circuit.tone_knob;
+        self.pickup = MagneticPickup::new(pickup_type, selector, self.sample_rate);
+        self.pickup.pole_width = pole_width;
+        self.pickup.humbucker_spacing = humbucker_spacing;
+        self.pickup.stratitis_strength = stratitis_strength;
+        self.pickup.rwrp_quack = rwrp_quack;
+        self.pickup.tone_circuit.set_tone(tone_knob);
+        let squeak_level = self.squeak.squeak_level;
+        self.squeak = FingerSqueakGenerator::new(self.sample_rate);
+        self.squeak.squeak_level = squeak_level;
     }
 
     /// Handles MIDI Note On event.
@@ -188,7 +237,7 @@ impl GuitarEngine {
                 string_index: (str_idx + 1) as u8,
                 fret: self.strings[str_idx].current_fret,
             })
-        } else if (2..=7).contains(&channel) {
+        } else if FretboardRouter::mpe_member_string_index(channel).is_some() {
             self.router.allocate_mpe_note(channel, midi_note)
         } else {
             self.router
@@ -209,7 +258,7 @@ impl GuitarEngine {
             self.sostenuto_strings[str_idx] = false;
             self.sostenuto_deferred[str_idx] = false;
 
-            let is_mpe = (2..=7).contains(&channel);
+            let is_mpe = FretboardRouter::mpe_member_string_index(channel).is_some();
             if self.strummer.strum_speed_ms <= 1.0 {
                 // Instant direct pluck with physical legato if string is already ringing
                 let string = &mut self.strings[str_idx];
@@ -223,12 +272,14 @@ impl GuitarEngine {
                 }
                 if !is_mpe {
                     string.set_pitch_bend(self.global_pitch_bend);
+                    string.mpe_pitch_bend_semitones = None;
                 }
             } else {
                 // Route to smart strummer for chord strumming and picking delays
                 self.strings[str_idx].set_fret(loc.fret);
                 if !is_mpe {
                     self.strings[str_idx].set_pitch_bend(self.global_pitch_bend);
+                    self.strings[str_idx].mpe_pitch_bend_semitones = None;
                 }
                 self.strings[str_idx].palm_mute_depth = self.palm_mute_depth;
                 self.strummer.trigger_note(str_idx, loc.fret, velocity);
@@ -318,8 +369,7 @@ impl GuitarEngine {
 
     /// Handles MIDI Note Off event.
     pub fn note_off(&mut self, channel: u8, midi_note: u8) {
-        if (2..=7).contains(&channel) {
-            let str_idx = (channel - 2) as usize;
+        if let Some(str_idx) = FretboardRouter::mpe_member_string_index(channel) {
             self.release_or_defer(str_idx);
         } else {
             for i in 0..6 {
@@ -366,17 +416,23 @@ impl GuitarEngine {
     }
 
     /// Handles Pitch Bend (e.g. string bending, whammy bar, or vibrato).
-    /// Supports both per-string MPE (channels 2..=7) and standard single-channel
-    /// MIDI keyboards (channel 0 or 1, or global broadcast).
+    /// Supports both per-string MPE (0-based member channels 1..=6)
+    /// and standard single-channel MIDI keyboards (master channel 0,
+    /// or any channel with no string: 7..=15, treated as global).
+    /// A member-channel bend is remembered per string (see
+    /// `mpe_pitch_bend_semitones`) so the strummer drain can
+    /// re-apply it instead of the global bend.
     pub fn pitch_bend(&mut self, channel: u8, semitones: f64) {
-        if (2..=7).contains(&channel) {
-            let str_idx = (channel - 2) as usize;
-            self.strings[str_idx].set_pitch_bend(semitones);
+        if let Some(str_idx) = FretboardRouter::mpe_member_string_index(channel) {
+            let string = &mut self.strings[str_idx];
+            string.set_pitch_bend(semitones);
+            string.mpe_pitch_bend_semitones = Some(semitones);
         } else {
             // Standard single-channel MIDI mode: apply to all strings and store global state
             self.global_pitch_bend = semitones;
             for s in &mut self.strings {
                 s.set_pitch_bend(semitones);
+                s.mpe_pitch_bend_semitones = None;
             }
         }
     }
@@ -495,11 +551,19 @@ impl GuitarEngine {
 
         // Step smart strummer and pluck any ready strings
         self.strummer.step_into(&mut self.ready_plucks);
+        let global_bend = self.global_pitch_bend;
         for p in self.ready_plucks.drain(..) {
             if p.string_index < 6 {
                 let s = &mut self.strings[p.string_index];
                 s.set_fret(p.fret);
-                s.set_pitch_bend(self.global_pitch_bend);
+                // Re-apply this string's own MPE bend when it has one:
+                // a strummed note must not fall back to the global
+                // bend. Skip the (modal-operator-rebuilding) call when
+                // the string already carries the desired bend.
+                let bend = s.mpe_pitch_bend_semitones.unwrap_or(global_bend);
+                if s.pitch_bend_semitones != bend {
+                    s.set_pitch_bend(bend);
+                }
                 s.palm_mute_depth = self.palm_mute_depth;
                 s.pluck(&self.exciter, self.pluck_pos_ratio, p.velocity);
             }
@@ -593,6 +657,219 @@ impl GuitarEngine {
             let (sl, sr) = self.process_sample();
             *l = sl as f32;
             *r = sr as f32;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::amp_cab::CabinetModel;
+    use crate::core::convolution::CabinetIrProfile;
+    use crate::core::groove::{GrooveAction, GroovePattern};
+
+    fn new_engine() -> GuitarEngine {
+        GuitarEngine::new(
+            44100.0,
+            GuitarStringSetType::Electric010,
+            GuitarInstrumentMode::Electric,
+        )
+    }
+
+    #[test]
+    fn mpe_channels_route_to_correct_strings() {
+        let mut engine = new_engine();
+        engine.strummer.set_strum_speed_ms(0.0);
+
+        // Member channels 1..=6 address strings 1..=6.
+        engine.note_on(1, 64, 0.9);
+        assert_eq!(engine.active_notes_on_string[0], Some(64));
+        engine.note_on(6, 45, 0.9);
+        assert_eq!(engine.active_notes_on_string[5], Some(45));
+        assert_eq!(engine.strings[5].current_fret, 5);
+
+        // Member-channel note-off releases only its own string.
+        engine.note_off(6, 45);
+        assert_eq!(engine.active_notes_on_string[5], None);
+        assert!(!engine.strings[5].is_held);
+        assert_eq!(engine.active_notes_on_string[0], Some(64));
+
+        // Global note-off (master channel) releases by note number.
+        engine.note_off(0, 64);
+        assert_eq!(engine.active_notes_on_string[0], None);
+
+        // Member-channel bend affects only its string.
+        engine.pitch_bend(1, 3.0);
+        assert_eq!(engine.strings[0].pitch_bend_semitones, 3.0);
+        assert!(engine.strings[1..]
+            .iter()
+            .all(|s| s.pitch_bend_semitones == 0.0));
+
+        // Master-channel bend applies to all strings.
+        engine.pitch_bend(0, 1.0);
+        assert!(engine
+            .strings
+            .iter()
+            .all(|s| s.pitch_bend_semitones == 1.0));
+        assert_eq!(engine.global_pitch_bend, 1.0);
+
+        // Channel 7 has no string: its bend is global, not string 6's.
+        engine.pitch_bend(7, 2.0);
+        assert_eq!(engine.global_pitch_bend, 2.0);
+        assert!(engine
+            .strings
+            .iter()
+            .all(|s| s.pitch_bend_semitones == 2.0));
+    }
+
+    #[test]
+    fn set_cabinet_model_through_engine_changes_cabinet() {
+        let mut engine = new_engine();
+        engine.set_cabinet_model(CabinetModel::Greenback);
+        assert_eq!(engine.amp_cab.cabinet.model, CabinetModel::Greenback);
+        assert_eq!(
+            engine.amp_cab.ir_engine.profile,
+            CabinetIrProfile::MarshallGreenback
+        );
+    }
+
+    #[test]
+    fn strummer_drain_preserves_mpe_pitch_bend() {
+        let mut engine = new_engine();
+        engine.pitch_bend(0, 0.5);
+        engine.pitch_bend(2, 2.0);
+        assert_eq!(engine.strings[1].pitch_bend_semitones, 2.0);
+        assert_eq!(engine.strings[1].mpe_pitch_bend_semitones, Some(2.0));
+
+        // MPE note on channel 2 -> string 2, via the strummer.
+        engine.note_on(2, 59, 0.9);
+        assert_eq!(engine.strings[1].pitch_bend_semitones, 2.0);
+
+        // Run until the strummer drains the pluck.
+        let mut drained = false;
+        for _ in 0..2000 {
+            engine.process_sample();
+            if engine.strings[1].is_held {
+                drained = true;
+                break;
+            }
+        }
+        assert!(drained, "strummer never drained the pluck");
+        assert_eq!(
+            engine.strings[1].pitch_bend_semitones, 2.0,
+            "strummer drain overwrote the MPE bend with the global bend"
+        );
+        assert_eq!(engine.strings[1].mpe_pitch_bend_semitones, Some(2.0));
+    }
+
+    #[test]
+    fn non_mpe_note_on_clears_mpe_pitch_bend() {
+        let mut engine = new_engine();
+        engine.pitch_bend(0, 0.5);
+        engine.note_on(2, 59, 0.9);
+        engine.pitch_bend(2, 2.0);
+        // Re-striking the same note from the master channel reuses the
+        // string as a non-MPE note: the global bend must win.
+        engine.note_on(0, 59, 0.9);
+        assert_eq!(engine.strings[1].pitch_bend_semitones, 0.5);
+        assert_eq!(engine.strings[1].mpe_pitch_bend_semitones, None);
+
+        let mut drained = false;
+        for _ in 0..2000 {
+            engine.process_sample();
+            if engine.strings[1].is_held {
+                drained = true;
+                break;
+            }
+        }
+        assert!(drained, "strummer never drained the pluck");
+        assert_eq!(engine.strings[1].pitch_bend_semitones, 0.5);
+    }
+
+    #[test]
+    fn engine_reset_clears_sound_groove_and_sostenuto() {
+        let mut engine = new_engine();
+        engine.strummer.set_strum_speed_ms(0.0);
+        // Channel 6 -> string 6, whose open note is E2 (40).
+        engine.note_on(6, 40, 0.9);
+        for _ in 0..100 {
+            engine.process_sample();
+        }
+        assert!(engine.strings.iter().any(|s| s.total_energy() > 0.0));
+        engine.set_sostenuto_pedal(true);
+        assert!(engine.sostenuto_down);
+
+        // Advance the groove past its first step.
+        engine.groove.set_pattern(GroovePattern::FolkStrum44);
+        let mut actions = 0;
+        for _ in 0..200_000 {
+            if !matches!(engine.groove.step_sample(), GrooveAction::None) {
+                actions += 1;
+                if actions == 2 {
+                    break;
+                }
+            }
+        }
+        assert_eq!(actions, 2, "groove did not advance");
+
+        // State the reset must also clear: an MPE bend, a queued
+        // strummer pluck and a filled feedback delay line.
+        engine.pitch_bend(2, 2.0);
+        engine.strummer.set_strum_speed_ms(18.0);
+        engine.note_on(0, 64, 0.9);
+        engine.set_acoustic_feedback(0.5, 4.5);
+        for _ in 0..3000 {
+            engine.process_sample();
+        }
+        assert!(!engine.strummer.accum_buffer.is_empty()
+            || !engine.strummer.pending_plucks.is_empty()
+            || !engine.ready_plucks.is_empty()
+            || engine.strings.iter().any(|s| s.is_held));
+
+        engine.reset();
+
+        assert!(engine.strings.iter().all(|s| s.total_energy() == 0.0));
+        assert!(engine.strings.iter().all(|s| !s.is_held));
+        assert_eq!(engine.active_notes_on_string, [None; 6]);
+        assert!(!engine.sostenuto_down);
+        assert_eq!(engine.sostenuto_strings, [false; 6]);
+        assert_eq!(engine.sostenuto_deferred, [false; 6]);
+        assert_eq!(engine.global_pitch_bend, 0.0);
+        assert!(engine
+            .strings
+            .iter()
+            .all(|s| s.pitch_bend_semitones == 0.0
+                && s.mpe_pitch_bend_semitones.is_none()));
+        assert!(engine.strummer.pending_plucks.is_empty());
+        assert!(engine.strummer.accum_buffer.is_empty());
+        assert_eq!(engine.strummer.accum_timer, 0);
+        assert!(engine.ready_plucks.is_empty());
+        assert!(engine.feedback_buffer.iter().all(|&v| v == 0.0));
+        assert_eq!(engine.feedback_write_idx, 0);
+
+        // The groove restarts from step 0: the first action is the
+        // down-strum at velocity 0.95.
+        for _ in 0..200_000 {
+            match engine.groove.step_sample() {
+                GrooveAction::None => {}
+                GrooveAction::Strum {
+                    direction,
+                    velocity,
+                    ..
+                } => {
+                    assert_eq!(direction, crate::core::strummer::StrumDirection::Down);
+                    assert!((velocity - 0.95).abs() < 1e-9);
+                    break;
+                }
+                other => panic!("unexpected first groove action after reset: {other:?}"),
+            }
+        }
+
+        // Silence: no held strings, cleared DSP state.
+        for _ in 0..512 {
+            let (l, r) = engine.process_sample();
+            assert_eq!(l, 0.0);
+            assert_eq!(r, 0.0);
         }
     }
 }
