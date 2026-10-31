@@ -70,11 +70,28 @@ impl SliderRestoreState {
 }
 
 /// Builds the shared instrument parameter slider, including right-click restore.
+/// No MIDI Learn arming: the only shipped caller is the deprecated drum
+/// editor; instruments that want Learn on a slider use
+/// [`parameter_slider_learn`].
 pub fn parameter_slider<P: Param + 'static>(
     cx: &mut Context,
     label: &'static str,
     param: &P,
     label_width: f32,
+) {
+    parameter_slider_learn(cx, label, param, label_width, None);
+}
+
+/// Builds the shared instrument parameter slider, including right-click restore,
+/// with optional MIDI Learn arming following the `parameter_knob` pattern:
+/// in Learn mode a left-click arms the parameter (no drag) and a right-click
+/// queues a binding clear (no restore, no undo record).
+pub fn parameter_slider_learn<P: Param + 'static>(
+    cx: &mut Context,
+    label: &'static str,
+    param: &P,
+    label_width: f32,
+    learn: Option<LearnArm>,
 ) {
     let param_ptr = param.as_ptr();
     HStack::new(cx, move |cx| {
@@ -90,6 +107,13 @@ pub fn parameter_slider<P: Param + 'static>(
                 move |_: &mut ParamSlider, cx: &mut EventContext, event: &mut Event| {
                     event.map(|window, meta| match window {
                         WindowEvent::MouseDown(MouseButton::Left) => {
+                            // MIDI Learn arming, mirroring parameter_knob.
+                            if let Some(learn) = &learn {
+                                if learn.arm(param_ptr) {
+                                    meta.consume();
+                                    return;
+                                }
+                            }
                             let bounds = cx.bounds();
                             let mouse = cx.mouse();
                             let inside = mouse.cursor_x >= bounds.x
@@ -164,6 +188,17 @@ pub fn parameter_slider<P: Param + 'static>(
                             meta.consume();
                         }
                         WindowEvent::MouseDown(MouseButton::Right) => {
+                            // MIDI Learn clear: in Learn mode a right-click
+                            // only queues a binding clear and must not
+                            // restore the value or write an undo record
+                            // — including when nothing is bound, in which
+                            // case the click is consumed silently.
+                            if let Some(learn) = &learn {
+                                if learn.request_clear(param_ptr) {
+                                    meta.consume();
+                                    return;
+                                }
+                            }
                             let bounds = cx.bounds();
                             let mouse = cx.mouse();
                             if mouse.cursor_x < bounds.x
@@ -240,7 +275,12 @@ pub fn parameter_knob<P: Param + 'static>(
         Label::new(cx, label).class("knob-label");
         let mut knob = ParamKnob::new(cx, param)
             .width(Pixels(40.0))
-            .height(Pixels(40.0));
+            .height(Pixels(40.0))
+            // Tab-focusable: ParamKnob already steps on arrow keys once
+            // focused (focus is taken on mouse-down); without this the
+            // knobs are unreachable by keyboard. The focus ring is drawn
+            // by the `param-knob:focus` rule in theme.css.
+            .focusable(true);
         let restore_state = Arc::new(parking_lot::Mutex::new(SliderRestoreState::default()));
         let knob_entity = knob.entity();
         knob.context().with_current(knob_entity, |cx| {
@@ -252,10 +292,7 @@ pub fn parameter_knob<P: Param + 'static>(
                             // only arms the parameter for the next CC and
                             // must not start a drag gesture.
                             if let Some(learn) = &learn {
-                                if learn.mode.get() {
-                                    if let Some(id) = learn.ptr_to_id.get(&param_ptr) {
-                                        learn.pending.set(Some(id.clone()));
-                                    }
+                                if learn.arm(param_ptr) {
                                     meta.consume();
                                     return;
                                 }
@@ -276,6 +313,14 @@ pub fn parameter_knob<P: Param + 'static>(
                             restore_state.lock().finish();
                         }
                         WindowEvent::MouseDown(MouseButton::Right) => {
+                            // MIDI Learn clear, mirroring parameter_knob:
+                            // consume without restoring in Learn mode.
+                            if let Some(learn) = &learn {
+                                if learn.request_clear(param_ptr) {
+                                    meta.consume();
+                                    return;
+                                }
+                            }
                             let bounds = cx.bounds();
                             let mouse = cx.mouse();
                             if mouse.cursor_x < bounds.x
@@ -357,6 +402,12 @@ fn apply_wheel_step(param_ptr: ParamPtr, current_normalized: &mut f32, requested
 }
 
 /// Builds a discrete selector and delegates its parameter update to the caller.
+/// `learn`, when present, carries the `LearnArm` and the bound parameter's
+/// `ParamPtr`: in Learn mode a left-click on the trigger arms the parameter
+/// (the popup does not open) and a right-click queues a binding clear,
+/// following the `parameter_knob` pattern. Selectors with no bindable
+/// parameter (e.g. the guitar chord picker, which edits plain signals)
+/// pass `None`.
 pub fn discrete_selector<F>(
     cx: &mut Context,
     label: &'static str,
@@ -364,17 +415,19 @@ pub fn discrete_selector<F>(
     options: Vec<(i32, String)>,
     label_width: f32,
     on_select: F,
+    learn: Option<(LearnArm, ParamPtr)>,
 ) where
     F: Fn(&mut EventContext, i32) + Clone + Send + Sync + 'static,
 {
     let trigger_options = options.clone();
+    let trigger_learn = learn.clone();
     HStack::new(cx, move |cx| {
         Label::new(cx, label).width(Pixels(label_width));
         Dropdown::new(
             cx,
             move |cx| {
                 let display_options = trigger_options.clone();
-                Button::new(cx, move |cx| {
+                let mut trigger = Button::new(cx, move |cx| {
                     HStack::new(cx, move |cx| {
                         Label::new(
                             cx,
@@ -395,6 +448,33 @@ pub fn discrete_selector<F>(
                 .on_press(|cx| cx.emit(PopupEvent::Switch))
                 .width(Stretch(1.0))
                 .height(Pixels(22.0));
+                // MIDI Learn arming on the trigger: a listener runs
+                // before the Button's own press handling and a consumed
+                // event skips it, so arming never opens the popup.
+                if let Some((learn, ptr)) = trigger_learn.clone() {
+                    let entity = trigger.entity();
+                    trigger.context().with_current(entity, |cx| {
+                        cx.add_listener(
+                            move |_: &mut Button,
+                                  _cx: &mut EventContext,
+                                  event: &mut Event| {
+                                event.map(|window, meta| match window {
+                                    WindowEvent::MouseDown(MouseButton::Left) => {
+                                        if learn.arm(ptr) {
+                                            meta.consume();
+                                        }
+                                    }
+                                    WindowEvent::MouseDown(MouseButton::Right) => {
+                                        if learn.request_clear(ptr) {
+                                            meta.consume();
+                                        }
+                                    }
+                                    _ => {}
+                                });
+                            },
+                        );
+                    });
+                }
             },
             move |cx| {
                 for (value, name) in options.clone() {
@@ -403,12 +483,14 @@ pub fn discrete_selector<F>(
                         Label::new(cx, name.clone())
                             .alignment(Alignment::Left)
                             .width(Stretch(1.0))
+                            .text_overflow(TextOverflow::Ellipsis)
                     })
                     .on_press(move |cx| {
                         on_select(cx, value);
                         cx.emit(PopupEvent::Close);
                     })
-                    .width(Stretch(1.0));
+                    .width(Stretch(1.0))
+                    .max_width(Pixels(320.0));
                 }
             },
         )

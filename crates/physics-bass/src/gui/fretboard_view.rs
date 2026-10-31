@@ -180,7 +180,7 @@ impl View for BassFretboardWidget {
 
     fn draw(&self, cx: &mut DrawContext, canvas: &Canvas) {
         let bounds = cx.bounds();
-        if bounds.w < 160.0 || bounds.h < 80.0 {
+        if bounds.w < 20.0 || bounds.h < 20.0 {
             return;
         }
         let (board_x, nut_width, fret_span, board_width) = Self::board_geometry(&bounds);

@@ -64,14 +64,20 @@ pub fn apply_midi_cc(
     Some(id.clone())
 }
 
-/// GUI-thread Learn state shared between the Learn button, the knob arming
-/// hook in `parameter_knob`, and the editor's display timer.
+/// GUI-thread Learn state shared between the Learn button, the arming
+/// hooks in `parameter_knob`/`parameter_slider`/`discrete_selector`/
+/// `ParamButton`/lid/mic/curve widgets, and the editor's display timer.
 #[derive(Clone)]
 pub struct LearnArm {
     /// Whether Learn mode is on (Learn button lit).
     pub mode: Signal<bool>,
     /// Parameter id armed by the last knob click while Learn was on.
     pub pending: Signal<Option<String>>,
+    /// Parameter id whose binding a Learn-mode right-click asked to clear.
+    /// The editor's display timer drains this, removes every CC bound to
+    /// the id, and reports the outcome on the Learn status line. Kept
+    /// separate from `pending` so a clear never arms a bind.
+    pub clear_pending: Signal<Option<String>>,
     /// `ParamPtr` -> parameter id, built once from `param_map()`.
     pub ptr_to_id: Arc<HashMap<ParamPtr, String>>,
 }
@@ -81,7 +87,44 @@ impl LearnArm {
         Self {
             mode: Signal::new(false),
             pending: Signal::new(None),
+            clear_pending: Signal::new(None),
             ptr_to_id: Arc::new(ptr_to_id),
+        }
+    }
+
+    /// Arm `ptr` for Learn binding. Returns `true` when Learn mode is on
+    /// and the pointer maps to a parameter id: the caller must consume
+    /// the click (arm, never change the value). Returns `false` when
+    /// Learn mode is off or the pointer is unknown, and the caller
+    /// proceeds with its normal interaction.
+    pub fn arm(&self, ptr: ParamPtr) -> bool {
+        if !self.mode.get() {
+            return false;
+        }
+        if let Some(id) = self.ptr_to_id.get(&ptr) {
+            self.pending.set(Some(id.clone()));
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Queue a clear of the binding for `ptr`'s parameter. Returns `true`
+    /// when Learn mode is on and the pointer maps to a parameter id: the
+    /// caller must consume the right-click without changing the value
+    /// (and without writing an undo record), even if nothing is bound —
+    /// the editor timer no-ops for unbound params. Returns `false` when
+    /// Learn mode is off or the pointer is unknown, and the caller
+    /// proceeds with its normal right-click behavior.
+    pub fn request_clear(&self, ptr: ParamPtr) -> bool {
+        if !self.mode.get() {
+            return false;
+        }
+        if let Some(id) = self.ptr_to_id.get(&ptr) {
+            self.clear_pending.set(Some(id.clone()));
+            true
+        } else {
+            false
         }
     }
 }
@@ -207,5 +250,48 @@ mod tests {
         assert_eq!(rev.len(), 2);
         let tone_ptr = fwd["tone"];
         assert_eq!(rev[&tone_ptr], "tone");
+    }
+
+    fn learn_arm_fixture() -> (Box<TestParams>, HashMap<String, ParamPtr>, LearnArm) {
+        let params = Box::new(TestParams::default());
+        let fwd = build_param_map(&*params);
+        let rev = build_ptr_to_id_map(&*params);
+        (params, fwd, LearnArm::new(rev))
+    }
+
+    #[test]
+    fn arm_is_inert_when_learn_mode_is_off() {
+        let (_params, fwd, arm) = learn_arm_fixture();
+        assert!(!arm.arm(fwd["tone"]));
+        assert_eq!(arm.pending.get(), None);
+        assert!(!arm.request_clear(fwd["tone"]));
+        assert_eq!(arm.clear_pending.get(), None);
+    }
+
+    #[test]
+    fn arm_and_clear_queue_in_learn_mode() {
+        let (_params, fwd, arm) = learn_arm_fixture();
+        arm.mode.set(true);
+        assert!(arm.arm(fwd["tone"]));
+        assert_eq!(arm.pending.get(), Some("tone".to_string()));
+        assert!(arm.request_clear(fwd["gain"]));
+        assert_eq!(arm.clear_pending.get(), Some("gain".to_string()));
+        // Arming and clearing are independent signals: neither clobbers
+        // the other.
+        assert_eq!(arm.pending.get(), Some("tone".to_string()));
+    }
+
+    #[test]
+    fn arm_and_clear_reject_unknown_pointers() {
+        let (_params, fwd, arm) = learn_arm_fixture();
+        arm.mode.set(true);
+        // A pointer into a different params struct is not in the map.
+        let other = TestParams::default();
+        let other_ptr = build_param_map(&other)["tone"];
+        assert_ne!(other_ptr, fwd["tone"]);
+        assert!(!arm.arm(other_ptr));
+        assert!(!arm.request_clear(other_ptr));
+        assert_eq!(arm.pending.get(), None);
+        assert_eq!(arm.clear_pending.get(), None);
     }
 }

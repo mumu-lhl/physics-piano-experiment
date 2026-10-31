@@ -112,6 +112,16 @@ pub struct ViziaState {
         default
     )]
     light_theme: AtomicCell<bool>,
+    /// Persisted UI language index, mirroring `Language::index()`.
+    /// `u8::MAX` is the sentinel for "system locale" (see
+    /// `Language::resolve_persisted`); it is also the default for state
+    /// saved before this field existed, so old projects keep following
+    /// the system locale instead of snapping to English (index 0).
+    #[serde(
+        with = "nice_plug_core::params::persist::serialize_atomic_cell",
+        default = "default_language_index"
+    )]
+    language_index: AtomicCell<u8>,
     /// Reactive mirror of `light_theme`, so views (the theme toggle button and the root
     /// container's `theme-light` class) stay in sync. Not persisted itself; it is re-synced
     /// from `light_theme` whenever state is restored.
@@ -150,6 +160,14 @@ fn default_theme_signal() -> SyncSignal<bool> {
     SyncSignal::new(false)
 }
 
+/// Default for a missing `language_index` field when restoring state saved
+/// before it existed: the `u8::MAX` sentinel, meaning "system locale" (see
+/// `Language::resolve_persisted`). A bare `#[serde(default)]` would give 0
+/// (English), silently overriding the user's system locale on restore.
+fn default_language_index() -> AtomicCell<u8> {
+    AtomicCell::new(u8::MAX)
+}
+
 impl Debug for ViziaState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (width, height) = (self.size_fn)();
@@ -158,6 +176,7 @@ impl Debug for ViziaState {
             .field("size_fn", &format!("<fn> ({}, {})", width, height))
             .field("scale_factor", &self.scale_factor)
             .field("light_theme", &self.light_theme)
+            .field("language_index", &self.language_index)
             .field("open", &self.open)
             .finish()
     }
@@ -167,6 +186,7 @@ impl<'a> PersistentField<'a, ViziaState> for Arc<ViziaState> {
     fn set(&self, new_value: ViziaState) {
         self.set_user_scale_factor(new_value.scale_factor.load());
         self.set_light_theme(new_value.light_theme.load());
+        self.set_language_index(new_value.language_index.load());
     }
 
     fn map<F, R>(&self, f: F) -> R
@@ -189,6 +209,7 @@ impl ViziaState {
             scale_signal: SyncSignal::new(1.0),
             light_theme: AtomicCell::new(false),
             theme_signal: SyncSignal::new(false),
+            language_index: AtomicCell::new(u8::MAX),
             open: AtomicBool::new(false),
         })
     }
@@ -206,6 +227,7 @@ impl ViziaState {
             scale_signal: SyncSignal::new(default_scale_factor),
             light_theme: AtomicCell::new(false),
             theme_signal: SyncSignal::new(false),
+            language_index: AtomicCell::new(u8::MAX),
             open: AtomicBool::new(false),
         })
     }
@@ -282,6 +304,22 @@ impl ViziaState {
     /// [`Self::light_theme`] so they track theme changes from every source.
     pub fn theme_signal(&self) -> SyncSignal<bool> {
         self.theme_signal.clone()
+    }
+
+    /// Persisted UI language index, as stored by [`Language::index`]
+    /// (see `physics_ui::Language`). `u8::MAX` is the sentinel for
+    /// "system locale": the default for new state and for state saved
+    /// before this field existed.
+    pub fn language_index(&self) -> u8 {
+        self.language_index.load()
+    }
+
+    /// Set the persisted UI language index. Editors call this from their
+    /// `SetLanguage` handlers; the value is plain-stored with no mirror
+    /// signal — editors drive their UI from their own language signal,
+    /// and the persisted value is read back at editor construction.
+    pub fn set_language_index(&self, index: u8) {
+        self.language_index.store(index);
     }
 
     /// Whether the GUI is currently visible.
@@ -379,5 +417,55 @@ mod tests {
         state.set_user_scale_factor(2.0);
         assert_eq!(state.user_scale_factor(), 2.0);
         assert_eq!(state.scale_signal().get(), 2.0);
+    }
+
+    #[test]
+    fn language_defaults_to_system_locale_sentinel() {
+        let state = ViziaState::new(|| (800, 600));
+        assert_eq!(state.language_index(), u8::MAX);
+    }
+
+    #[test]
+    fn language_index_set_get_round_trips() {
+        let state = ViziaState::new(|| (800, 600));
+        state.set_language_index(1);
+        assert_eq!(state.language_index(), 1);
+        state.set_language_index(u8::MAX);
+        assert_eq!(state.language_index(), u8::MAX);
+    }
+
+    #[test]
+    fn language_index_round_trips_through_serde() {
+        use nice_plug_core::params::persist::{deserialize_field, serialize_field};
+
+        let state = ViziaState::new(|| (800, 600));
+        state.set_language_index(1);
+        let json = serialize_field(&*state).unwrap();
+        let restored: ViziaState = deserialize_field(&json).unwrap();
+        assert_eq!(restored.language_index(), 1);
+    }
+
+    #[test]
+    fn old_blob_without_language_index_restores_sentinel() {
+        use nice_plug_core::params::persist::{PersistentField, deserialize_field};
+
+        // State saved before the language field existed (including the
+        // P1-era shape with scale + theme only): the restore must
+        // succeed, keep the saved zoom/theme, and default the language
+        // to the system-locale sentinel instead of English (index 0).
+        let state = ViziaState::new(|| (800, 600));
+        let restored: ViziaState =
+            deserialize_field(r#"{"scale_factor": 1.5, "light_theme": true}"#).unwrap();
+        assert_eq!(restored.user_scale_factor(), 1.5);
+        assert!(restored.light_theme());
+        assert_eq!(restored.language_index(), u8::MAX);
+        state.set(restored);
+        assert_eq!(state.language_index(), u8::MAX);
+
+        // An explicit language index in the blob restores verbatim.
+        let explicit: ViziaState = deserialize_field(r#"{"language_index": 1}"#).unwrap();
+        assert_eq!(explicit.language_index(), 1);
+        assert_eq!(explicit.user_scale_factor(), 1.0);
+        assert!(!explicit.light_theme());
     }
 }

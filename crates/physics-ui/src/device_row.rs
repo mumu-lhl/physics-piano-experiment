@@ -79,9 +79,12 @@ pub fn device_settings_row(cx: &mut Context, presets_dir: PathBuf, lang: Languag
             // The plugin has no API to end the wrapper's event loop, so the
             // process exits directly once the relaunched child is spawned;
             // the child waits before opening devices so this process
-            // releases them first.
-            if device_settings::spawn_restart(Duration::from_millis(800)).is_ok() {
-                std::process::exit(0);
+            // releases them first. A spawn failure must not exit (the
+            // child never started); there is no status label in this row,
+            // so the failure is logged and the button stays inert.
+            match device_settings::spawn_restart(Duration::from_millis(800)) {
+                Ok(()) => std::process::exit(0),
+                Err(err) => eprintln!("Failed to spawn restarted standalone: {err}"),
             }
         });
     })
@@ -145,16 +148,34 @@ fn device_dropdown(
                     let dir = dir.clone();
                     let display = value.clone().unwrap_or_else(|| popup_none.clone());
                     Button::new(cx, move |cx| {
-                        Label::new(cx, display).alignment(Alignment::Left)
+                        Label::new(cx, display)
+                            .alignment(Alignment::Left)
+                            .width(Stretch(1.0))
+                            .text_overflow(TextOverflow::Ellipsis)
                     })
                     .on_press(move |cx| {
                         let mut next = settings.get();
                         set(&mut next, value.clone());
-                        settings.set(next.clone());
-                        let _ = next.save_to_dir(&dir);
+                        if let Err(err) = next.save_to_dir(&dir) {
+                            // The save failed (read-only/full presets dir):
+                            // say so and revert the signal to the last
+                            // saved sidecar instead of showing a device
+                            // that a restart would discard. The trigger
+                            // already maps unknown names to the unset
+                            // label, so the unvalidated reload is safe
+                            // to display.
+                            eprintln!(
+                                "Failed to save device settings to {}: {err}",
+                                dir.display()
+                            );
+                            settings.set(DeviceSettings::load_from_dir(&dir));
+                        } else {
+                            settings.set(next);
+                        }
                         cx.emit(PopupEvent::Close);
                     })
-                    .width(Stretch(1.0));
+                    .width(Stretch(1.0))
+                    .max_width(Pixels(320.0));
                 }
             },
         )

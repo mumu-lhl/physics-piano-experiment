@@ -30,16 +30,11 @@ impl Drop for GuitarFretboardWidget {
     fn drop(&mut self) {
         for s in 0..6 {
             if let Some(fret) = self.active_strum_frets[s].take() {
-                let _ = self.gui_tx.send(GuiGuitarEvent::NoteOff {
-                    string_index: (s + 1) as u8,
-                    fret,
-                });
+                self.send_note_off((s + 1) as u8, fret);
             }
         }
         if let Some((string_index, fret)) = self.held_mouse_pos.take() {
-            let _ = self
-                .gui_tx
-                .send(GuiGuitarEvent::NoteOff { string_index, fret });
+            self.send_note_off(string_index, fret);
         }
     }
 }
@@ -66,20 +61,29 @@ impl GuitarFretboardWidget {
     fn release_all(&mut self, cx: &mut EventContext) {
         for s in 0..6 {
             if let Some(fret) = self.active_strum_frets[s].take() {
-                let _ = self.gui_tx.send(GuiGuitarEvent::NoteOff {
-                    string_index: (s + 1) as u8,
-                    fret,
-                });
+                self.send_note_off((s + 1) as u8, fret);
             }
         }
         if let Some((prev_str, prev_fret)) = self.held_mouse_pos.take() {
-            let _ = self.gui_tx.send(GuiGuitarEvent::NoteOff {
-                string_index: prev_str,
-                fret: prev_fret,
-            });
+            self.send_note_off(prev_str, prev_fret);
         }
         cx.release();
         cx.needs_redraw();
+    }
+
+    /// Non-blocking NoteOff send: the channel is bounded and a full
+    /// channel must not stall the GUI thread. A dropped NoteOff is
+    /// logged because it can leave a stuck note sounding; dropped
+    /// NoteOns (callers use `try_send` directly) stay silent.
+    fn send_note_off(&self, string_index: u8, fret: u8) {
+        if let Err(err) = self.gui_tx.try_send(GuiGuitarEvent::NoteOff {
+            string_index,
+            fret,
+        }) {
+            eprintln!(
+                "Guitar fretboard: dropped NoteOff for string {string_index} fret {fret}: {err}"
+            );
+        }
     }
 
     /// Convert mouse position (x, y) into (string_index [1..=6], fret [0..=24], velocity [0.35..=1.0])
@@ -146,7 +150,7 @@ impl View for GuitarFretboardWidget {
                     self.release_all(cx);
                     self.held_mouse_pos = Some((str_idx, fret));
                     self.active_strum_frets[(str_idx - 1) as usize] = Some(fret);
-                    let _ = self.gui_tx.send(GuiGuitarEvent::NoteOn {
+                    let _ = self.gui_tx.try_send(GuiGuitarEvent::NoteOn {
                         string_index: str_idx,
                         fret,
                         velocity,
@@ -164,16 +168,13 @@ impl View for GuitarFretboardWidget {
                             if let Some((prev_str, prev_fret)) = self.held_mouse_pos {
                                 if prev_str == str_idx {
                                     // Sliding along the same string: release old fret
-                                    let _ = self.gui_tx.send(GuiGuitarEvent::NoteOff {
-                                        string_index: prev_str,
-                                        fret: prev_fret,
-                                    });
+                                    self.send_note_off(prev_str, prev_fret);
                                 }
                                 // Crossing strings (strumming): allow previous string to ring naturally
                             }
                             self.held_mouse_pos = Some((str_idx, fret));
                             self.active_strum_frets[(str_idx - 1) as usize] = Some(fret);
-                            let _ = self.gui_tx.send(GuiGuitarEvent::NoteOn {
+                            let _ = self.gui_tx.try_send(GuiGuitarEvent::NoteOn {
                                 string_index: str_idx,
                                 fret,
                                 velocity,

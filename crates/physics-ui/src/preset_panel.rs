@@ -99,13 +99,15 @@ pub fn preset_panel(
                                     Label::new(cx, name.clone())
                                         .alignment(Alignment::Left)
                                         .width(Stretch(1.0))
+                                        .text_overflow(TextOverflow::Ellipsis)
                                 })
                                 .class("preset-item")
                                 .on_press(move |cx| {
                                     cx.emit(PresetPanelAction::Select(event_id.clone()));
                                     cx.emit(PopupEvent::Close);
                                 })
-                                .width(Stretch(1.0));
+                                .width(Stretch(1.0))
+                                .max_width(Pixels(layout.preset_width));
                             }
                         });
                     }
@@ -140,6 +142,7 @@ pub fn preset_panel(
                             Label::new(cx, label.clone())
                                 .alignment(Alignment::Left)
                                 .width(Stretch(1.0))
+                                .text_overflow(TextOverflow::Ellipsis)
                         })
                         .class("preset-item")
                         .on_press(move |cx| {

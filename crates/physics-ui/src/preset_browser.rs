@@ -92,12 +92,14 @@ pub fn preset_browser_tags(items: &[PresetBrowserItem]) -> Vec<String> {
 }
 
 /// Parse tag editor text into tags: comma-separated, trimmed, empties and
-/// duplicates dropped, first-seen order kept.
+/// duplicates dropped, first-seen order kept. Dedup is case-folded
+/// ("Warm" and "warm" are one tag, keeping the first-seen spelling for
+/// display), matching the manager-side normalization rule.
 pub fn parse_tags_input(text: &str) -> Vec<String> {
-    let mut tags = Vec::new();
+    let mut tags: Vec<String> = Vec::new();
     for part in text.split(',') {
         let tag = part.trim().to_string();
-        if !tag.is_empty() && !tags.contains(&tag) {
+        if !tag.is_empty() && !tags.iter().any(|t| t.to_lowercase() == tag.to_lowercase()) {
             tags.push(tag);
         }
     }
@@ -226,8 +228,13 @@ pub fn preset_browser(cx: &mut Context, lang: Language, signals: PresetBrowserSi
                             .on_press(|cx| cx.emit(PresetBrowserAction::ToggleFavoritesOnly));
                         });
                     })
-                    .height(Pixels(28.0))
-                    .horizontal_gap(Pixels(6.0));
+                    .horizontal_gap(Pixels(6.0))
+                    // Chip rows wrap instead of painting past the panel
+                    // border: Vizia/morphorm expose flex-wrap. No fixed
+                    // height, so a wrapped second line grows the row
+                    // instead of being clipped by it.
+                    .wrap(LayoutWrap::Wrap)
+                    .min_height(Pixels(28.0));
                 });
                 Binding::new(cx, selected_tags, move |cx| {
                     let selected = selected_tags.get();
@@ -253,8 +260,9 @@ pub fn preset_browser(cx: &mut Context, lang: Language, signals: PresetBrowserSi
                                     });
                             }
                         })
-                        .height(Pixels(28.0))
-                        .horizontal_gap(Pixels(6.0));
+                        .horizontal_gap(Pixels(6.0))
+                        .wrap(LayoutWrap::Wrap)
+                        .min_height(Pixels(28.0));
                     });
                 });
                 ScrollView::new(cx, move |cx| {
@@ -339,7 +347,7 @@ pub fn preset_browser(cx: &mut Context, lang: Language, signals: PresetBrowserSi
             })
             .class("browser-panel")
             .width(Pixels(560.0))
-            .height(Pixels(500.0));
+            .height(Pixels(520.0));
             Element::new(cx).height(Stretch(1.0));
         })
         .position_type(PositionType::Absolute)
@@ -450,6 +458,15 @@ mod tests {
         );
         assert!(parse_tags_input(" , ,").is_empty());
         assert!(parse_tags_input("").is_empty());
+    }
+
+    #[test]
+    fn parse_tags_input_dedupes_case_insensitively_keeping_first_spelling() {
+        assert_eq!(
+            parse_tags_input("Warm, warm, WARM, Jazz, jazz"),
+            vec!["Warm", "Jazz"]
+        );
+        assert_eq!(parse_tags_input("  Bright ,bright"), vec!["Bright"]);
     }
 
     #[test]

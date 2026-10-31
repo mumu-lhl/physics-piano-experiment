@@ -10,6 +10,7 @@
 //! right-click on a handle resets that point to its parameter default
 //! (the linear value).
 
+use crate::midi_learn::LearnArm;
 use crate::skia_compat as vg;
 use crate::skia_compat::CanvasExt;
 use nice_plug::prelude::Param;
@@ -30,6 +31,10 @@ pub struct VelocityCurveEditorWidget {
     bases: [ParamWidgetBase; 3],
     /// Interior point currently being dragged (0..3, indexing `bases`).
     dragging: Option<usize>,
+    /// Optional MIDI Learn arming: in Learn mode clicking a handle arms
+    /// that point's parameter instead of dragging it. The widget has no
+    /// single bindable parameter (three points), so arming is per-handle.
+    learn: Option<LearnArm>,
 }
 
 impl VelocityCurveEditorWidget {
@@ -38,6 +43,7 @@ impl VelocityCurveEditorWidget {
         point_25: &'p P,
         point_50: &'p P,
         point_75: &'p P,
+        learn: Option<LearnArm>,
     ) -> Handle<'c, Self>
     where
         'p: 'c,
@@ -50,6 +56,7 @@ impl VelocityCurveEditorWidget {
                 ParamWidgetBase::new(cx, point_75),
             ],
             dragging: None,
+            learn,
         }
         .build(cx, |_| {})
     }
@@ -112,6 +119,16 @@ impl View for VelocityCurveEditorWidget {
                 let bounds = cx.bounds();
                 let (mx, my) = (cx.mouse().cursor_x, cx.mouse().cursor_y);
                 if let Some(i) = self.hit_point(&bounds, mx, my) {
+                    // Learn-mode click on a handle arms that point's
+                    // parameter instead of starting a drag.
+                    if self
+                        .learn
+                        .as_ref()
+                        .is_some_and(|learn| learn.arm(self.bases[i - 1].param_ptr()))
+                    {
+                        meta.consume();
+                        return;
+                    }
                     self.dragging = Some(i - 1);
                     cx.capture();
                     cx.focus();
@@ -153,11 +170,26 @@ impl View for VelocityCurveEditorWidget {
                 let bounds = cx.bounds();
                 let (mx, my) = (cx.mouse().cursor_x, cx.mouse().cursor_y);
                 if let Some(i) = self.hit_point(&bounds, mx, my) {
+                    // Learn-mode right-click on a handle clears its
+                    // binding (or silently consumes when unbound)
+                    // instead of resetting the point.
+                    if self.learn.as_ref().is_some_and(|learn| {
+                        learn.request_clear(self.bases[i - 1].param_ptr())
+                    }) {
+                        meta.consume();
+                        return;
+                    }
                     self.end_drag(cx);
                     self.reset_point(cx, i - 1);
                     cx.needs_redraw();
                     meta.consume();
                 }
+            }
+            WindowEvent::FocusOut if cx.focused() != cx.current() => {
+                self.end_drag(cx);
+            }
+            WindowEvent::WindowFocused(false) => {
+                self.end_drag(cx);
             }
             _ => {}
         });

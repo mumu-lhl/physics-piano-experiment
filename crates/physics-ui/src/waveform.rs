@@ -14,19 +14,32 @@ use vizia_plug::vizia::prelude::*;
 /// Samples drawn, taken from the tail of the shared history.
 pub const WAVEFORM_WINDOW: usize = 1024;
 
-/// Downsample `samples` to one value per column by striding: each column
-/// takes the sample nearest its center. Empty input or zero columns yield
-/// an empty vec; fewer samples than columns keeps every sample unchanged.
-pub fn downsample_waveform(samples: &[f32], columns: usize) -> Vec<f32> {
+/// Downsample `samples` to one min/max envelope pair per column: each
+/// column covers a contiguous slice of the input and reports its minimum
+/// and maximum, so peaks survive decimation instead of being skipped by
+/// striding. Empty input or zero columns yield an empty vec; fewer
+/// samples than columns keep every sample (as a degenerate pair), and
+/// the draw step stretches those pairs across the full widget width.
+pub fn downsample_waveform(samples: &[f32], columns: usize) -> Vec<(f32, f32)> {
     if samples.is_empty() || columns == 0 {
         return Vec::new();
     }
     if samples.len() <= columns {
-        return samples.to_vec();
+        return samples.iter().map(|&v| (v, v)).collect();
     }
-    let stride = samples.len() as f32 / columns as f32;
     (0..columns)
-        .map(|i| samples[(i as f32 * stride) as usize])
+        .map(|i| {
+            let start = i * samples.len() / columns;
+            let end = (i + 1) * samples.len() / columns;
+            let slice = &samples[start..end];
+            let mut min = f32::INFINITY;
+            let mut max = f32::NEG_INFINITY;
+            for &v in slice {
+                min = min.min(v);
+                max = max.max(v);
+            }
+            (min, max)
+        })
         .collect()
 }
 
@@ -80,15 +93,22 @@ impl View for WaveformWidget {
         let columns = (bounds.w as usize).max(1);
         let values = downsample_waveform(&hist[hist.len() - n..], columns);
         let half_h = bounds.h / 2.0 - 3.0;
+        // One vertical segment per column, centered in its slot so the
+        // trace stretches across the full width even when there are
+        // fewer samples than pixels (high zoom / narrow window).
         let mut trace = vg::Path::new();
-        for (i, v) in values.iter().enumerate() {
-            let x = bounds.x + i as f32;
-            let y = (mid_y - v * half_h).clamp(bounds.y + 2.0, bounds.y + bounds.h - 2.0);
-            if i == 0 {
-                trace.move_to(x, y);
-            } else {
-                trace.line_to(x, y);
+        let count = values.len() as f32;
+        for (i, (min, max)) in values.iter().enumerate() {
+            let x = bounds.x + (i as f32 + 0.5) * bounds.w / count;
+            let y_top = (mid_y - max * half_h).clamp(bounds.y + 2.0, bounds.y + bounds.h - 2.0);
+            let mut y_bottom =
+                (mid_y - min * half_h).clamp(bounds.y + 2.0, bounds.y + bounds.h - 2.0);
+            if y_bottom - y_top < 1.0 {
+                // A flat column still needs a visible mark.
+                y_bottom = y_top + 1.0;
             }
+            trace.move_to(x, y_top);
+            trace.line_to(x, y_bottom);
         }
         canvas.stroke_path(
             &trace,
@@ -110,24 +130,38 @@ mod tests {
     #[test]
     fn downsample_keeps_short_inputs_unchanged() {
         let samples = vec![0.25, -0.75, 0.5];
-        assert_eq!(downsample_waveform(&samples, 10), samples);
-        assert_eq!(downsample_waveform(&samples, 3), samples);
+        let expected: Vec<(f32, f32)> = samples.iter().map(|&v| (v, v)).collect();
+        assert_eq!(downsample_waveform(&samples, 10), expected);
+        assert_eq!(downsample_waveform(&samples, 3), expected);
     }
 
     #[test]
-    fn downsample_strides_to_column_count() {
+    fn downsample_reports_min_max_envelope_per_column() {
         let samples: Vec<f32> = (0..10).map(|i| i as f32).collect();
         assert_eq!(
             downsample_waveform(&samples, 5),
-            vec![0.0, 2.0, 4.0, 6.0, 8.0]
+            vec![(0.0, 1.0), (2.0, 3.0), (4.0, 5.0), (6.0, 7.0), (8.0, 9.0)]
         );
-        let sine: Vec<f32> = (0..1024)
-            .map(|i| (2.0 * std::f32::consts::PI * i as f32 / 1024.0).sin())
-            .collect();
-        let down = downsample_waveform(&sine, 512);
-        assert_eq!(down.len(), 512);
-        // Quarter-period peak survives striding.
-        assert!((down[128] - 1.0).abs() < 1e-6);
-        assert!(down[384] < -0.99);
+        // A lone peak inside a column survives decimation (striding
+        // would skip it whenever it fell between stride centers).
+        let mut spiked = vec![0.0; 100];
+        spiked[37] = 1.0;
+        spiked[63] = -1.0;
+        let down = downsample_waveform(&spiked, 10);
+        assert_eq!(down.len(), 10);
+        assert_eq!(down[3], (0.0, 1.0));
+        assert_eq!(down[6], (-1.0, 0.0));
+        assert!(down.iter().all(|&(lo, hi)| lo <= hi));
+    }
+
+    #[test]
+    fn downsample_envelope_covers_every_sample() {
+        // 7 samples into 3 columns: slices are [0..2], [2..4], [4..7]
+        // (integer partition, no sample skipped or double-counted).
+        let samples = vec![1.0, -2.0, 3.0, -4.0, 5.0, -6.0, 7.0];
+        assert_eq!(
+            downsample_waveform(&samples, 3),
+            vec![(-2.0, 1.0), (-4.0, 3.0), (-6.0, 7.0)]
+        );
     }
 }

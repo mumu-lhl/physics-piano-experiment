@@ -3,7 +3,7 @@
 use crossbeam_channel::Sender;
 use nice_plug::prelude::Param;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use vizia_plug::vizia::prelude::*;
 use vizia_plug::widgets::param_registry::ParamRegistry;
 use vizia_plug::widgets::util::ModifiersExt;
@@ -52,6 +52,10 @@ enum DiscreteParam {
 pub const EDITOR_WIDTH: u32 = 1080;
 pub const EDITOR_HEIGHT: u32 = 904;
 
+/// Per-process counter disambiguating SaveAs ids generated within the
+/// same nanosecond (see `GuitarUiEvent::SaveAs`).
+static SAVE_AS_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 fn knob<P: Param + 'static>(
     cx: &mut Context,
     label: &'static str,
@@ -88,10 +92,29 @@ fn discrete_selector(
     options: Vec<(i32, String)>,
     params: Arc<PhysicsGuitarParams>,
     param: DiscreteParam,
+    learn: &LearnArm,
 ) {
-    shared_discrete_selector(cx, label, selected, options, 92.0, move |cx, value| {
-        set_discrete_param(cx, &params, param, value);
-    });
+    // Resolve the ParamPtr before moving `params` into the on-select
+    // closure: the selector arms this parameter in Learn mode.
+    let ptr = match param {
+        DiscreteParam::Mode => params.mode.as_ptr(),
+        DiscreteParam::PluckStyle => params.pluck_style.as_ptr(),
+        DiscreteParam::PickupPosition => params.pickup_pos.as_ptr(),
+        DiscreteParam::PickupType => params.pickup_type.as_ptr(),
+        DiscreteParam::CabinetModel => params.cabinet_model.as_ptr(),
+        DiscreteParam::GroovePattern => params.groove_pattern.as_ptr(),
+    };
+    shared_discrete_selector(
+        cx,
+        label,
+        selected,
+        options,
+        92.0,
+        move |cx, value| {
+            set_discrete_param(cx, &params, param, value);
+        },
+        Some((learn.clone(), ptr)),
+    );
 }
 
 /// Recomputes the chord rack's fingering readout ("C  x 3 2 0 1 0")
@@ -141,6 +164,10 @@ struct GuitarUiState {
     browser_tags_input: Signal<String>,
     language: Signal<Language>,
     language_atom: Arc<AtomicU8>,
+    /// Plugin/editor state, for persisting the chosen language index
+    /// across restarts (mirrors the `language_atom` write in the
+    /// SetLanguage handler).
+    editor_state: Arc<ViziaState>,
     name_input: Signal<String>,
     is_user_preset: Signal<bool>,
     can_undo: Signal<bool>,
@@ -367,7 +394,13 @@ impl Model for GuitarUiState {
                 self.refresh_preset_signals();
             }
             PresetBrowserAction::ToggleFavorite(id) => {
-                let _ = self.manager.write().toggle_favorite(id);
+                if let Err(err) = self.manager.write().toggle_favorite(id) {
+                    eprintln!("Failed to save favorite for preset {id}: {err}");
+                    // toggle_favorite mutates in-memory state before
+                    // saving; reload the sidecar so the UI reflects
+                    // the last saved value.
+                    self.manager.write().load_favorites();
+                }
                 self.refresh_preset_signals();
             }
             PresetBrowserAction::ToggleTag(tag) => {
@@ -386,7 +419,13 @@ impl Model for GuitarUiState {
             PresetBrowserAction::SetTags(text) => {
                 let tags = parse_tags_input(text);
                 let id = self.selected_id.get();
-                let _ = self.manager.write().set_tags(&id, tags);
+                if let Err(err) = self.manager.write().set_tags(&id, tags) {
+                    eprintln!("Failed to save tags for preset {id}: {err}");
+                    // set_tags mutates in-memory state before saving;
+                    // reload the sidecar before re-reading tags_for
+                    // below so the UI reflects the last saved value.
+                    self.manager.write().load_tags();
+                }
                 self.browser_tags_input
                     .set(self.manager.read().tags_for(&id).join(", "));
                 self.refresh_preset_signals();
@@ -413,6 +452,7 @@ impl Model for GuitarUiState {
                         .set(translate(lang, "learn.on", "Learn on: click a knob").to_string());
                 } else {
                     self.learn_arm.pending.set(None);
+                    self.learn_arm.clear_pending.set(None);
                     self.last_seen_pending = None;
                     self.learn_status
                         .set(translate(lang, "learn.off", "Learn off").to_string());
@@ -423,6 +463,48 @@ impl Model for GuitarUiState {
                 // controller and bind it. Learn mode stays on after a
                 // successful bind so several knobs can be bound in a row.
                 if self.learn_arm.mode.get() {
+                    // Clear-bindings queued by Learn-mode right-clicks:
+                    // unbind every CC mapped to the queued id. Runs
+                    // before the bind poll below so a queued clear
+                    // cannot be re-bound by a stale CC on the same tick.
+                    if let Some(id) = self.learn_arm.clear_pending.get() {
+                        self.learn_arm.clear_pending.set(None);
+                        let lang = self.language.get();
+                        let ccs: Vec<u8> = self
+                            .manager
+                            .read()
+                            .midi_mappings()
+                            .iter()
+                            .filter(|(_, bound)| **bound == id)
+                            .map(|(cc, _)| *cc)
+                            .collect();
+                        let mut cleared = false;
+                        let mut save_err: Option<String> = None;
+                        for cc in ccs {
+                            match self.manager.write().unbind_midi_cc(cc) {
+                                Ok(removed) => cleared |= removed,
+                                Err(err) => save_err = Some(err.to_string()),
+                            }
+                        }
+                        if let Some(err_text) = save_err {
+                            self.learn_status.set(translate_format(
+                                lang,
+                                "learn.save_failed",
+                                "Failed to save binding for {param}: {error}",
+                                &[("param", &id), ("error", &err_text)],
+                            ));
+                        } else if cleared {
+                            self.learn_status.set(
+                                translate(lang, "learn.on", "Learn on: click a knob").to_string(),
+                            );
+                        }
+                        // A cleared id must not be re-bound by a CC move
+                        // arriving on a later tick.
+                        if self.learn_arm.pending.get().as_deref() == Some(id.as_str()) {
+                            self.learn_arm.pending.set(None);
+                            self.last_seen_pending = None;
+                        }
+                    }
                     let seq = self.last_cc.seq();
                     // A newly armed knob (pending changed) prompts the
                     // user to move a controller, and forgets any CC
@@ -571,6 +653,7 @@ impl Model for GuitarUiState {
                 let lang = *lang;
                 self.language.set(lang);
                 self.language_atom.store(lang.index(), Ordering::Relaxed);
+                self.editor_state.set_language_index(lang.index());
                 self.refresh_preset_signals();
                 if let Some(preset) = self.manager.read().get_preset(&self.selected_id.get()) {
                     let display = preset_display_name(preset, lang);
@@ -592,13 +675,25 @@ impl Model for GuitarUiState {
                 } else {
                     name
                 };
-                let id = format!(
-                    "user_{}",
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_nanos())
-                        .unwrap_or_default()
-                );
+                let nanos = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or_default();
+                // A nanosecond timestamp alone can repeat when SaveAs
+                // runs twice in the same tick (or the clock steps back),
+                // silently overwriting the first preset: disambiguate
+                // with a per-process counter and loop until the id is
+                // unused.
+                let id = loop {
+                    let candidate = format!(
+                        "user_{}_{}",
+                        nanos,
+                        SAVE_AS_COUNTER.fetch_add(1, Ordering::Relaxed)
+                    );
+                    if self.manager.read().get_preset(&candidate).is_none() {
+                        break candidate;
+                    }
+                };
                 let preset = Preset::new(
                     id.clone(),
                     name.clone(),
@@ -631,10 +726,17 @@ impl Model for GuitarUiState {
             }
             GuitarUiEvent::Overwrite => {
                 if self.is_user_preset.get() {
-                    let _ = self.manager.write().overwrite_user_preset(
-                        &self.selected_id.get(),
+                    let id = self.selected_id.get();
+                    if let Err(err) = self.manager.write().overwrite_user_preset(
+                        &id,
                         guitar_snapshot(&self.params),
-                    );
+                    ) {
+                        eprintln!("Failed to overwrite preset {id}: {err}");
+                        // overwrite mutates the in-memory preset before
+                        // saving; reload the user presets so the manager
+                        // again reflects the last saved value.
+                        let _ = self.manager.write().load_user_presets();
+                    }
                 }
             }
             GuitarUiEvent::Delete => {
@@ -864,7 +966,7 @@ impl Model for GuitarUiState {
                 if let Some((_, string_idx)) = STRING_KEYS.iter().find(|(k, _)| k == code) {
                     if !self.held_string_keys.contains_key(code) {
                         self.held_string_keys.insert(*code, *string_idx);
-                        let _ = self.gui_tx.send(GuiGuitarEvent::NoteOn {
+                        let _ = self.gui_tx.try_send(GuiGuitarEvent::NoteOn {
                             string_index: *string_idx,
                             fret: 0,
                             velocity: 0.88,
@@ -898,7 +1000,7 @@ impl Model for GuitarUiState {
                     if !self.held_qwerty_keys.contains_key(code) {
                         let midi = (*base as i16 + self.octave_offset as i16).clamp(40, 88) as u8;
                         self.held_qwerty_keys.insert(*code, midi);
-                        let _ = self.gui_tx.send(GuiGuitarEvent::MidiNoteOn {
+                        let _ = self.gui_tx.try_send(GuiGuitarEvent::MidiNoteOn {
                             note: midi,
                             velocity: 0.85,
                         });
@@ -916,16 +1018,28 @@ impl Model for GuitarUiState {
                 let text_focused = textbox_focused(cx);
                 self.held_nav_keys.remove(code);
                 if let Some(string_idx) = self.held_string_keys.remove(code) {
-                    let _ = self.gui_tx.send(GuiGuitarEvent::NoteOff {
+                    // Non-blocking: a full channel must not stall the GUI
+                    // thread. A dropped NoteOff is logged because it can
+                    // leave a stuck note sounding.
+                    if let Err(err) = self.gui_tx.try_send(GuiGuitarEvent::NoteOff {
                         string_index: string_idx,
                         fret: 0,
-                    });
+                    }) {
+                        eprintln!(
+                            "Guitar editor: dropped NoteOff for string {string_idx}: {err}"
+                        );
+                    }
                     if !text_focused {
                         meta.consume();
                     }
                 }
                 if let Some(midi) = self.held_qwerty_keys.remove(code) {
-                    let _ = self.gui_tx.send(GuiGuitarEvent::MidiNoteOff { note: midi });
+                    if let Err(err) = self
+                        .gui_tx
+                        .try_send(GuiGuitarEvent::MidiNoteOff { note: midi })
+                    {
+                        eprintln!("Guitar editor: dropped MidiNoteOff for note {midi}: {err}");
+                    }
                     if !text_focused {
                         meta.consume();
                     }
@@ -934,13 +1048,22 @@ impl Model for GuitarUiState {
             WindowEvent::FocusOut => {
                 self.held_nav_keys.clear();
                 for (_, string_idx) in self.held_string_keys.drain() {
-                    let _ = self.gui_tx.send(GuiGuitarEvent::NoteOff {
+                    if let Err(err) = self.gui_tx.try_send(GuiGuitarEvent::NoteOff {
                         string_index: string_idx,
                         fret: 0,
-                    });
+                    }) {
+                        eprintln!(
+                            "Guitar editor: dropped NoteOff for string {string_idx}: {err}"
+                        );
+                    }
                 }
                 for (_, midi) in self.held_qwerty_keys.drain() {
-                    let _ = self.gui_tx.send(GuiGuitarEvent::MidiNoteOff { note: midi });
+                    if let Err(err) = self
+                        .gui_tx
+                        .try_send(GuiGuitarEvent::MidiNoteOff { note: midi })
+                    {
+                        eprintln!("Guitar editor: dropped MidiNoteOff for note {midi}: {err}");
+                    }
                 }
             }
             _ => {}
@@ -1050,6 +1173,7 @@ pub fn create_vizia_guitar_editor(
             browser_tags_input: browser_tags_input.clone(),
             language,
             language_atom: language_atom.clone(),
+            editor_state: zoom_state.clone(),
             name_input: name_input.clone(),
             is_user_preset,
             can_undo,
@@ -1302,6 +1426,7 @@ pub fn create_vizia_guitar_editor(
                             mode_options.clone(),
                             params.clone(),
                             DiscreteParam::Mode,
+                            &learn,
                         );
                         discrete_selector(
                             cx,
@@ -1310,6 +1435,7 @@ pub fn create_vizia_guitar_editor(
                             pluck_options.clone(),
                             params.clone(),
                             DiscreteParam::PluckStyle,
+                            &learn,
                         );
                         discrete_selector(
                             cx,
@@ -1318,6 +1444,7 @@ pub fn create_vizia_guitar_editor(
                             pickup_position_options.clone(),
                             params.clone(),
                             DiscreteParam::PickupPosition,
+                            &learn,
                         );
                         discrete_selector(
                             cx,
@@ -1326,6 +1453,7 @@ pub fn create_vizia_guitar_editor(
                             pickup_type_options.clone(),
                             params.clone(),
                             DiscreteParam::PickupType,
+                            &learn,
                         );
                     })
                     .class("rack-box")
@@ -1492,18 +1620,39 @@ pub fn create_vizia_guitar_editor(
                             cabinet_options,
                             params.clone(),
                             DiscreteParam::CabinetModel,
+                            &learn,
                         );
                         HStack::new(cx, |cx| {
-                            ParamButton::new(cx, &params.cab_enabled).with_label(translate(
-                                lang,
-                                "guitar.cab_enabled",
-                                "12\" Cab",
-                            ));
-                            ParamButton::new(cx, &params.use_ir_cab).with_label(translate(
-                                lang,
-                                "guitar.use_ir_cab",
-                                "UPOLS IR",
-                            ));
+                            ParamButton::new(cx, &params.cab_enabled)
+                                .with_learn_intercept({
+                                    let learn = learn.clone();
+                                    let ptr = params.cab_enabled.as_ptr();
+                                    move |button| match button {
+                                        MouseButton::Left => learn.arm(ptr),
+                                        MouseButton::Right => learn.request_clear(ptr),
+                                        _ => false,
+                                    }
+                                })
+                                .with_label(translate(
+                                    lang,
+                                    "guitar.cab_enabled",
+                                    "12\" Cab",
+                                ));
+                            ParamButton::new(cx, &params.use_ir_cab)
+                                .with_learn_intercept({
+                                    let learn = learn.clone();
+                                    let ptr = params.use_ir_cab.as_ptr();
+                                    move |button| match button {
+                                        MouseButton::Left => learn.arm(ptr),
+                                        MouseButton::Right => learn.request_clear(ptr),
+                                        _ => false,
+                                    }
+                                })
+                                .with_label(translate(
+                                    lang,
+                                    "guitar.use_ir_cab",
+                                    "UPOLS IR",
+                                ));
                         })
                         .horizontal_gap(Pixels(4.0));
                         discrete_selector(
@@ -1513,6 +1662,7 @@ pub fn create_vizia_guitar_editor(
                             groove_options,
                             params.clone(),
                             DiscreteParam::GroovePattern,
+                            &learn,
                         );
                         HStack::new(cx, |cx| {
                             knob(
@@ -1635,6 +1785,9 @@ pub fn create_vizia_guitar_editor(
                                 root_sig.set(value);
                                 refresh_chord_display(&root_sig, &quality_sig, &display_sig);
                             },
+                            // Chord picks are GUI-only state with no
+                            // bindable parameter: no Learn arming.
+                            None,
                         );
                         let root_sig = chord_root.clone();
                         let quality_sig = chord_quality.clone();
@@ -1674,6 +1827,7 @@ pub fn create_vizia_guitar_editor(
                                 quality_sig.set(value);
                                 refresh_chord_display(&root_sig, &quality_sig, &display_sig);
                             },
+                            None,
                         );
                         let direction_sig = chord_direction.clone();
                         shared_discrete_selector(
@@ -1700,6 +1854,7 @@ pub fn create_vizia_guitar_editor(
                             move |_cx, value| {
                                 direction_sig.set(value);
                             },
+                            None,
                         );
                         let strum_root = chord_root.clone();
                         let strum_quality = chord_quality.clone();
@@ -1719,7 +1874,7 @@ pub fn create_vizia_guitar_editor(
                                 2 => StrumDirection::Up,
                                 _ => StrumDirection::Auto,
                             };
-                            let _ = strum_tx.send(GuiGuitarEvent::StrumChord {
+                            let _ = strum_tx.try_send(GuiGuitarEvent::StrumChord {
                                 frets: shape.frets,
                                 velocity: 0.9,
                                 direction,

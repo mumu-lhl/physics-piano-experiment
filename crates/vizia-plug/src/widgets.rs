@@ -5,7 +5,6 @@
 //! None of these widgets are finalized, and their sizes or looks can change at any point. Feel free
 //! to copy the widgets and modify them to your personal taste.
 
-use crossbeam::atomic::AtomicCell;
 use nice_plug_core::context::gui::GuiContext;
 use nice_plug_core::debug::*;
 use nice_plug_core::params::Param;
@@ -121,14 +120,8 @@ pub(crate) struct ParamModel {
 
 /// Handles interactions through `WindowEvent` for VIZIA GUIs by updating the `ViziaState`.
 /// Registered in [`ViziaEditor::spawn()`][super::ViziaEditor::spawn()].
-#[allow(dead_code)]
 pub(crate) struct WindowModel {
-    pub context: GuiContext,
     pub vizia_state: Arc<ViziaState>,
-
-    /// The last known unscaled logical window size. Used to prevent sending duplicate resize
-    /// requests.
-    pub last_inner_window_size: AtomicCell<(u32, u32)>,
 }
 
 impl Model for ParamModel {

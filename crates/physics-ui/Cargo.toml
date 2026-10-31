@@ -2,7 +2,7 @@
 name = "physics-ui"
 version.workspace = true
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 authors = ["Mumulhl"]
 description = "Shared Vizia UI and drawing support for physical-modeling instruments"
 

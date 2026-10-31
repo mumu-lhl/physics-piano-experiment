@@ -154,7 +154,15 @@ fn parse_po(path: &Path) -> Vec<Entry> {
         } else if line.starts_with("msgstr[") {
             entry.plural = true;
             field = Some(Field::Translation);
-            (Some(Field::Translation), line.split_once(' ').unwrap().1)
+            let Some((_, value)) = line.split_once(' ') else {
+                panic!(
+                    "{}:{}: unsupported PO syntax: {}",
+                    path.display(),
+                    line_index + 1,
+                    line
+                );
+            };
+            (Some(Field::Translation), value)
         } else if line.starts_with('"') {
             (field, line)
         } else {

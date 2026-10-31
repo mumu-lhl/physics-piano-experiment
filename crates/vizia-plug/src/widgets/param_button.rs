@@ -18,6 +18,12 @@ pub struct ParamButton {
     /// A specific label to use instead of displaying the parameter's value. Wrapped in a signal
     /// so the `.with_label` modifier can update it after construction and the label rebinds.
     label_override: SyncSignal<Option<String>>,
+    /// Optional Learn-mode intercept, installed by editors via
+    /// [`ParamButtonExt::with_learn_intercept`]: called with the pressed
+    /// button on `MouseDown`; returning `true` consumes the press (arm or
+    /// clear a MIDI Learn binding) instead of toggling. Vizia-plug cannot
+    /// name the editor-side Learn state, so the closure carries it.
+    learn_intercept: Option<std::sync::Arc<dyn Fn(MouseButton) -> bool + Send + Sync>>,
 
     /// The number of (fractional) scrolled lines that have not yet been turned into parameter
     /// change events. Supports trackpads with smooth scrolling.
@@ -40,6 +46,7 @@ impl ParamButton {
             param_base,
             use_scroll_wheel: true,
             label_override,
+            learn_intercept: None,
             scrolled_lines: 0.0,
         }
         .build(
@@ -78,11 +85,29 @@ impl View for ParamButton {
 
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
         event.map(|window_event, meta| match window_event {
-            // We don't need special double and triple click handling
-            WindowEvent::MouseDown(MouseButton::Left)
-            | WindowEvent::MouseDoubleClick(MouseButton::Left)
+            WindowEvent::MouseDown(button) => {
+                // MIDI Learn intercept runs before any toggle: in Learn
+                // mode a click only arms (left) or clears (right) the
+                // binding and must never change the value.
+                let intercepted = self
+                    .learn_intercept
+                    .as_ref()
+                    .is_some_and(|intercept| intercept(*button));
+                if intercepted {
+                    meta.consume();
+                } else if *button == MouseButton::Left {
+                    self.toggle_value(cx);
+                    meta.consume();
+                }
+            }
+            // A double/triple click must NOT toggle again: Vizia consumes
+            // the second press's MouseDown and delivers only
+            // MouseDoubleClick, so toggling here would undo the first
+            // press's toggle (net no change) while still writing two
+            // bracketed gestures into the host undo history. Consume
+            // without action; the first press already toggled once.
+            WindowEvent::MouseDoubleClick(MouseButton::Left)
             | WindowEvent::MouseTripleClick(MouseButton::Left) => {
-                self.toggle_value(cx);
                 meta.consume();
             }
             WindowEvent::MouseScroll(_scroll_x, scroll_y) if self.use_scroll_wheel => {
@@ -121,6 +146,16 @@ pub trait ParamButtonExt {
 
     /// Change the label used for the button. If this is not set, the parameter's name is used.
     fn with_label(self, value: impl Into<String>) -> Self;
+
+    /// Install a MIDI Learn intercept: called with the pressed mouse button
+    /// on `MouseDown`; when it returns `true` the press is consumed (arm or
+    /// clear a binding) instead of toggling the parameter. Editors pass a
+    /// closure over their `LearnArm` (left click arms, right click queues
+    /// a binding clear); vizia-plug itself never sees Learn state.
+    fn with_learn_intercept(
+        self,
+        intercept: impl Fn(MouseButton) -> bool + Send + Sync + 'static,
+    ) -> Self;
 }
 
 impl ParamButtonExt for Handle<'_, ParamButton> {
@@ -135,6 +170,15 @@ impl ParamButtonExt for Handle<'_, ParamButton> {
     fn with_label(self, value: impl Into<String>) -> Self {
         self.modify(|param_button: &mut ParamButton| {
             param_button.label_override.set(Some(value.into()));
+        })
+    }
+
+    fn with_learn_intercept(
+        self,
+        intercept: impl Fn(MouseButton) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        self.modify(|param_button: &mut ParamButton| {
+            param_button.learn_intercept = Some(std::sync::Arc::new(intercept));
         })
     }
 }

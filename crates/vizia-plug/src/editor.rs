@@ -2,7 +2,6 @@
 
 use crossbeam::atomic::AtomicCell;
 use nice_plug_core::context::gui::GuiContext;
-use nice_plug_core::debug::*;
 use nice_plug_core::editor::dpi::NativeSize;
 use nice_plug_core::editor::{
     Editor, EditorHandle, HostMethods, Modifiers, ParentWindowHandle, ResizeHint, SizeConstraints,
@@ -68,6 +67,49 @@ impl KeyInjectState {
             pending: Mutex::new(VecDeque::new()),
         })
     }
+}
+
+/// Derives the user scale factor implied by a resized window, shared by the
+/// idle-loop free-resize path and `EditorHandle::set_size`.
+///
+/// `current` is the scale in force before the resize; `bounds_w`/`bounds_h`
+/// are the new root bounds in backend pixels and `dpi_factor` already
+/// includes the current user scale, so the bounds divided by DPI equal the
+/// base size whenever the window is in a consistent state. The derived
+/// scale is `current × min(width ratio, height ratio)`: the `min()` also
+/// defines the aspect-ratio snap the idle loop's `SetUserScale` emission
+/// performs, and means a width-only or height-only drag derives `current`
+/// (no change) unless the host honors the `preserve_aspect_ratio` resize
+/// hint.
+///
+/// Returns `current` unchanged when the inputs are degenerate (zero or
+/// negative DPI/bounds/base, non-finite result) or when the derived scale
+/// is within 0.002 of `current` (epsilon beats integer-pixel rounding,
+/// `<= ~0.5/base`). Otherwise the result is clamped to 0.2–5.0, the same
+/// range `ViziaState::set_user_scale_factor` enforces. Note the clamp
+/// exceeds the zoom stepper's 2.0 maximum: dragging to 5.0× and then
+/// pressing the stepper still jumps (stepper clamps to its own range),
+/// unchanged by this extraction.
+///
+/// `set_size` calls this with `current = 1.0` and `dpi_factor = 1.0`,
+/// because the host size it receives already implies the scale directly.
+pub(crate) fn derive_scale(
+    current: f64,
+    bounds_w: f64,
+    bounds_h: f64,
+    dpi_factor: f64,
+    base_w: f64,
+    base_h: f64,
+) -> f64 {
+    if dpi_factor <= 0.0 || bounds_w <= 0.0 || bounds_h <= 0.0 || base_w <= 0.0 || base_h <= 0.0 {
+        return current;
+    }
+    let derived = current
+        * ((bounds_w / dpi_factor) / base_w).min((bounds_h / dpi_factor) / base_h);
+    if !derived.is_finite() || (derived - current).abs() <= 0.002 {
+        return current;
+    }
+    derived.clamp(0.2, 5.0)
 }
 
 #[derive(Clone)]
@@ -137,8 +179,12 @@ impl Editor for ViziaEditor {
                 let vizia_state_for_idle = vizia_state.clone();
                 let mut application = Application::new(move |cx| {
                     if let Err(err) = cx.add_stylesheet(include_style!("src/assets/theme.css")) {
-                        nice_error!("Failed to load stylesheet: {err:?}");
-                        panic!();
+                        // Log and continue unstyled, like the instrument
+                        // editors do for the shared theme: the stylesheet
+                        // is a compile-time asset, so a failure means a
+                        // CSS syntax error, which must not keep every
+                        // editor from opening at all.
+                        eprintln!("Failed to load stylesheet: {err:?}");
                     }
                     widgets::register_theme(cx);
                     param_registry.clone().build(cx);
@@ -147,15 +193,8 @@ impl Editor for ViziaEditor {
                     }
                     .build(cx);
 
-                    let current_inner_window_size =
-                        EventContext::new(cx).cache.get_bounds(Entity::root());
                     widgets::WindowModel {
-                        context: gui_context.clone(),
                         vizia_state: vizia_state.clone(),
-                        last_inner_window_size: AtomicCell::new((
-                            current_inner_window_size.width() as u32,
-                            current_inner_window_size.height() as u32,
-                        )),
                     }
                     .build(cx);
 
@@ -183,7 +222,7 @@ impl Editor for ViziaEditor {
                         // so it only ever reaches the resized entity itself.
                         let (base_width, base_height) = vizia_state.inner_logical_size();
                         if base_width > 0 && base_height > 0 {
-                            let mut resize_cx = EventContext::new(cx);
+                            let resize_cx = EventContext::new(cx);
                             let bounds = resize_cx.cache.get_bounds(Entity::root());
                             let dpi_factor = resize_cx.scale_factor() as f64;
                             if dpi_factor > 0.0 && bounds.width() > 0.0 && bounds.height() > 0.0 {
@@ -195,17 +234,16 @@ impl Editor for ViziaEditor {
                                 // collapses to 1.0 once the new scale is applied, because the
                                 // backend then re-reports the resize with the updated DPI.)
                                 let current = vizia_state.user_scale_factor();
-                                let derived = current
-                                    * ((bounds.width() as f64 / dpi_factor) / base_width as f64)
-                                        .min(
-                                            (bounds.height() as f64 / dpi_factor)
-                                                / base_height as f64,
-                                        );
-                                // Epsilon beats integer-pixel rounding (<= ~0.5/base); the
-                                // clamp is a safety rail against degenerate window sizes.
-                                if derived.is_finite() && (derived - current).abs() > 0.002 {
-                                    vizia_state
-                                        .set_user_scale_factor(derived.clamp(0.2, 5.0));
+                                let derived = derive_scale(
+                                    current,
+                                    bounds.width() as f64,
+                                    bounds.height() as f64,
+                                    dpi_factor,
+                                    base_width as f64,
+                                    base_height as f64,
+                                );
+                                if derived != current {
+                                    vizia_state.set_user_scale_factor(derived);
                                 }
                             }
                         }
@@ -341,7 +379,11 @@ impl EditorHandle for ViziaEditorHandle {
     type Error = ViziaEditorError;
 
     fn run_until_closed(window: Self::Window) -> Result<(), Self::Error> {
-        let op = window.open_blocking_fn.lock().unwrap().take();
+        let op = window
+            .open_blocking_fn
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         if let Some(f) = op {
             f();
         }
@@ -353,10 +395,17 @@ impl EditorHandle for ViziaEditorHandle {
         parent: ParentWindowHandle,
         window: &Self::Window,
     ) -> Result<(), Self::Error> {
-        let op = window.open_parented_fn.lock().unwrap().take();
+        let op = window
+            .open_parented_fn
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         if let Some(f) = op {
             let handle = f(&Rwh05Parent(parent));
-            *window.inner.lock().unwrap() = Some(handle);
+            *window
+                .inner
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(handle);
         }
         Ok(())
     }
@@ -379,11 +428,23 @@ impl EditorHandle for ViziaEditorHandle {
             return Ok(());
         }
 
-        let scale = (new_size.width as f64 / base_width as f64)
-            .min(new_size.height as f64 / base_height as f64);
-        if scale.is_finite() && scale > 0.0 {
-            self.vizia_state.set_user_scale_factor(scale);
-        }
+        // The host size is already in the same coordinate space the idle
+        // loop derives from once DPI is accounted for, so derive with a
+        // neutral current scale and unit DPI: the requested size implies
+        // the scale directly. Sharing `derive_scale` gives this path the
+        // same 0.2–5.0 clamp and epsilon as the free-resize path, so a
+        // transient tiny host size can no longer persist a degenerate
+        // scale. (`set_user_scale_factor` would clamp again; the point
+        // is the single derivation, not the second clamp.)
+        let scale = derive_scale(
+            1.0,
+            new_size.width as f64,
+            new_size.height as f64,
+            1.0,
+            base_width as f64,
+            base_height as f64,
+        );
+        self.vizia_state.set_user_scale_factor(scale);
         Ok(())
     }
 
@@ -512,9 +573,108 @@ impl EditorHandle for ViziaEditorHandle {
 impl Drop for ViziaEditorHandle {
     fn drop(&mut self) {
         self.vizia_state.open.store(false, Ordering::Release);
-        if let Some(mut handle) = self.window.inner.lock().unwrap().take() {
+        if let Some(mut handle) = self
+            .window
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             handle.close();
         }
         self.param_registry.clear_signals();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::derive_scale;
+
+    const BASE_W: f64 = 1080.0;
+    const BASE_H: f64 = 825.0;
+
+    #[test]
+    fn consistent_state_derives_current_scale() {
+        // Bounds equal base × DPI (DPI already includes the user scale):
+        // ratios are 1.0, so the scale is unchanged at any DPI.
+        assert_eq!(
+            derive_scale(1.5, BASE_W, BASE_H, 1.0, BASE_W, BASE_H),
+            1.5
+        );
+        assert_eq!(
+            derive_scale(1.5, BASE_W * 2.0, BASE_H * 2.0, 2.0, BASE_W, BASE_H),
+            1.5
+        );
+        assert_eq!(
+            derive_scale(0.2, BASE_W * 0.2, BASE_H * 0.2, 1.0, BASE_W, BASE_H),
+            0.2
+        );
+    }
+
+    #[test]
+    fn uniform_drag_scales_proportionally() {
+        assert_eq!(
+            derive_scale(1.0, BASE_W * 1.5, BASE_H * 1.5, 1.0, BASE_W, BASE_H),
+            1.5
+        );
+        assert_eq!(
+            derive_scale(2.0, BASE_W * 0.5, BASE_H * 0.5, 1.0, BASE_W, BASE_H),
+            1.0
+        );
+    }
+
+    #[test]
+    fn single_axis_drags_derive_current_scale() {
+        // The min() means a width-only or height-only drag implies no
+        // scale change (unless the host honors preserve_aspect_ratio).
+        assert_eq!(
+            derive_scale(1.0, BASE_W * 1.5, BASE_H, 1.0, BASE_W, BASE_H),
+            1.0
+        );
+        assert_eq!(
+            derive_scale(1.0, BASE_W, BASE_H * 1.5, 1.0, BASE_W, BASE_H),
+            1.0
+        );
+    }
+
+    #[test]
+    fn degenerate_inputs_derive_current_scale() {
+        assert_eq!(derive_scale(1.25, BASE_W, BASE_H, 0.0, BASE_W, BASE_H), 1.25);
+        assert_eq!(
+            derive_scale(1.25, BASE_W, BASE_H, -1.0, BASE_W, BASE_H),
+            1.25
+        );
+        assert_eq!(derive_scale(1.25, 0.0, BASE_H, 1.0, BASE_W, BASE_H), 1.25);
+        assert_eq!(derive_scale(1.25, BASE_W, 0.0, 1.0, BASE_W, BASE_H), 1.25);
+        assert_eq!(derive_scale(1.25, BASE_W, BASE_H, 1.0, 0.0, BASE_H), 1.25);
+        assert_eq!(
+            derive_scale(1.25, f64::INFINITY, BASE_H, 1.0, BASE_W, BASE_H),
+            1.25
+        );
+        assert_eq!(derive_scale(1.25, f64::NAN, BASE_H, 1.0, BASE_W, BASE_H), 1.25);
+    }
+
+    #[test]
+    fn epsilon_absorbs_pixel_rounding() {
+        // A 0.1% size wobble (integer-pixel rounding) is within epsilon.
+        assert_eq!(
+            derive_scale(1.0, BASE_W * 1.001, BASE_H * 1.001, 1.0, BASE_W, BASE_H),
+            1.0
+        );
+        // Just past the epsilon, the change applies.
+        let scaled = derive_scale(1.0, BASE_W * 1.003, BASE_H * 1.003, 1.0, BASE_W, BASE_H);
+        assert!((scaled - 1.003).abs() < 1e-9, "scaled = {scaled}");
+    }
+
+    #[test]
+    fn clamp_rails_bound_degenerate_sizes() {
+        assert_eq!(
+            derive_scale(1.0, BASE_W * 100.0, BASE_H * 100.0, 1.0, BASE_W, BASE_H),
+            5.0
+        );
+        assert_eq!(
+            derive_scale(1.0, 1.0, 1.0, 1.0, BASE_W, BASE_H),
+            0.2
+        );
     }
 }

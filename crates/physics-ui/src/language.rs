@@ -65,6 +65,20 @@ impl Language {
             .and_then(|locale| Self::from_code(&locale))
             .unwrap_or(Self::English)
     }
+
+    /// Resolves a persisted language index (see `ViziaState::language_index`).
+    /// `u8::MAX` is the sentinel for "system locale". Any other out-of-range
+    /// index also resolves to the system locale (unlike [`Self::from_index`],
+    /// which falls back to English): a persisted index can only be
+    /// out-of-range if the locale table shrank since the state was saved,
+    /// and the system locale is the least surprising fallback there.
+    pub fn resolve_persisted(index: u8) -> Self {
+        if index == u8::MAX || (index as usize) >= locale_data::LANGUAGE_CODES.len() {
+            Self::from_system_locale()
+        } else {
+            Self(index)
+        }
+    }
 }
 
 fn normalize_locale(locale: &str) -> String {
@@ -100,27 +114,83 @@ mod locale_data {
     include!(concat!(env!("OUT_DIR"), "/locales.rs"));
 }
 
+/// CJK fallback font bytes, loaded at most once per process. Vizia's
+/// `add_font_mem` requires `&'static [u8]`, so the bytes are leaked once
+/// (unavoidable) and the leaked slice is reused on every later editor open
+/// instead of leaking a fresh copy per open.
+static CACHED_FONT_BYTES: std::sync::OnceLock<Option<&'static [u8]>> =
+    std::sync::OnceLock::new();
+
+/// First available CJK fallback font file, read once and cached (including
+/// the "no font found" outcome, so later opens don't re-scan the disk).
+fn cached_font_bytes() -> Option<&'static [u8]> {
+    *CACHED_FONT_BYTES.get_or_init(|| {
+        const CANDIDATE_PATHS: &[&str] = &[
+            "/usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf",
+            "/usr/share/fonts/google-noto-sans-cjk-fonts/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
+            "C:\\Windows\\Fonts\\msyh.ttc",
+            "C:\\Windows\\Fonts\\simsun.ttc",
+            "C:\\Windows\\Fonts\\simhei.ttf",
+            "/System/Library/Fonts/PingFang.ttc",
+            "/Library/Fonts/Songti.ttc",
+        ];
+
+        for path in CANDIDATE_PATHS {
+            if let Ok(bytes) = std::fs::read(path) {
+                return Some(Box::leak(bytes.into_boxed_slice()));
+            }
+        }
+        None
+    })
+}
+
 /// Loads the first available CJK fallback font into a Vizia context.
 pub fn setup_vizia_fonts(cx: &mut vizia_plug::vizia::prelude::Context) {
-    const CANDIDATE_PATHS: &[&str] = &[
-        "/usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf",
-        "/usr/share/fonts/google-noto-sans-cjk-fonts/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-        "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
-        "C:\\Windows\\Fonts\\msyh.ttc",
-        "C:\\Windows\\Fonts\\simsun.ttc",
-        "C:\\Windows\\Fonts\\simhei.ttf",
-        "/System/Library/Fonts/PingFang.ttc",
-        "/Library/Fonts/Songti.ttc",
-    ];
+    if let Some(static_bytes) = cached_font_bytes() {
+        cx.add_font_mem(static_bytes);
+    }
+}
 
-    for path in CANDIDATE_PATHS {
-        if let Ok(bytes) = std::fs::read(path) {
-            let static_bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
-            cx.add_font_mem(static_bytes);
-            break;
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_persisted_sentinel_means_system_locale() {
+        assert_eq!(
+            Language::resolve_persisted(u8::MAX),
+            Language::from_system_locale()
+        );
+    }
+
+    #[test]
+    fn resolve_persisted_known_indexes_resolve_verbatim() {
+        assert_eq!(Language::resolve_persisted(0), Language::English);
+        assert_eq!(
+            Language::resolve_persisted(1),
+            Language::SimplifiedChinese
+        );
+    }
+
+    #[test]
+    fn resolve_persisted_out_of_range_means_system_locale() {
+        // Well beyond any plausible locale-table size: must not snap to
+        // English (index 0) the way `from_index` does for bad indexes.
+        assert_eq!(
+            Language::resolve_persisted(200),
+            Language::from_system_locale()
+        );
+    }
+
+    #[test]
+    fn font_bytes_are_loaded_once_and_reused() {
+        let first = cached_font_bytes();
+        let second = cached_font_bytes();
+        assert_eq!(first.map(|b| b.as_ptr()), second.map(|b| b.as_ptr()));
+        assert_eq!(first.map(|b| b.len()), second.map(|b| b.len()));
     }
 }

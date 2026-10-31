@@ -285,3 +285,9 @@
 .theme-light .zoom-value {
     color: #8a6d1f;
 }
+
+/* Darker amber ring: the gold #ffd778 focus ring is near-invisible on
+   the light background. */
+.theme-light param-knob:focus {
+    outline-color: #8a6d1f;
+}

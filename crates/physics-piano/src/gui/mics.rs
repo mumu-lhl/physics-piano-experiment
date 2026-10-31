@@ -21,6 +21,7 @@ use vizia_plug::widgets::param_base::ParamWidgetBase;
 
 use crate::nice_plugin::PhysicsPianoParams;
 use physics_ui::Language;
+use physics_ui::LearnArm;
 
 /// Which gain a grabbed microphone controls.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -75,6 +76,10 @@ pub struct MicStageWidget {
     amb_base: ParamWidgetBase,
     drag: Option<(MicGroup, f32, f32)>,
     language: Language,
+    /// Optional MIDI Learn arming: each mic group has a single bindable
+    /// gain parameter, so a Learn-mode click on a capsule arms that
+    /// group's parameter instead of starting a drag.
+    learn: Option<LearnArm>,
 }
 
 impl MicStageWidget {
@@ -82,6 +87,7 @@ impl MicStageWidget {
         cx: &mut Context,
         params: Arc<PhysicsPianoParams>,
         language: Language,
+        learn: Option<LearnArm>,
     ) -> Handle<'_, Self> {
         let close_base = ParamWidgetBase::new(cx, &params.mic_close);
         let player_base = ParamWidgetBase::new(cx, &params.mic_player);
@@ -93,6 +99,7 @@ impl MicStageWidget {
             amb_base,
             drag: None,
             language,
+            learn,
         }
         .build(cx, |_| {})
     }
@@ -113,6 +120,34 @@ impl MicStageWidget {
         };
         (db - GAIN_MIN_DB) / GAIN_SPAN_DB
     }
+
+    /// Microphone group whose capsule is under (`mx`, `my`), if any.
+    fn hit_group(&self, bounds: BoundingBox, mx: f32, my: f32) -> Option<MicGroup> {
+        let pts = mic_points(bounds.x, bounds.y, bounds.w, bounds.h);
+        let candidates = [
+            (MicGroup::Close, pts.close_l),
+            (MicGroup::Close, pts.close_r),
+            (MicGroup::Player, pts.player),
+            (MicGroup::Ambient, pts.amb_l),
+            (MicGroup::Ambient, pts.amb_r),
+            (MicGroup::Ambient, pts.amb_c),
+        ];
+        for (group, (x, y)) in candidates {
+            let dx = mx - x;
+            let dy = my - y;
+            if dx * dx + dy * dy <= GRAB_RADIUS * GRAB_RADIUS {
+                return Some(group);
+            }
+        }
+        None
+    }
+
+    fn end_drag(&mut self, cx: &mut EventContext) {
+        if let Some((group, _, _)) = self.drag.take() {
+            cx.release();
+            self.base_for(group).end_set_parameter(cx);
+        }
+    }
 }
 
 impl View for MicStageWidget {
@@ -125,37 +160,45 @@ impl View for MicStageWidget {
             WindowEvent::MouseDown(MouseButton::Left) => {
                 let bounds = cx.bounds();
                 let (mx, my) = (cx.mouse().cursor_x, cx.mouse().cursor_y);
-                let pts = mic_points(bounds.x, bounds.y, bounds.w, bounds.h);
-                let candidates = [
-                    (MicGroup::Close, pts.close_l),
-                    (MicGroup::Close, pts.close_r),
-                    (MicGroup::Player, pts.player),
-                    (MicGroup::Ambient, pts.amb_l),
-                    (MicGroup::Ambient, pts.amb_r),
-                    (MicGroup::Ambient, pts.amb_c),
-                ];
-                let mut hit = None;
-                for (group, (x, y)) in candidates {
-                    let dx = mx - x;
-                    let dy = my - y;
-                    if dx * dx + dy * dy <= GRAB_RADIUS * GRAB_RADIUS {
-                        hit = Some(group);
-                        break;
+                if let Some(group) = self.hit_group(bounds, mx, my) {
+                    // Learn-mode click on a capsule arms that group's
+                    // gain parameter instead of starting a drag.
+                    if let Some(learn) = &self.learn {
+                        if learn.arm(self.base_for(group).param_ptr()) {
+                            meta.consume();
+                            return;
+                        }
                     }
-                }
-                if let Some(group) = hit {
                     self.drag = Some((group, self.gain_norm(group), my));
                     cx.capture();
                     self.base_for(group).begin_set_parameter(cx);
                     meta.consume();
                 }
             }
+            WindowEvent::MouseDown(MouseButton::Right) => {
+                let bounds = cx.bounds();
+                let (mx, my) = (cx.mouse().cursor_x, cx.mouse().cursor_y);
+                if let Some(group) = self.hit_group(bounds, mx, my) {
+                    // Learn-mode right-click clears the group's binding
+                    // (or silently consumes when unbound).
+                    if let Some(learn) = &self.learn {
+                        if learn.request_clear(self.base_for(group).param_ptr()) {
+                            meta.consume();
+                        }
+                    }
+                }
+            }
             WindowEvent::MouseUp(MouseButton::Left) => {
-                if let Some((group, _, _)) = self.drag.take() {
-                    cx.release();
-                    self.base_for(group).end_set_parameter(cx);
+                if self.drag.is_some() {
+                    self.end_drag(cx);
                     meta.consume();
                 }
+            }
+            WindowEvent::FocusOut if cx.focused() != cx.current() => {
+                self.end_drag(cx);
+            }
+            WindowEvent::WindowFocused(false) => {
+                self.end_drag(cx);
             }
             WindowEvent::MouseMove(_x, y) => {
                 if let Some((group, start_norm, start_y)) = self.drag {
@@ -381,9 +424,13 @@ impl View for MicStageWidget {
         // Perspective Annotations
         legend_paint.set_text_align(vg::Align::Center);
         legend_paint.set_font_size(9.0);
+        // The player capsule sits at 0.98 * h, so a label below it
+        // (the old `player_y + 12.0`) painted past the bottom edge.
+        // Draw it above the capsule instead, clear of the keyboard
+        // strip at the soundboard's front edge.
         let _ = canvas.fill_text(
             player_x,
-            player_y + 12.0,
+            py + ph - 10.0,
             translate(self.language, "piano.mics.player", "Player (Binaural)"),
             &legend_paint,
         );

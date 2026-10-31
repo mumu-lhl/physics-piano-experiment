@@ -35,6 +35,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 pub const EDITOR_WIDTH: u32 = 1080;
 pub const EDITOR_HEIGHT: u32 = 825;
 
+/// Per-process counter disambiguating SaveAs ids generated within the
+/// same nanosecond (see `PianoUiEvent::SaveAs`).
+static SAVE_AS_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 fn knob<P: Param + 'static>(
     cx: &mut Context,
     label: &'static str,
@@ -82,6 +86,10 @@ struct PianoUiState {
     browser_tags_input: Signal<String>,
     language: Signal<Language>,
     language_atom: Arc<AtomicU8>,
+    /// Plugin/editor state, for persisting the chosen language index
+    /// across restarts (mirrors the `language_atom` write in the
+    /// SetLanguage handler).
+    editor_state: Arc<ViziaState>,
     name_input: Signal<String>,
     is_user_preset: Signal<bool>,
     can_undo: Signal<bool>,
@@ -209,7 +217,7 @@ impl PianoUiState {
         if (21..=108).contains(&key) {
             self.key_velocities.write()[(key - 21) as usize] = velocity as f32;
         }
-        let _ = self.gui_tx.send(EngineEvent::NoteOn {
+        let _ = self.gui_tx.try_send(EngineEvent::NoteOn {
             time: 0,
             key,
             velocity,
@@ -221,7 +229,9 @@ impl PianoUiState {
             // Suppress the stale audio-active bit until the debounced NoteOff reaches the engine.
             self.key_velocities.write()[(key - 21) as usize] = -1.0;
         }
-        let _ = self.gui_tx.send(EngineEvent::NoteOff { time: 0, key });
+        if let Err(err) = self.gui_tx.try_send(EngineEvent::NoteOff { time: 0, key }) {
+            eprintln!("Piano editor: dropped NoteOff for key {key}: {err}");
+        }
     }
 
     fn set_undo_state(&self) {
@@ -299,7 +309,13 @@ impl Model for PianoUiState {
                 self.refresh_preset_signals();
             }
             PresetBrowserAction::ToggleFavorite(id) => {
-                let _ = self.manager.write().toggle_favorite(id);
+                if let Err(err) = self.manager.write().toggle_favorite(id) {
+                    eprintln!("Failed to save favorite for preset {id}: {err}");
+                    // toggle_favorite mutates in-memory state before
+                    // saving; reload the sidecar so the UI reflects
+                    // the last saved value.
+                    self.manager.write().load_favorites();
+                }
                 self.refresh_preset_signals();
             }
             PresetBrowserAction::ToggleTag(tag) => {
@@ -318,7 +334,13 @@ impl Model for PianoUiState {
             PresetBrowserAction::SetTags(text) => {
                 let tags = parse_tags_input(text);
                 let id = self.selected_id.get();
-                let _ = self.manager.write().set_tags(&id, tags);
+                if let Err(err) = self.manager.write().set_tags(&id, tags) {
+                    eprintln!("Failed to save tags for preset {id}: {err}");
+                    // set_tags mutates in-memory state before saving;
+                    // reload the sidecar before re-reading tags_for
+                    // below so the UI reflects the last saved value.
+                    self.manager.write().load_tags();
+                }
                 self.browser_tags_input
                     .set(self.manager.read().tags_for(&id).join(", "));
                 self.refresh_preset_signals();
@@ -344,6 +366,7 @@ impl Model for PianoUiState {
                         .set(translate(lang, "learn.on", "Learn on: click a knob").to_string());
                 } else {
                     self.learn_arm.pending.set(None);
+                    self.learn_arm.clear_pending.set(None);
                     self.last_seen_pending = None;
                     self.learn_status
                         .set(translate(lang, "learn.off", "Learn off").to_string());
@@ -354,6 +377,48 @@ impl Model for PianoUiState {
                 // controller and bind it. Learn mode stays on after a
                 // successful bind so several knobs can be bound in a row.
                 if self.learn_arm.mode.get() {
+                    // Clear-bindings queued by Learn-mode right-clicks:
+                    // unbind every CC mapped to the queued id. Runs
+                    // before the bind poll below so a queued clear
+                    // cannot be re-bound by a stale CC on the same tick.
+                    if let Some(id) = self.learn_arm.clear_pending.get() {
+                        self.learn_arm.clear_pending.set(None);
+                        let lang = self.language.get();
+                        let ccs: Vec<u8> = self
+                            .manager
+                            .read()
+                            .midi_mappings()
+                            .iter()
+                            .filter(|(_, bound)| **bound == id)
+                            .map(|(cc, _)| *cc)
+                            .collect();
+                        let mut cleared = false;
+                        let mut save_err: Option<String> = None;
+                        for cc in ccs {
+                            match self.manager.write().unbind_midi_cc(cc) {
+                                Ok(removed) => cleared |= removed,
+                                Err(err) => save_err = Some(err.to_string()),
+                            }
+                        }
+                        if let Some(err_text) = save_err {
+                            self.learn_status.set(translate_format(
+                                lang,
+                                "learn.save_failed",
+                                "Failed to save binding for {param}: {error}",
+                                &[("param", &id), ("error", &err_text)],
+                            ));
+                        } else if cleared {
+                            self.learn_status.set(
+                                translate(lang, "learn.on", "Learn on: click a knob").to_string(),
+                            );
+                        }
+                        // A cleared id must not be re-bound by a CC move
+                        // arriving on a later tick.
+                        if self.learn_arm.pending.get().as_deref() == Some(id.as_str()) {
+                            self.learn_arm.pending.set(None);
+                            self.last_seen_pending = None;
+                        }
+                    }
                     let seq = self.last_cc.seq();
                     // A newly armed knob (pending changed) prompts the
                     // user to move a controller, and forgets any CC
@@ -493,6 +558,7 @@ impl Model for PianoUiState {
                 let lang = *lang;
                 self.language.set(lang);
                 self.language_atom.store(lang.index(), Ordering::Relaxed);
+                self.editor_state.set_language_index(lang.index());
                 if let Some(preset) = self.manager.read().get_preset(&self.selected_id.get()) {
                     let display_name = preset_display_name(preset, lang);
                     self.selected_name.set(display_name.clone());
@@ -517,13 +583,25 @@ impl Model for PianoUiState {
                 } else {
                     name
                 };
-                let id = format!(
-                    "user_{}",
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_nanos())
-                        .unwrap_or_default()
-                );
+                let nanos = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or_default();
+                // A nanosecond timestamp alone can repeat when SaveAs
+                // runs twice in the same tick (or the clock steps back),
+                // silently overwriting the first preset: disambiguate
+                // with a per-process counter and loop until the id is
+                // unused.
+                let id = loop {
+                    let candidate = format!(
+                        "user_{}_{}",
+                        nanos,
+                        SAVE_AS_COUNTER.fetch_add(1, Ordering::Relaxed)
+                    );
+                    if self.manager.read().get_preset(&candidate).is_none() {
+                        break candidate;
+                    }
+                };
                 let preset = Preset::new(
                     id.clone(),
                     name.clone(),
@@ -556,10 +634,17 @@ impl Model for PianoUiState {
             }
             PianoUiEvent::Overwrite => {
                 if self.is_user_preset.get() {
-                    let _ = self.manager.write().overwrite_user_preset(
-                        &self.selected_id.get(),
+                    let id = self.selected_id.get();
+                    if let Err(err) = self.manager.write().overwrite_user_preset(
+                        &id,
                         piano_snapshot(&self.params),
-                    );
+                    ) {
+                        eprintln!("Failed to overwrite preset {id}: {err}");
+                        // overwrite mutates the in-memory preset before
+                        // saving; reload the user presets so the manager
+                        // again reflects the last saved value.
+                        let _ = self.manager.write().load_user_presets();
+                    }
                 }
             }
             PianoUiEvent::Delete => {
@@ -894,6 +979,7 @@ pub fn create_vizia_piano_editor(
             browser_tags_input: browser_tags_input.clone(),
             language,
             language_atom: language_atom.clone(),
+            editor_state: zoom_state.clone(),
             name_input: name_input.clone(),
             is_user_preset,
             can_undo: can_undo.clone(),
@@ -1060,7 +1146,7 @@ pub fn create_vizia_piano_editor(
                 device_settings_row(cx, presets_dir, lang);
 
                 HStack::new(cx, |cx| {
-                    PianoLidWidget::new(cx, params.clone(), lang)
+                    PianoLidWidget::new(cx, params.clone(), lang, Some(learn.clone()))
                         .width(Stretch(1.0))
                         .height(Pixels(150.0))
                         .overflow(Overflow::Hidden)
@@ -1077,7 +1163,7 @@ pub fn create_vizia_piano_editor(
                                 .width(Pixels(240.0));
                             })
                         });
-                    MicStageWidget::new(cx, params.clone(), lang)
+                    MicStageWidget::new(cx, params.clone(), lang, Some(learn.clone()))
                         .width(Stretch(1.0))
                         .height(Pixels(150.0))
                         .tooltip(move |cx| {
@@ -1231,6 +1317,7 @@ pub fn create_vizia_piano_editor(
                                     &params.velocity_point_25,
                                     &params.velocity_point_50,
                                     &params.velocity_point_75,
+                                    Some(learn.clone()),
                                 )
                                 .width(Pixels(120.0))
                                 .height(Pixels(56.0));
@@ -1256,6 +1343,15 @@ pub fn create_vizia_piano_editor(
                         })
                         .horizontal_gap(Pixels(8.0));
                         ParamButton::new(cx, &params.una_corda)
+                            .with_learn_intercept({
+                                let learn = learn.clone();
+                                let ptr = params.una_corda.as_ptr();
+                                move |button| match button {
+                                    MouseButton::Left => learn.arm(ptr),
+                                    MouseButton::Right => learn.request_clear(ptr),
+                                    _ => false,
+                                }
+                            })
                             .with_label(translate(
                                 lang,
                                 "piano.una_corda",
@@ -1266,7 +1362,7 @@ pub fn create_vizia_piano_editor(
                     .class("rack-box")
                     .width(Stretch(1.0));
                 })
-                .height(Pixels(170.0))
+                .height(Pixels(182.0))
                 .horizontal_gap(Pixels(8.0));
 
                 VStack::new(cx, |cx| {

@@ -39,6 +39,34 @@ pub fn bar_center_frequencies(num_bars: usize, f_min: f32, f_max: f32) -> Vec<f3
         .collect()
 }
 
+/// Bin range a bar reads, or `None` when the bar lies entirely above
+/// Nyquist: `f_hi` is capped at Nyquist and the bar is dropped when even
+/// its lower edge is at or above it, instead of every top bar repeating
+/// the last bin.
+fn bar_bin_range(
+    f_lo: f32,
+    f_hi: f32,
+    bin_hz: f32,
+    num_bins: usize,
+) -> Option<(usize, usize)> {
+    if bin_hz <= 0.0 || num_bins == 0 {
+        return None;
+    }
+    // `num_bins` is the real-FFT output length (FFT/2 + 1); the last bin
+    // sits exactly at Nyquist, so Nyquist is one bin below `bin_hz *
+    // num_bins`.
+    let nyquist = bin_hz * (num_bins - 1) as f32;
+    if f_lo >= nyquist {
+        return None;
+    }
+    let f_hi = f_hi.min(nyquist);
+    let b_lo = ((f_lo / bin_hz) as usize).min(num_bins - 1);
+    let b_hi = ((f_hi / bin_hz) as usize)
+        .min(num_bins - 1)
+        .max(b_lo);
+    Some((b_lo, b_hi))
+}
+
 /// dB value mapped to a 0..1 bar height (`floor` dB and below map to 0).
 pub fn db_to_norm(db: f32, floor: f32) -> f32 {
     ((db - floor) / -floor).clamp(0.0, 1.0)
@@ -110,10 +138,14 @@ impl SpectrumAnalyzer {
             } else {
                 (f * centers[i + 1]).sqrt()
             };
-            let b_lo = ((f_lo / bin_hz) as usize).min(self.output.len() - 1);
-            let b_hi = ((f_hi / bin_hz) as usize)
-                .min(self.output.len() - 1)
-                .max(b_lo);
+            let Some((b_lo, b_hi)) =
+                bar_bin_range(f_lo, f_hi, bin_hz, self.output.len())
+            else {
+                // Entirely above Nyquist at this sample rate: zero the
+                // bar instead of repeating the last bin.
+                self.bars[i] = 0.0;
+                continue;
+            };
             let mut peak = 0.0f32;
             for b in b_lo..=b_hi {
                 peak = peak.max(self.output[b].norm());
@@ -175,24 +207,27 @@ impl View for SpectrumAnalyzerWidget {
             &vg::Paint::color(vg::Color::rgb(45, 50, 65)).with_line_width(0.75),
         );
 
-        let Some(hist) = self.history.try_read() else {
-            return;
-        };
-        let n = hist.len().min(SPECTRUM_FFT_LEN);
-        let mut analyzer = self.analyzer.borrow_mut();
-        let fresh = if n == 0 {
-            analyzer.compute(&[], self.sample_rate)
-        } else {
-            analyzer.compute(&hist[hist.len() - n..], self.sample_rate)
-        };
-        // Fast attack, slow release so bars don't flicker.
-        let mut prev = self.prev_bars.borrow_mut();
+        // Lock contention must not paint a background-only frame: fall
+        // back to the previous frame's bars instead of returning early.
         let mut smoothed = [0.0f32; SPECTRUM_BAR_COUNT];
-        for i in 0..SPECTRUM_BAR_COUNT {
-            smoothed[i] = fresh[i].max(prev[i] * 0.72);
-            prev[i] = smoothed[i];
+        if let Some(hist) = self.history.try_read() {
+            let n = hist.len().min(SPECTRUM_FFT_LEN);
+            let mut analyzer = self.analyzer.borrow_mut();
+            let fresh = if n == 0 {
+                analyzer.compute(&[], self.sample_rate)
+            } else {
+                analyzer.compute(&hist[hist.len() - n..], self.sample_rate)
+            };
+            // Fast attack, slow release so bars don't flicker.
+            let mut prev = self.prev_bars.borrow_mut();
+            for i in 0..SPECTRUM_BAR_COUNT {
+                smoothed[i] = fresh[i].max(prev[i] * 0.72);
+                prev[i] = smoothed[i];
+            }
+        } else {
+            let prev = self.prev_bars.borrow();
+            smoothed.copy_from_slice(&prev);
         }
-        drop(prev);
 
         let gap = 2.0f32;
         let bar_w =
@@ -274,5 +309,50 @@ mod tests {
             .compute(&vec![0.0; SPECTRUM_FFT_LEN], 44100.0)
             .to_vec();
         assert!(bars.iter().all(|&b| b == 0.0));
+    }
+
+    #[test]
+    fn bar_ranges_cap_at_nyquist_and_drop_above_it() {
+        // 8000 Hz sample rate, 1024-point FFT: 513 output bins,
+        // bin width 7.8125 Hz, Nyquist 4000 Hz.
+        let bin_hz = 8000.0 / SPECTRUM_FFT_LEN as f32;
+        let num_bins = SPECTRUM_FFT_LEN / 2 + 1;
+        // A bar straddling Nyquist is capped at the last bin.
+        assert_eq!(
+            bar_bin_range(3900.0, 5000.0, bin_hz, num_bins),
+            Some((499, 512))
+        );
+        // A bar entirely above Nyquist reads nothing.
+        assert_eq!(bar_bin_range(5000.0, 8000.0, bin_hz, num_bins), None);
+        assert_eq!(bar_bin_range(4000.0, 5000.0, bin_hz, num_bins), None);
+        // A bar below Nyquist is unaffected.
+        assert_eq!(
+            bar_bin_range(100.0, 200.0, bin_hz, num_bins),
+            Some((12, 25))
+        );
+    }
+
+    #[test]
+    fn low_sample_rate_sine_stays_in_range_and_top_bars_stay_quiet() {
+        // 22050 Hz: Nyquist 11025 Hz is below SPECTRUM_FREQ_MAX, so the
+        // top bars used to repeat the last bin. A 5 kHz sine must still
+        // peak in-range, and a 10.5 kHz sine (near Nyquist) must not
+        // light up bars whose range lies above Nyquist.
+        let mut analyzer = SpectrumAnalyzer::new();
+        let samples_5k: Vec<f32> = (0..SPECTRUM_FFT_LEN)
+            .map(|i| (2.0 * std::f32::consts::PI * 5000.0 * i as f32 / 22050.0).sin())
+            .collect();
+        let bars = analyzer.compute(&samples_5k, 22050.0).to_vec();
+        let centers =
+            bar_center_frequencies(SPECTRUM_BAR_COUNT, SPECTRUM_FREQ_MIN, SPECTRUM_FREQ_MAX);
+        let peak = bars
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .unwrap()
+            .0;
+        assert!(centers[peak] > 3500.0 && centers[peak] < 7000.0);
+        assert!(bars[peak] > 0.8);
+        assert!(bars.iter().all(|b| b.is_finite()));
     }
 }

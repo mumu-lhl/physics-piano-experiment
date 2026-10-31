@@ -235,6 +235,16 @@ textbox:focus {
     border-color: #ffd778;
 }
 
+/* Keyboard focus must be visible on knobs: Tab reaches them (see
+   `parameter_knob`), and arrow keys already adjust the value once
+   focused. The ring uses the gold accent; the light-theme variant
+   below in light.css darkens it for contrast on #f7f7f5. */
+param-knob:focus {
+    outline-color: #ffd778;
+    outline-width: 2.0;
+    outline-offset: 2.0;
+}
+
 popup {
     background-color: #181a24;
     border-color: #383e54;

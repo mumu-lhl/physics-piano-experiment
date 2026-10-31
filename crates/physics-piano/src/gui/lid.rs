@@ -14,12 +14,17 @@ use vizia_plug::widgets::param_base::ParamWidgetBase;
 
 use crate::nice_plugin::PhysicsPianoParams;
 use physics_ui::Language;
+use physics_ui::LearnArm;
 
 pub struct PianoLidWidget {
     params: Arc<PhysicsPianoParams>,
     param_base: ParamWidgetBase,
     is_dragging: bool,
     language: Language,
+    /// Optional MIDI Learn arming: the widget has a single bindable
+    /// parameter (`lid_angle`), so a Learn-mode click arms it instead
+    /// of starting a drag.
+    learn: Option<LearnArm>,
 }
 
 impl PianoLidWidget {
@@ -27,6 +32,7 @@ impl PianoLidWidget {
         cx: &mut Context,
         params: Arc<PhysicsPianoParams>,
         language: Language,
+        learn: Option<LearnArm>,
     ) -> Handle<'_, Self> {
         let param_base = ParamWidgetBase::new(cx, &params.lid_angle);
 
@@ -35,9 +41,37 @@ impl PianoLidWidget {
             param_base,
             is_dragging: false,
             language,
+            learn,
         }
         .build(cx, |_| {})
     }
+
+    fn end_drag(&mut self, cx: &mut EventContext) {
+        if self.is_dragging {
+            self.is_dragging = false;
+            cx.release();
+            self.param_base.end_set_parameter(cx);
+        }
+    }
+}
+
+/// Lid length clamped so the tip stays inside the widget: at angle
+/// `angle_rad` the tip rises `sin(angle) * len` above the hinge, which
+/// must not exceed the space above the hinge (`hinge_to_top`), less a
+/// small margin for the panel thickness. At low angles the full length
+/// is kept; at high angles the lid shortens (telescopes) instead of
+/// painting past the top edge.
+fn clamped_lid_length(body_len: f32, hinge_to_top: f32, angle_rad: f32) -> f32 {
+    let full = body_len * 0.98;
+    let rise = angle_rad.sin();
+    if rise <= 0.0 {
+        return full;
+    }
+    let available = hinge_to_top - 6.0;
+    if available <= 0.0 {
+        return full;
+    }
+    full.min(available / rise)
 }
 
 impl View for PianoLidWidget {
@@ -48,18 +82,39 @@ impl View for PianoLidWidget {
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
         event.map(|window_event, meta| match window_event {
             WindowEvent::MouseDown(MouseButton::Left) => {
+                // Learn-mode click arms the lid-angle parameter instead
+                // of starting a drag.
+                if let Some(learn) = &self.learn {
+                    if learn.arm(self.param_base.param_ptr()) {
+                        meta.consume();
+                        return;
+                    }
+                }
                 self.is_dragging = true;
                 cx.capture();
                 self.param_base.begin_set_parameter(cx);
                 meta.consume();
             }
+            WindowEvent::MouseDown(MouseButton::Right) => {
+                // Learn-mode right-click clears the binding (or silently
+                // consumes when unbound) instead of doing nothing.
+                if let Some(learn) = &self.learn {
+                    if learn.request_clear(self.param_base.param_ptr()) {
+                        meta.consume();
+                    }
+                }
+            }
             WindowEvent::MouseUp(MouseButton::Left) => {
                 if self.is_dragging {
-                    self.is_dragging = false;
-                    cx.release();
-                    self.param_base.end_set_parameter(cx);
+                    self.end_drag(cx);
                     meta.consume();
                 }
+            }
+            WindowEvent::FocusOut if cx.focused() != cx.current() => {
+                self.end_drag(cx);
+            }
+            WindowEvent::WindowFocused(false) => {
+                self.end_drag(cx);
             }
             WindowEvent::MouseMove(_x, y) => {
                 if self.is_dragging {
@@ -162,7 +217,8 @@ impl View for PianoLidWidget {
         // Hinge point is at back of the case: (base_x + body_len, base_y)
         let hinge_x = base_x + body_len;
         let hinge_y = base_y;
-        let lid_length = body_len * 0.98;
+        // Clamped so the tip stays inside the widget at high angles.
+        let lid_length = clamped_lid_length(body_len, hinge_y - bounds.y, angle_rad);
 
         // Lid tip coordinates rotated by angle_rad
         // In screen coordinates: rotating counter-clockwise upwards:
@@ -257,5 +313,50 @@ impl View for PianoLidWidget {
             &status_str,
             &stat_paint,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clamped_lid_length;
+
+    /// Shipped geometry: widget 450 x 150, body 0.72 * w, hinge 0.78 * h
+    /// above the bottom, so the tip has 117px of headroom.
+    fn shipped() -> (f32, f32) {
+        (450.0 * 0.72, 150.0 * 0.78)
+    }
+
+    #[test]
+    fn low_angles_keep_full_length() {
+        let (body_len, headroom) = shipped();
+        assert_eq!(
+            clamped_lid_length(body_len, headroom, 0.0),
+            body_len * 0.98
+        );
+        assert_eq!(
+            clamped_lid_length(body_len, headroom, 15.0f32.to_radians()),
+            body_len * 0.98
+        );
+    }
+
+    #[test]
+    fn tip_stays_inside_at_30_and_60_degrees() {
+        let (body_len, headroom) = shipped();
+        for angle in [30.0f32, 45.0, 60.0] {
+            let len = clamped_lid_length(body_len, headroom, angle.to_radians());
+            // Tip rise must leave the 6px margin above the hinge.
+            assert!(
+                len * angle.to_radians().sin() <= headroom - 6.0 + 1e-4,
+                "angle {angle}: len {len}"
+            );
+            assert!(len < body_len * 0.98, "angle {angle} must clamp");
+            assert!(len > 0.0);
+        }
+    }
+
+    #[test]
+    fn degenerate_headroom_keeps_full_length() {
+        assert_eq!(clamped_lid_length(300.0, 0.0, 1.0), 300.0 * 0.98);
+        assert_eq!(clamped_lid_length(300.0, -5.0, 1.0), 300.0 * 0.98);
     }
 }

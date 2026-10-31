@@ -88,6 +88,12 @@ impl PianoKeyboardWidget {
     }
 
     fn find_key_at(&self, bounds: &BoundingBox, x: f32, y: f32) -> Option<(u8, f32)> {
+        // Same size guard as `draw`: below 20px the `bounds.w - 0.1`
+        // clamp below panics (min > max) and the key geometry is
+        // meaningless.
+        if bounds.w < 20.0 || bounds.h < 20.0 {
+            return None;
+        }
         if x < bounds.x || x > bounds.x + bounds.w || y < bounds.y || y > bounds.y + bounds.h {
             return None;
         }
@@ -137,7 +143,11 @@ impl PianoKeyboardWidget {
             let idx = (key - 21) as usize;
             self.key_velocities.write()[idx] = velocity;
         }
-        let _ = self.gui_tx.send(EngineEvent::NoteOn {
+        // Non-blocking: a full channel must not stall the GUI thread
+        // mid-gesture. A dropped NoteOn is silent (the next press
+        // re-triggers); a dropped NoteOff is logged because it can
+        // leave a stuck note sounding.
+        let _ = self.gui_tx.try_send(EngineEvent::NoteOn {
             time: 0,
             key,
             velocity: velocity as f64,
@@ -151,7 +161,12 @@ impl PianoKeyboardWidget {
             // keyboard auto-repeat. This prevents the stale active bit from drawing a stuck key.
             self.key_velocities.write()[idx] = -1.0;
         }
-        let _ = self.gui_tx.send(EngineEvent::NoteOff { time: 0, key });
+        if let Err(err) = self
+            .gui_tx
+            .try_send(EngineEvent::NoteOff { time: 0, key })
+        {
+            eprintln!("Piano keyboard: dropped NoteOff for key {key}: {err}");
+        }
     }
 }
 
