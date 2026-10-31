@@ -78,7 +78,12 @@ jobs:
       # audio downloaded with tools/download_drum_references.py (see
       # AGENTS.md). This is the same gate developers run locally.
       - name: Run unit & integration tests for active instruments
-        run: CI=1 cargo nextest run --workspace --exclude physics-drum
+        # env:, not a `CI=1` prefix: the default shell is PowerShell on
+        # Windows runners, where `CI=1 cargo ...` is parsed as a command
+        # named `CI=1` and fails before nextest ever starts.
+        env:
+          CI: "1"
+        run: cargo nextest run --workspace --exclude physics-drum
 
       - name: Run doctests for active instruments
         run: cargo test --doc --workspace --exclude physics-drum
