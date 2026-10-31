@@ -113,9 +113,21 @@ pub struct PianoEngine {
     pub max_active_voices: usize,
     pub active_keys_vec: Vec<u8>,
     pub keys_to_remove_scratch: Vec<u8>,
+    /// Voices stolen from the active set, kept sounding under a fast
+    /// damper release ramp instead of being reset mid-oscillation (a
+    /// hard reset would drop the bridge force discontinuously and click).
+    /// Each entry is `(key, remaining gain)`, ramping 1.0 -> 0.0 over
+    /// [`RELEASE_RAMP_SECONDS`]; `process_block` keeps stepping these
+    /// voices with their bridge contribution scaled by the gain.
+    pub releasing_voices: Vec<(u8, f64)>,
 }
 
 pub const MAX_ACTIVE_VOICES: usize = 32;
+
+/// Release-ramp duration for a stolen voice: the damper is seated and
+/// the bridge-force contribution fades over ~30 ms before the voice is
+/// reset.
+pub const RELEASE_RAMP_SECONDS: f64 = 0.03;
 
 impl PianoEngine {
     pub fn new(sample_rate: f64, num_modes: usize, stretch_tuning: bool) -> Self {
@@ -170,6 +182,11 @@ impl PianoEngine {
             max_active_voices: MAX_ACTIVE_VOICES,
             active_keys_vec: Vec::with_capacity(32),
             keys_to_remove_scratch: Vec::with_capacity(32),
+            // Pre-sized for all 88 piano keys (21..=108): entries are
+            // deduplicated by key, so stealing can never grow this
+            // Vec — and growing it inside process_block would trip
+            // the no-allocation guard on the audio thread.
+            releasing_voices: Vec::with_capacity(88),
         }
     }
 
@@ -375,7 +392,16 @@ impl PianoEngine {
             self.active_keys.remove(&stolen_key);
             self.sostenuto_notes.remove(&stolen_key);
             if let Some(v) = self.voices.get_mut(&stolen_key) {
-                v.reset();
+                // Release ramp, not a hard reset: seat the damper so the
+                // string decays fast, and keep stepping the voice in
+                // `process_block` with its bridge contribution scaled
+                // down over ~30 ms. Resetting here would zero the modal
+                // state mid-oscillation and drop the bridge force in a
+                // single sample (an audible click).
+                v.sostenuto_held = false;
+                v.note_off(false, 0.0);
+                self.releasing_voices.retain(|(k, _)| *k != stolen_key);
+                self.releasing_voices.push((stolen_key, 1.0));
             }
             self.sync_active_keys_vec();
             Some(stolen_key)
@@ -398,6 +424,10 @@ impl PianoEngine {
         // A fresh strike supersedes any sostenuto capture: notes started
         // after the pedal went down are not held by it.
         self.sostenuto_notes.remove(&key);
+        // A re-strike of a voice on the release ramp takes it back into
+        // the active set; it must stop being stepped as a releasing voice
+        // or it would be advanced twice per sample.
+        self.releasing_voices.retain(|(k, _)| *k != key);
         let effective_vel = self.map_velocity(velocity);
 
         self.action_noise.trigger_note_on(key, effective_vel);
@@ -597,6 +627,30 @@ impl PianoEngine {
                 }
             }
 
+            // Releasing (stolen) voices: step with the same coupling,
+            // scaling the bridge contribution by the remaining release
+            // gain, which ramps 1.0 -> 0.0 over ~30 ms. The gain is
+            // applied per sample, so there is no single-sample drop.
+            let release_step = 1.0 / (RELEASE_RAMP_SECONDS * self.sample_rate).max(1.0);
+            for entry in self.releasing_voices.iter_mut() {
+                let gain = entry.1;
+                if gain <= 0.0 {
+                    continue;
+                }
+                let key = entry.0;
+                if let Some(v) = self.voices.get_mut(&key) {
+                    let (fb_t, fb_p, fb_l) = v.step(coupling_t, coupling_p);
+                    total_bridge_t += fb_t * gain;
+                    total_bridge_p += fb_p * gain;
+                    total_bridge_l += fb_l * gain;
+
+                    let f_k = 0.82 * fb_t + 0.15 * fb_p + phantom_scale * fb_l;
+                    f_sb_l += f_k * gain * v.pan_l;
+                    f_sb_r += f_k * gain * v.pan_r;
+                }
+                entry.1 = (gain - release_step).max(0.0);
+            }
+
             // Stage 3: Bridge reaction force reduction
             let (react_t, react_p, f_sb) = self.bridge.calculate_coupling_forces(
                 total_bridge_t,
@@ -644,8 +698,11 @@ impl PianoEngine {
 
                 if !self.depressed_keys.contains(&key) {
                     let ratio = cur_energy / peak_e.max(1e-12);
-                    // Damped or sustained: if decayed to inaudibility (-70 dB ~ -80 dB)
-                    let thresh = if !self.sustain_pedal { 1e-7 } else { 1e-7 };
+                    // Retire at -70 dB of peak energy whether damped or
+                    // sustained: a longer sustain tail was considered
+                    // here, but both branches of the old conditional were
+                    // the same 1e-7, so there is a single threshold.
+                    let thresh = 1e-7;
                     if ratio < thresh || cur_energy < 1e-10 {
                         self.keys_to_remove_scratch.push(key);
                     }
@@ -662,6 +719,32 @@ impl PianoEngine {
                 time: num_samples,
                 key,
             });
+        }
+
+        // Releasing voices whose ramp has run out are inaudible now;
+        // reset them so the next strike starts from silence.
+        // Stack scratch, not a Vec: collecting into a Vec here would
+        // heap-allocate inside process_block, tripping the
+        // no-allocation guard. At most one entry per piano key exists
+        // (entries are deduplicated by key on push), so 88 slots —
+        // keys 21..=108 — always suffice.
+        let mut finished_releasing = [0u8; 88];
+        let mut finished_count = 0usize;
+        self.releasing_voices.retain(|(key, gain)| {
+            if *gain <= 0.0 {
+                if finished_count < finished_releasing.len() {
+                    finished_releasing[finished_count] = *key;
+                    finished_count += 1;
+                }
+                false
+            } else {
+                true
+            }
+        });
+        for key in &finished_releasing[..finished_count] {
+            if let Some(v) = self.voices.get_mut(&key) {
+                v.reset();
+            }
         }
 
         // Voice Stealing: enforce max polyphony
@@ -704,6 +787,7 @@ impl PianoEngine {
         }
         self.active_keys.clear();
         self.depressed_keys.clear();
+        self.releasing_voices.clear();
         self.sostenuto_pedal = false;
         self.sostenuto_notes.clear();
         self.active_keys_vec.clear();
@@ -714,7 +798,12 @@ impl PianoEngine {
         self.f_react_t = 0.0;
         self.f_react_p = 0.0;
         self.bridge = BridgeSoundboard::new(self.sample_rate);
-        self.lid_baffle = LidBaffle::new(self.sample_rate);
+        // Reset the lid baffle in place: rebuilding it heap-allocates
+        // its sample-rate-sized delay Vecs, and reset() runs under
+        // nice-plug's no-allocation guard. reset() keeps the current
+        // lid angle (re-applied per block by process()); only the
+        // filter state and delay lines are cleared, as a rebuild would.
+        self.lid_baffle.reset();
         self.action_noise = KeyActionNoise::new(self.sample_rate);
         self.damper_whoosh = DamperWhoosh::new(self.sample_rate);
         self.plate_shock = PlateShock::new(self.sample_rate);
@@ -884,5 +973,155 @@ mod tests {
         engine.set_note_tuning(64, -25.0);
         engine.note_on(64, 0.8);
         assert!((engine.get_voice(64).unwrap().pitch_bend_cents - 75.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn stolen_voice_releases_over_a_ramp_instead_of_resetting() {
+        let mut engine = PianoEngine::new(48_000.0, 15, false);
+        engine.max_active_voices = 2;
+        let block = 64usize;
+        let mut out_l = vec![0.0; block];
+        let mut out_r = vec![0.0; block];
+        let mut out_events = Vec::new();
+        let run_block = |engine: &mut PianoEngine,
+                         out_l: &mut [f64],
+                         out_r: &mut [f64],
+                         out_events: &mut Vec<EngineOutEvent>| {
+            engine.process_block(block, &[], out_events, out_l, out_r);
+        };
+
+        engine.note_on(60, 0.9);
+        engine.note_on(64, 0.9);
+        run_block(&mut engine, &mut out_l, &mut out_r, &mut out_events);
+        engine.note_off(60);
+        engine.note_off(64);
+        // A third strike steals the lowest-energy released voice. Which
+        // of the two is stolen depends on their energies, so identify
+        // the victim from the resulting state instead of assuming it.
+        engine.note_on(67, 0.9);
+        let victim = [60u8, 64]
+            .into_iter()
+            .find(|k| !engine.active_keys.contains(k));
+        let victim = victim.expect("one released voice must have been stolen");
+        let survivor = if victim == 60 { 64 } else { 60 };
+        assert!(engine.active_keys.contains(&67));
+        assert!(engine.active_keys.contains(&survivor));
+        assert!(engine.note_energy_peak.contains_key(&victim));
+
+        // The stolen voice was NOT reset: it is on the release ramp at
+        // full gain, still holding energy, with its damper seated.
+        let (key, gain) = engine
+            .releasing_voices
+            .iter()
+            .find(|(k, _)| *k == victim)
+            .copied()
+            .expect("stolen voice must be releasing");
+        assert_eq!(key, victim);
+        assert_eq!(gain, 1.0);
+        let energy_at_steal = engine.get_voice(victim).unwrap().get_energy();
+        assert!(
+            energy_at_steal > 0.0,
+            "stolen voice must keep its energy, got {energy_at_steal}"
+        );
+        assert!(engine.get_voice(victim).unwrap().is_sounding);
+
+        // One block in, the gain has ramped down by exactly one block's
+        // worth of the 30 ms ramp — a gradual fade, not a one-sample
+        // drop — and the voice still holds energy.
+        run_block(&mut engine, &mut out_l, &mut out_r, &mut out_events);
+        let ramp_samples = RELEASE_RAMP_SECONDS * 48_000.0;
+        let gain_after_block = engine
+            .releasing_voices
+            .iter()
+            .find(|(k, _)| *k == victim)
+            .map(|(_, g)| *g)
+            .expect("stolen voice still releasing after one block");
+        assert!(
+            (gain_after_block - (1.0 - block as f64 / ramp_samples)).abs() < 1e-9,
+            "gain must ramp linearly, got {gain_after_block}"
+        );
+        assert!(engine.get_voice(victim).unwrap().get_energy() > 0.0);
+
+        // Past the ramp (24 blocks > 1440 samples), the voice is reset
+        // and gone from the releasing list.
+        for _ in 0..24 {
+            run_block(&mut engine, &mut out_l, &mut out_r, &mut out_events);
+        }
+        assert!(
+            !engine.releasing_voices.iter().any(|(k, _)| *k == victim),
+            "release ramp must finish"
+        );
+        assert_eq!(engine.get_voice(victim).unwrap().get_energy(), 0.0);
+        assert!(!engine.get_voice(victim).unwrap().is_sounding);
+
+        // A re-strike during the ramp returns the voice to the active
+        // set instead of double-stepping it (fresh engine, clean state;
+        // the limit is raised after the steal so the re-strike itself
+        // steals nothing).
+        let mut engine = PianoEngine::new(48_000.0, 15, false);
+        engine.max_active_voices = 2;
+        engine.note_on(60, 0.9);
+        engine.note_on(64, 0.9);
+        engine.note_off(60);
+        engine.note_off(64);
+        engine.note_on(67, 0.9);
+        assert_eq!(engine.releasing_voices.len(), 1);
+        let victim2 = engine.releasing_voices[0].0;
+        engine.max_active_voices = 3;
+        engine.note_on(victim2, 0.9);
+        assert!(engine.releasing_voices.is_empty());
+        assert!(engine.active_keys.contains(&victim2));
+        engine.process_block(block, &[], &mut out_events, &mut out_l, &mut out_r);
+        assert!(engine.get_voice(victim2).unwrap().get_energy() > 0.0);
+    }
+}
+
+#[cfg(all(test, debug_assertions))]
+mod no_alloc_regression_tests {
+    // Regression tests for the debug-standalone startup abort: reset()
+    // runs under nice-plug's no-allocation guard, so any heap
+    // (de)allocation there aborts the process (the LidBaffle delay
+    // Vecs rebuilt by reset() did exactly that). In test builds the
+    // guard only counts violations (warn_debug), so these tests
+    // assert the count stays flat across the guarded section.
+    use super::*;
+    use nice_assert_no_alloc::{assert_no_alloc, violation_count};
+
+    #[test]
+    fn reset_does_not_allocate() {
+        let mut engine = PianoEngine::new(48_000.0, 15, false);
+        let before = violation_count();
+        assert_no_alloc(|| engine.reset());
+        assert_eq!(violation_count(), before);
+    }
+
+    #[test]
+    fn voice_steal_release_ramp_and_prune_do_not_allocate() {
+        let mut engine = PianoEngine::new(48_000.0, 15, false);
+        engine.max_active_voices = 2;
+        // Mirror activate(): voices are pre-created outside the guard
+        // (prepare_voices), so striking a key must not allocate.
+        engine.prepare_voices();
+        let mut out_events = Vec::with_capacity(128);
+        let mut out_l = vec![0.0; 64];
+        let mut out_r = vec![0.0; 64];
+        let before = violation_count();
+        assert_no_alloc(|| {
+            // Stealing pushes to releasing_voices, and the release-ramp
+            // prune collects finished voices — both run here, inside
+            // the guard, as they do on the audio thread.
+            engine.note_on(60, 0.9);
+            engine.note_on(64, 0.9);
+            engine.note_off(60);
+            engine.note_off(64);
+            engine.note_on(67, 0.9);
+            assert_eq!(engine.releasing_voices.len(), 1);
+            // 25 blocks of 64 samples > 1440-sample (30 ms) ramp.
+            for _ in 0..25 {
+                engine.process_block(64, &[], &mut out_events, &mut out_l, &mut out_r);
+            }
+        });
+        assert_eq!(violation_count(), before);
+        assert!(engine.releasing_voices.is_empty());
     }
 }

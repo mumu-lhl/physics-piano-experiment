@@ -2,7 +2,7 @@
 
 use atomic_float::AtomicF32;
 use nice_plug::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
@@ -10,7 +10,10 @@ use vizia_plug::ViziaState;
 
 use crate::engine::{EngineEvent, EngineOutEvent, PianoEngine, velocity_points_from_exponent};
 use crate::gui::{Language, create_vizia_piano_editor, default_vizia_state};
-use physics_dsp::{FxChain, PIANO_BEND_RANGE_CENTS, SOSTENUTO_CC, bend_cents, cc_pedal_down};
+use physics_dsp::{
+    FxChain, PIANO_BEND_RANGE_CENTS, SOSTENUTO_CC, bend_cents, cc_pedal_down,
+    sanitize_floating_point_environment,
+};
 use physics_presets::{PresetManager, UndoManager, piano_factory_presets};
 use physics_ui::{LastCc, apply_midi_cc, build_param_map};
 
@@ -329,6 +332,27 @@ impl Default for PhysicsPianoParams {
     }
 }
 
+/// Clamp every event's time to the last sample of the block, so an event
+/// timestamped at or past the block end still fires in this block
+/// instead of being dropped (along with everything after it) by the
+/// engine's sample-accurate loop, which stops at the first future event.
+fn clamp_event_times(events: &mut [EngineEvent], num_samples: usize) {
+    let last = num_samples.saturating_sub(1);
+    for event in events {
+        let time = match event {
+            EngineEvent::NoteOn { time, .. }
+            | EngineEvent::NoteOff { time, .. }
+            | EngineEvent::NoteTuning { time, .. }
+            | EngineEvent::SustainPedal { time, .. }
+            | EngineEvent::SostenutoPedal { time, .. }
+            | EngineEvent::UnaCorda { time, .. }
+            | EngineEvent::PitchBend { time, .. }
+            | EngineEvent::Expression { time, .. } => time,
+        };
+        *time = (*time).min(last);
+    }
+}
+
 pub struct PhysicsPiano {
     params: Arc<PhysicsPianoParams>,
     engine: PianoEngine,
@@ -384,6 +408,16 @@ impl Default for PhysicsPiano {
         let params = Arc::new(PhysicsPianoParams::default());
         let param_map = build_param_map(&params);
 
+        let mut preset_manager = PresetManager::new("piano", piano_factory_presets());
+        // Drop bindings to param IDs that no longer exist (e.g. after a
+        // rename) so stale entries cannot accumulate in midi_mappings.json.
+        let valid_param_ids: HashSet<String> = params
+            .param_map()
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        preset_manager.prune_stale_midi_mappings(&valid_param_ids);
+
         Self {
             params,
             param_map,
@@ -403,10 +437,7 @@ impl Default for PhysicsPiano {
                 physics_ui::SPECTRUM_HISTORY_LEN
             ])),
             language: Arc::new(AtomicU8::new(lang_code)),
-            preset_manager: Arc::new(parking_lot::RwLock::new(PresetManager::new(
-                "piano",
-                piano_factory_presets(),
-            ))),
+            preset_manager: Arc::new(parking_lot::RwLock::new(preset_manager)),
             undo_manager: Arc::new(parking_lot::RwLock::new(UndoManager::default())),
             prev_sustain: 0.0,
             prev_una_corda: false,
@@ -463,6 +494,7 @@ impl Plugin for PhysicsPiano {
         buffer_config: &BufferConfig,
         _context: &mut impl ActivateContext<Self>,
     ) -> bool {
+        sanitize_floating_point_environment();
         self.engine = PianoEngine::new(buffer_config.sample_rate as f64, 35, true);
         let max_samples = buffer_config.max_buffer_size as usize;
         self.scratch_l = vec![0.0; max_samples];
@@ -525,6 +557,7 @@ impl Plugin for PhysicsPiano {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        sanitize_floating_point_environment();
         let num_samples = buffer.samples();
         if self.scratch_l.len() < num_samples {
             self.scratch_l.resize(num_samples, 0.0);
@@ -706,6 +739,7 @@ impl Plugin for PhysicsPiano {
             .set_lid_angle(self.params.lid_angle.value() as f64);
 
         // 3. Step Physical Simulation
+        clamp_event_times(&mut self.events_scratch, num_samples);
         self.engine.process_block(
             num_samples,
             &self.events_scratch,
@@ -1015,5 +1049,73 @@ mod midi_learn_tests {
         for (id, _, _) in &ids {
             assert!(plugin.param_map.contains_key(id), "missing {id}");
         }
+    }
+}
+
+#[cfg(test)]
+mod event_time_tests {
+    use super::*;
+    use crate::engine::EngineOutEvent;
+
+    fn event_time(event: &EngineEvent) -> usize {
+        match event {
+            EngineEvent::NoteOn { time, .. }
+            | EngineEvent::NoteOff { time, .. }
+            | EngineEvent::NoteTuning { time, .. }
+            | EngineEvent::SustainPedal { time, .. }
+            | EngineEvent::SostenutoPedal { time, .. }
+            | EngineEvent::UnaCorda { time, .. }
+            | EngineEvent::PitchBend { time, .. }
+            | EngineEvent::Expression { time, .. } => *time,
+        }
+    }
+
+    #[test]
+    fn event_times_at_and_past_the_block_end_are_clamped_and_fire() {
+        let mut events = vec![
+            EngineEvent::NoteOn {
+                time: 0,
+                key: 64,
+                velocity: 0.8,
+            },
+            EngineEvent::NoteOn {
+                time: 64,
+                key: 60,
+                velocity: 0.8,
+            },
+            EngineEvent::NoteOff { time: 100, key: 60 },
+            EngineEvent::PitchBend {
+                time: 63,
+                cents: 50.0,
+            },
+        ];
+        clamp_event_times(&mut events, 64);
+        assert_eq!(
+            events.iter().map(event_time).collect::<Vec<_>>(),
+            vec![0, 63, 63, 63]
+        );
+
+        // The clamped NoteOn at time == num_samples must actually fire:
+        // unclamped, the engine loop (0..64) would never reach it and
+        // the note would be lost.
+        let mut engine = PianoEngine::new(48_000.0, 15, false);
+        let mut out_l = vec![0.0; 64];
+        let mut out_r = vec![0.0; 64];
+        let mut out_events: Vec<EngineOutEvent> = Vec::new();
+        engine.process_block(64, &events, &mut out_events, &mut out_l, &mut out_r);
+        assert!(engine.get_voice(60).is_some());
+        assert!(engine.active_keys.contains(&60));
+        assert!(engine.active_keys.contains(&64));
+    }
+
+    #[test]
+    fn clamp_event_times_handles_empty_blocks() {
+        let mut events = vec![EngineEvent::NoteOn {
+            time: 5,
+            key: 60,
+            velocity: 0.8,
+        }];
+        clamp_event_times(&mut events, 0);
+        assert_eq!(event_time(&events[0]), 0);
     }
 }

@@ -64,8 +64,11 @@ impl CombFilter {
     #[inline]
     fn process(&mut self, input: f64) -> f64 {
         let out = self.buffer[self.index];
-        self.filter_state = out * (1.0 - COMB_DAMP) + self.filter_state * COMB_DAMP;
-        self.buffer[self.index] = input + self.feedback * self.filter_state;
+        // Flush subnormal feedback state so a decaying tail goes exactly
+        // silent instead of lingering in the denormal range.
+        self.filter_state =
+            crate::flush_denormal(out * (1.0 - COMB_DAMP) + self.filter_state * COMB_DAMP);
+        self.buffer[self.index] = crate::flush_denormal(input + self.feedback * self.filter_state);
         self.index += 1;
         if self.index >= self.buffer.len() {
             self.index = 0;
@@ -97,7 +100,7 @@ impl AllpassFilter {
     fn process(&mut self, input: f64) -> f64 {
         let delayed = self.buffer[self.index];
         let out = -ALLPASS_FEEDBACK * input + delayed;
-        self.buffer[self.index] = input + ALLPASS_FEEDBACK * out;
+        self.buffer[self.index] = crate::flush_denormal(input + ALLPASS_FEEDBACK * out);
         self.index += 1;
         if self.index >= self.buffer.len() {
             self.index = 0;
@@ -120,6 +123,22 @@ fn scale_tuning(tuning_44100: usize, sample_rate: f64) -> usize {
     ((tuning_44100 as f64 * sample_rate / 44100.0).round() as usize).max(1)
 }
 
+/// Copy a circular delay line's logical contents (oldest sample first,
+/// starting at the old write position) into a fresh buffer, returning
+/// the write index that follows the copied sequence. Used when a
+/// sample-rate change rebuilds the reverb so the sounding tail survives
+/// the rebuild instead of being zeroed.
+fn copy_delay_contents(old_buffer: &[f64], old_index: usize, new_buffer: &mut [f64]) -> usize {
+    if old_buffer.is_empty() || new_buffer.is_empty() {
+        return 0;
+    }
+    let n = old_buffer.len().min(new_buffer.len());
+    for i in 0..n {
+        new_buffer[i] = old_buffer[(old_index + i) % old_buffer.len()];
+    }
+    n % new_buffer.len()
+}
+
 impl Reverb {
     pub fn new(sample_rate: f64, feedback: f64) -> Self {
         let mut reverb = Self {
@@ -135,21 +154,58 @@ impl Reverb {
     }
 
     fn rebuild(&mut self) {
+        // Preserve the overlapping delay-line contents (and each comb's
+        // feedback state) across the rebuild so a sounding tail survives
+        // a sample-rate change; only the first build has nothing to keep.
+        let old_combs_l = std::mem::take(&mut self.combs_l);
+        let old_combs_r = std::mem::take(&mut self.combs_r);
+        let old_allpasses_l = std::mem::take(&mut self.allpasses_l);
+        let old_allpasses_r = std::mem::take(&mut self.allpasses_r);
         self.combs_l = COMB_TUNINGS_L
             .iter()
-            .map(|t| CombFilter::new(scale_tuning(*t, self.sample_rate), self.feedback))
+            .enumerate()
+            .map(|(i, t)| {
+                let mut comb = CombFilter::new(scale_tuning(*t, self.sample_rate), self.feedback);
+                if let Some(old) = old_combs_l.get(i) {
+                    comb.index = copy_delay_contents(&old.buffer, old.index, &mut comb.buffer);
+                    comb.filter_state = old.filter_state;
+                }
+                comb
+            })
             .collect();
         self.combs_r = COMB_TUNINGS_R
             .iter()
-            .map(|t| CombFilter::new(scale_tuning(*t, self.sample_rate), self.feedback))
+            .enumerate()
+            .map(|(i, t)| {
+                let mut comb = CombFilter::new(scale_tuning(*t, self.sample_rate), self.feedback);
+                if let Some(old) = old_combs_r.get(i) {
+                    comb.index = copy_delay_contents(&old.buffer, old.index, &mut comb.buffer);
+                    comb.filter_state = old.filter_state;
+                }
+                comb
+            })
             .collect();
         self.allpasses_l = ALLPASS_TUNINGS_L
             .iter()
-            .map(|t| AllpassFilter::new(scale_tuning(*t, self.sample_rate)))
+            .enumerate()
+            .map(|(i, t)| {
+                let mut ap = AllpassFilter::new(scale_tuning(*t, self.sample_rate));
+                if let Some(old) = old_allpasses_l.get(i) {
+                    ap.index = copy_delay_contents(&old.buffer, old.index, &mut ap.buffer);
+                }
+                ap
+            })
             .collect();
         self.allpasses_r = ALLPASS_TUNINGS_R
             .iter()
-            .map(|t| AllpassFilter::new(scale_tuning(*t, self.sample_rate)))
+            .enumerate()
+            .map(|(i, t)| {
+                let mut ap = AllpassFilter::new(scale_tuning(*t, self.sample_rate));
+                if let Some(old) = old_allpasses_r.get(i) {
+                    ap.index = copy_delay_contents(&old.buffer, old.index, &mut ap.buffer);
+                }
+                ap
+            })
             .collect();
     }
 
@@ -199,6 +255,20 @@ impl Reverb {
     }
 }
 
+/// EQ gains are clamped to this range inside `FxChain::set_params` so a
+/// host/automation value outside the param range (or a non-finite value
+/// from a corrupt preset) can never drive NaN into the biquads.
+const EQ_GAIN_LIMIT_DB: f64 = 24.0;
+
+/// Clamp an EQ gain to ±24 dB, mapping non-finite values to 0 dB.
+fn clamp_eq_gain(gain_db: f64) -> f64 {
+    if gain_db.is_finite() {
+        gain_db.clamp(-EQ_GAIN_LIMIT_DB, EQ_GAIN_LIMIT_DB)
+    } else {
+        0.0
+    }
+}
+
 /// Full insert chain: 3-band EQ into the reverb, with a dry/wet mix.
 /// A mix of 0 skips the reverb entirely, so the output is the EQ'd input
 /// (and with 0 dB EQ gains, transparent up to floating-point rounding).
@@ -206,6 +276,9 @@ pub struct FxChain {
     sample_rate: f64,
     eq_l: [Biquad; 3],
     eq_r: [Biquad; 3],
+    eq_low_db: f64,
+    eq_mid_db: f64,
+    eq_high_db: f64,
     reverb: Reverb,
     mix: f64,
 }
@@ -223,8 +296,23 @@ impl FxChain {
             sample_rate,
             eq_l: flat(),
             eq_r: flat(),
+            eq_low_db: 0.0,
+            eq_mid_db: 0.0,
+            eq_high_db: 0.0,
             reverb: Reverb::new(sample_rate, COMB_FEEDBACK_MIN),
             mix: 0.0,
+        }
+    }
+
+    /// (Re)build the EQ coefficients for the current sample rate and the
+    /// stored gains. The state-preserving `set_*` calls keep the filter
+    /// history, so a rate change does not reset the EQ.
+    fn apply_eq(&mut self) {
+        let sr = self.sample_rate;
+        for channel in [&mut self.eq_l, &mut self.eq_r] {
+            channel[0].set_low_shelf(sr, EQ_LOW_FREQ, self.eq_low_db);
+            channel[1].set_peaking(sr, EQ_MID_FREQ, EQ_MID_Q, self.eq_mid_db);
+            channel[2].set_high_shelf(sr, EQ_HIGH_FREQ, self.eq_high_db);
         }
     }
 
@@ -232,6 +320,7 @@ impl FxChain {
         if (sample_rate - self.sample_rate).abs() > 1.0 {
             self.sample_rate = sample_rate;
             self.reverb.set_sample_rate(sample_rate);
+            self.apply_eq();
         }
     }
 
@@ -246,12 +335,10 @@ impl FxChain {
         reverb_mix: f64,
         reverb_decay: f64,
     ) {
-        let sr = self.sample_rate;
-        for channel in [&mut self.eq_l, &mut self.eq_r] {
-            channel[0].set_low_shelf(sr, EQ_LOW_FREQ, eq_low_db);
-            channel[1].set_peaking(sr, EQ_MID_FREQ, EQ_MID_Q, eq_mid_db);
-            channel[2].set_high_shelf(sr, EQ_HIGH_FREQ, eq_high_db);
-        }
+        self.eq_low_db = clamp_eq_gain(eq_low_db);
+        self.eq_mid_db = clamp_eq_gain(eq_mid_db);
+        self.eq_high_db = clamp_eq_gain(eq_high_db);
+        self.apply_eq();
         self.mix = reverb_mix.clamp(0.0, 1.0);
         let feedback =
             COMB_FEEDBACK_MIN + (COMB_FEEDBACK_MAX - COMB_FEEDBACK_MIN) * reverb_decay.clamp(0.0, 1.0);
@@ -314,7 +401,7 @@ mod tests {
         let mut fx = FxChain::new(sr);
         fx.set_params(0.0, 0.0, 0.0, 0.0, 0.5);
         let input: Vec<f64> = (0..4096)
-            .map(|i| ((i as f64 * 0.37).sin() * 0.8 + (i as f64 * 0.11).cos() * 0.4))
+            .map(|i| (i as f64 * 0.37).sin() * 0.8 + (i as f64 * 0.11).cos() * 0.4)
             .collect();
         let mut left = input.clone();
         let mut right = input.clone();
@@ -410,5 +497,111 @@ mod tests {
         fx.process_block(&mut zeros_l, &mut zeros_r);
         assert!(zeros_l.iter().all(|x| *x == 0.0));
         assert!(zeros_r.iter().all(|x| *x == 0.0));
+    }
+
+    #[test]
+    fn eq_gains_clamped_to_24_db_and_nonfinite_maps_to_zero() {
+        let sr = 48000.0;
+        let input: Vec<f64> = (0..4096)
+            .map(|i| (i as f64 * 0.37).sin() * 0.8 + (i as f64 * 0.11).cos() * 0.4)
+            .collect();
+        let run = |low: f64, mid: f64, high: f64| -> Vec<f64> {
+            let mut fx = FxChain::new(sr);
+            fx.set_params(low, mid, high, 0.0, 0.5);
+            let mut left = input.clone();
+            let mut right = input.clone();
+            fx.process_block(&mut left, &mut right);
+            assert!(left.iter().all(|x| x.is_finite()), "EQ output must stay finite");
+            left
+        };
+        // Out-of-range gains behave exactly like the ±24 dB rails.
+        assert_eq!(run(100.0, 0.0, 0.0), run(24.0, 0.0, 0.0));
+        assert_eq!(run(-100.0, 0.0, 0.0), run(-24.0, 0.0, 0.0));
+        assert_eq!(run(0.0, 1000.0, 0.0), run(0.0, 24.0, 0.0));
+        assert_eq!(run(0.0, 0.0, -100.0), run(0.0, 0.0, -24.0));
+        // Non-finite gains behave exactly like 0 dB (no NaN in the biquads).
+        assert_eq!(run(f64::NAN, 0.0, 0.0), run(0.0, 0.0, 0.0));
+        assert_eq!(run(0.0, f64::INFINITY, 0.0), run(0.0, 0.0, 0.0));
+        assert_eq!(run(0.0, 0.0, f64::NEG_INFINITY), run(0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn set_sample_rate_retunes_eq_and_preserves_filter_state() {
+        // State preservation: a settled DC signal through a +12 dB low
+        // shelf must not jump when the rate changes — a reset filter
+        // would restart from zero history.
+        let mut fx = FxChain::new(48_000.0);
+        fx.set_params(12.0, 0.0, 0.0, 0.0, 0.5);
+        let mut last = 0.0;
+        for _ in 0..4800 {
+            (last, _) = fx.process_sample(1.0, 1.0);
+        }
+        assert!(last > 3.0, "settled +12 dB shelf DC gain, got {last}");
+        fx.set_sample_rate(96_000.0);
+        let (first, _) = fx.process_sample(1.0, 1.0);
+        assert!(
+            (first - last).abs() < 0.5,
+            "rate change must not reset EQ state: {last} -> {first}"
+        );
+
+        // Retuning: a 12 kHz tone through a +12 dB high shelf (corner
+        // 8 kHz) must still get the full shelf boost at 96 kHz. With
+        // 44.1 kHz coefficients the effective corner would sit near
+        // 17.4 kHz and the tone would see far less boost.
+        let mut fx = FxChain::new(44_100.0);
+        fx.set_params(0.0, 0.0, 12.0, 0.0, 0.5);
+        let input = sine(12_000.0, 44_100.0, 4410);
+        let mut left = input.clone();
+        let mut right = input.clone();
+        fx.process_block(&mut left, &mut right);
+        fx.set_sample_rate(96_000.0);
+        let input = sine(12_000.0, 96_000.0, 9600);
+        let mut left = input.clone();
+        let mut right = input.clone();
+        fx.process_block(&mut left, &mut right);
+        let ratio = rms(&left[4800..]) / rms(&input[4800..]);
+        assert!(ratio > 3.0, "retuned high shelf should ~quadruple 12 kHz, got {ratio}");
+    }
+
+    #[test]
+    fn reverb_tail_survives_sample_rate_change() {
+        let mut fx = FxChain::new(48_000.0);
+        fx.set_params(0.0, 0.0, 0.0, 1.0, 0.8);
+        let mut left = vec![0.0; 4096];
+        let mut right = vec![0.0; 4096];
+        left[0] = 1.0;
+        right[0] = 1.0;
+        fx.process_block(&mut left, &mut right);
+        // The rebuild must keep the sounding tail: silence in must
+        // still come out wet immediately, not only after the new
+        // delay lines refill (which would take >1000 samples).
+        fx.set_sample_rate(44_100.0);
+        let mut silence_l = vec![0.0; 512];
+        let mut silence_r = vec![0.0; 512];
+        fx.process_block(&mut silence_l, &mut silence_r);
+        assert!(
+            rms(&silence_l) > 1e-7,
+            "preserved tail should still ring after rebuild, rms={}",
+            rms(&silence_l)
+        );
+        assert!(silence_l.iter().any(|x| *x != 0.0));
+    }
+
+    #[test]
+    fn comb_filter_flushes_subnormal_feedback_state() {
+        let mut comb = CombFilter::new(4, 0.98);
+        // A subnormal input must be flushed on write, not stored: the
+        // first read returns the zero-filled slot, and no subnormal
+        // value may linger in the buffer or the feedback state.
+        assert_eq!(comb.process(f64::MIN_POSITIVE / 2.0), 0.0);
+        assert!(comb.buffer.iter().all(|x| !x.is_subnormal()));
+        assert!(!comb.filter_state.is_subnormal());
+        // When the written slot comes back around, it must still read
+        // exactly zero (without the flush it would return the stored
+        // subnormal).
+        for _ in 0..8 {
+            assert_eq!(comb.process(0.0), 0.0);
+        }
+        assert_eq!(comb.filter_state, 0.0);
     }
 }

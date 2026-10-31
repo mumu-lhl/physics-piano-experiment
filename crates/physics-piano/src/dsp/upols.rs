@@ -12,6 +12,13 @@ use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 use std::f64::consts::PI;
 use std::sync::Arc;
 
+/// Panic message for every FFT `process` call: realfft only errors on a
+/// length mismatch, and every buffer handed to a plan is asserted to
+/// match the planned `fft_size` / `rfft_bins` at construction, so a
+/// failure here names the construction bug instead of a bare unwrap.
+const FFT_LENGTH_INVARIANT: &str = "UPOLS FFT plan and scratch buffers must keep \
+    the lengths asserted at construction (fft_size / rfft_bins)";
+
 #[derive(Debug, Clone)]
 pub struct StereoIR {
     pub left: Vec<f64>,
@@ -63,7 +70,13 @@ pub fn generate_multi_perspective_soundboard_irs(
             }
         }
     }
-    modes.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    // Frequencies are finite by construction (the push above rejects
+    // anything outside 30..=12000 Hz, which also rejects NaN), but
+    // filter defensively and never panic on an unordered comparison:
+    // a NaN/negative omega_sq from a future change must sort as equal
+    // instead of panicking at construction.
+    modes.retain(|(freq, _, _)| freq.is_finite());
+    modes.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
     modes.truncate(num_modes);
 
     for (freq, m, n) in modes {
@@ -191,6 +204,7 @@ impl MultiPerspectiveUPOLS {
     pub fn new(close: &StereoIR, player: &StereoIR, ambient: &StereoIR, block_size: usize) -> Self {
         initialize_backend();
         let b = block_size;
+        assert!(b > 0, "UPOLS block_size must be greater than 0");
         let fft_size = 2 * b;
         let rfft_bins = fft_size / 2 + 1;
 
@@ -221,6 +235,12 @@ impl MultiPerspectiveUPOLS {
         let mut padded = vec![0.0; fft_size];
         let mut spectrum = vec![Complex::new(0.0, 0.0); rfft_bins];
 
+        // Length invariant the FFT plans rely on: realfft errors on a
+        // length mismatch, so every buffer handed to `process` is
+        // checked against the planned sizes here, at construction.
+        assert_eq!(padded.len(), fft_size);
+        assert_eq!(spectrum.len(), rfft_bins);
+
         for m in 0..3 {
             let ir = irs[m];
             for p in 0..num_parts {
@@ -232,7 +252,8 @@ impl MultiPerspectiveUPOLS {
                 if start < ir.left.len() {
                     padded[..(end_l - start)].copy_from_slice(&ir.left[start..end_l]);
                 }
-                r2c.process(&mut padded, &mut spectrum).unwrap();
+                r2c.process(&mut padded, &mut spectrum)
+                    .expect(FFT_LENGTH_INVARIANT);
                 h_left[m].push(spectrum.clone());
 
                 // Right channel partition
@@ -241,9 +262,17 @@ impl MultiPerspectiveUPOLS {
                 if start < ir.right.len() {
                     padded[..(end_r - start)].copy_from_slice(&ir.right[start..end_r]);
                 }
-                r2c.process(&mut padded, &mut spectrum).unwrap();
+                r2c.process(&mut padded, &mut spectrum)
+                    .expect(FFT_LENGTH_INVARIANT);
                 h_right[m].push(spectrum.clone());
             }
+        }
+
+        for m in 0..3 {
+            assert_eq!(h_left[m].len(), num_parts);
+            assert_eq!(h_right[m].len(), num_parts);
+            assert!(h_left[m].iter().all(|p| p.len() == rfft_bins));
+            assert!(h_right[m].iter().all(|p| p.len() == rfft_bins));
         }
 
         Self {
@@ -295,7 +324,7 @@ impl MultiPerspectiveUPOLS {
         // 2. Shared single forward FFT
         self.r2c
             .process(&mut self.time_frame, &mut self.freq_scratch)
-            .unwrap();
+            .expect(FFT_LENGTH_INVARIANT);
 
         // 3. Store in circular history
         self.x_history[self.history_idx].copy_from_slice(&self.freq_scratch);
@@ -339,7 +368,7 @@ impl MultiPerspectiveUPOLS {
             // Left
             self.c2r
                 .process(&mut self.y_freq_left[m], &mut self.y_time_scratch)
-                .unwrap();
+                .expect(FFT_LENGTH_INVARIANT);
             for i in 0..b {
                 out_left[i] += self.y_time_scratch[b + i] * norm * g;
             }
@@ -347,7 +376,7 @@ impl MultiPerspectiveUPOLS {
             // Right
             self.c2r
                 .process(&mut self.y_freq_right[m], &mut self.y_time_scratch)
-                .unwrap();
+                .expect(FFT_LENGTH_INVARIANT);
             for i in 0..b {
                 out_right[i] += self.y_time_scratch[b + i] * norm * g;
             }
@@ -370,7 +399,7 @@ impl MultiPerspectiveUPOLS {
 
             self.r2c
                 .process(&mut self.time_frame, &mut self.freq_scratch)
-                .unwrap();
+                .expect(FFT_LENGTH_INVARIANT);
             self.x_history[self.history_idx].copy_from_slice(&self.freq_scratch);
 
             for m in 0..3 {
@@ -409,14 +438,14 @@ impl MultiPerspectiveUPOLS {
 
                 self.c2r
                     .process(&mut self.y_freq_left[m], &mut self.y_time_scratch)
-                    .unwrap();
+                    .expect(FFT_LENGTH_INVARIANT);
                 for i in 0..b {
                     self.out_fifo_left[i] += self.y_time_scratch[b + i] * norm * g;
                 }
 
                 self.c2r
                     .process(&mut self.y_freq_right[m], &mut self.y_time_scratch)
-                    .unwrap();
+                    .expect(FFT_LENGTH_INVARIANT);
                 for i in 0..b {
                     self.out_fifo_right[i] += self.y_time_scratch[b + i] * norm * g;
                 }
@@ -473,6 +502,7 @@ impl UPOLSConvolver {
     pub fn new(ir_left: &[f64], ir_right: &[f64], block_size: usize) -> Self {
         initialize_backend();
         let b = block_size;
+        assert!(b > 0, "UPOLS block_size must be greater than 0");
         let fft_size = 2 * b;
         let rfft_bins = fft_size / 2 + 1;
 
@@ -489,6 +519,12 @@ impl UPOLSConvolver {
         let mut padded = vec![0.0; fft_size];
         let mut spectrum = vec![Complex::new(0.0, 0.0); rfft_bins];
 
+        // Length invariant the FFT plans rely on: realfft errors on a
+        // length mismatch, so every buffer handed to `process` is
+        // checked against the planned sizes here, at construction.
+        assert_eq!(padded.len(), fft_size);
+        assert_eq!(spectrum.len(), rfft_bins);
+
         for p in 0..num_parts {
             let start = p * b;
             let end = (start + b).min(ir_left.len());
@@ -496,7 +532,8 @@ impl UPOLSConvolver {
             if start < ir_left.len() {
                 padded[..(end - start)].copy_from_slice(&ir_left[start..end]);
             }
-            r2c.process(&mut padded, &mut spectrum).unwrap();
+            r2c.process(&mut padded, &mut spectrum)
+                .expect(FFT_LENGTH_INVARIANT);
             h_left.push(spectrum.clone());
 
             let end_r = (start + b).min(ir_right.len());
@@ -504,9 +541,15 @@ impl UPOLSConvolver {
             if start < ir_right.len() {
                 padded[..(end_r - start)].copy_from_slice(&ir_right[start..end_r]);
             }
-            r2c.process(&mut padded, &mut spectrum).unwrap();
+            r2c.process(&mut padded, &mut spectrum)
+                .expect(FFT_LENGTH_INVARIANT);
             h_right.push(spectrum.clone());
         }
+
+        assert_eq!(h_left.len(), num_parts);
+        assert_eq!(h_right.len(), num_parts);
+        assert!(h_left.iter().all(|p| p.len() == rfft_bins));
+        assert!(h_right.iter().all(|p| p.len() == rfft_bins));
 
         Self {
             block_size: b,
@@ -543,7 +586,7 @@ impl UPOLSConvolver {
 
         self.r2c
             .process(&mut self.time_frame, &mut self.freq_scratch)
-            .unwrap();
+            .expect(FFT_LENGTH_INVARIANT);
         self.x_history[self.history_idx].copy_from_slice(&self.freq_scratch);
 
         self.y_freq_left.fill(Complex::new(0.0, 0.0));
@@ -565,14 +608,14 @@ impl UPOLSConvolver {
 
         self.c2r
             .process(&mut self.y_freq_left, &mut self.y_time_scratch)
-            .unwrap();
+            .expect(FFT_LENGTH_INVARIANT);
         for i in 0..b {
             out_left[i] = self.y_time_scratch[b + i] * norm;
         }
 
         self.c2r
             .process(&mut self.y_freq_right, &mut self.y_time_scratch)
-            .unwrap();
+            .expect(FFT_LENGTH_INVARIANT);
         for i in 0..b {
             out_right[i] = self.y_time_scratch[b + i] * norm;
         }
@@ -593,7 +636,7 @@ impl UPOLSConvolver {
 
             self.r2c
                 .process(&mut self.time_frame, &mut self.freq_scratch)
-                .unwrap();
+                .expect(FFT_LENGTH_INVARIANT);
             self.x_history[self.history_idx].copy_from_slice(&self.freq_scratch);
 
             self.y_freq_left.fill(Complex::new(0.0, 0.0));
@@ -615,14 +658,14 @@ impl UPOLSConvolver {
 
             self.c2r
                 .process(&mut self.y_freq_left, &mut self.y_time_scratch)
-                .unwrap();
+                .expect(FFT_LENGTH_INVARIANT);
             for i in 0..b {
                 self.out_fifo_left[i] = self.y_time_scratch[b + i] * norm;
             }
 
             self.c2r
                 .process(&mut self.y_freq_right, &mut self.y_time_scratch)
-                .unwrap();
+                .expect(FFT_LENGTH_INVARIANT);
             for i in 0..b {
                 self.out_fifo_right[i] = self.y_time_scratch[b + i] * norm;
             }
@@ -643,5 +686,77 @@ impl UPOLSConvolver {
         self.out_fifo_left.fill(0.0);
         self.out_fifo_right.fill(0.0);
         self.fifo_idx = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "block_size must be greater than 0")]
+    fn zero_block_size_is_rejected_at_construction() {
+        let _ = UPOLSConvolver::new(&[1.0], &[1.0], 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "block_size must be greater than 0")]
+    fn zero_block_size_is_rejected_for_multi_perspective() {
+        let ir = StereoIR {
+            left: vec![1.0],
+            right: vec![1.0],
+        };
+        let _ = MultiPerspectiveUPOLS::new(&ir, &ir, &ir, 0);
+    }
+
+    #[test]
+    fn impulse_response_matches_direct_convolution() {
+        let ir = [1.0, 0.5, 0.25, 0.0];
+        let mut conv = UPOLSConvolver::new(&ir, &ir, 8);
+        let mut input = [0.0; 8];
+        input[0] = 1.0;
+        let mut out_l = [0.0; 8];
+        let mut out_r = [0.0; 8];
+        conv.process_block(&input, &mut out_l, &mut out_r);
+        for (i, &expected) in ir.iter().enumerate() {
+            assert!(
+                (out_l[i] - expected).abs() < 1e-9,
+                "tap {i}: got {}, expected {expected}",
+                out_l[i]
+            );
+            assert!((out_r[i] - expected).abs() < 1e-9);
+        }
+        assert!(out_l[4..].iter().all(|x| x.abs() < 1e-9));
+    }
+
+    #[test]
+    fn multi_perspective_processes_a_block_with_finite_output() {
+        let (close, player, ambient) =
+            generate_multi_perspective_soundboard_irs(48_000.0, 0.05, 20);
+        let mut conv = MultiPerspectiveUPOLS::new(&close, &player, &ambient, 128);
+        let input = [0.5; 128];
+        let mut out_l = [0.0; 128];
+        let mut out_r = [0.0; 128];
+        conv.process_block(&input, &mut out_l, &mut out_r);
+        assert!(out_l.iter().all(|x| x.is_finite()));
+        assert!(out_r.iter().all(|x| x.is_finite()));
+    }
+
+    #[test]
+    fn generated_soundboard_irs_are_finite() {
+        // Exercises the mode sort (with its NaN guard) end to end.
+        let (close, player, ambient) =
+            generate_multi_perspective_soundboard_irs(48_000.0, 0.05, 20);
+        assert_eq!(close.left.len(), 2400);
+        for ir in [
+            &close.left,
+            &close.right,
+            &player.left,
+            &player.right,
+            &ambient.left,
+            &ambient.right,
+        ] {
+            assert!(ir.iter().all(|x| x.is_finite()));
+        }
     }
 }

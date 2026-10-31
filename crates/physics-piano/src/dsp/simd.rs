@@ -192,6 +192,18 @@ fn update_modal_state_scalar(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 #[allow(unsafe_op_in_unsafe_fn)]
+/// # Safety
+///
+/// The caller must guarantee all of the following:
+/// - AVX2 and FMA target features are enabled on the executing CPU
+///   (this function is only called after runtime feature detection in
+///   [`backend`], and carries `#[target_feature(enable = "avx2,fma")]`);
+/// - every `SoaF32` argument stores its lanes in 32-byte-aligned `F32x8`
+///   blocks (`_mm256_load_ps`/`_mm256_store_ps` require aligned addresses),
+///   and all of `q`, `v`, the six transition planes, `damper_rates` — and
+///   the hammer shape, when `hammer` is `Some` — have the same number of
+///   blocks;
+/// - `q` and `v` have equal lengths, matching the transition planes.
 unsafe fn update_modal_state_avx2(
     q: &mut SoaF32,
     v: &mut SoaF32,
@@ -248,6 +260,18 @@ unsafe fn update_modal_state_avx2(
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 #[allow(unsafe_op_in_unsafe_fn)]
+/// # Safety
+///
+/// The caller must guarantee all of the following:
+/// - NEON target features are enabled on the executing CPU (this
+///   function is only called on AArch64, and carries
+///   `#[target_feature(enable = "neon")]`);
+/// - every `SoaF32` argument stores its lanes in 32-byte-aligned `F32x8`
+///   blocks (loads/stores go through the block pointers in 4-lane
+///   halves), and all of `q`, `v`, the six transition planes,
+///   `damper_rates` — and the hammer shape, when `hammer` is `Some` —
+///   have the same number of blocks;
+/// - `q` and `v` have equal lengths, matching the transition planes.
 unsafe fn update_modal_state_neon(
     q: &mut SoaF32,
     v: &mut SoaF32,
@@ -307,8 +331,8 @@ pub(crate) fn complex_mac_accumulate(
     input: &[Complex<f64>],
     filter: &[Complex<f64>],
 ) {
-    debug_assert_eq!(accumulator.len(), input.len());
-    debug_assert_eq!(accumulator.len(), filter.len());
+    assert_eq!(accumulator.len(), input.len());
+    assert_eq!(accumulator.len(), filter.len());
     match backend() {
         #[cfg(target_arch = "x86_64")]
         Backend::Avx2Fma => unsafe {
@@ -329,6 +353,20 @@ pub(crate) fn complex_mac_accumulate(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 #[allow(unsafe_op_in_unsafe_fn)]
+/// # Safety
+///
+/// The caller must guarantee all of the following:
+/// - AVX2 and FMA target features are enabled on the executing CPU
+///   (this function is only called after runtime feature detection in
+///   [`backend`], and carries `#[target_feature(enable = "avx2,fma")]`);
+/// - the three slices are valid for reads/writes of `Complex<f64>`
+///   elements at their full lengths (the kernel uses unaligned
+///   `_mm256_loadu_pd`/`_mm256_storeu_pd`, so no 32-byte alignment is
+///   required, but the pointers must be valid and non-overlapping in
+///   any way that would make the pairwise loads/stores alias
+///   incorrectly);
+/// - all three slices have equal lengths (checked with `assert_eq!` by
+///   the safe wrapper [`complex_mac_accumulate`]).
 unsafe fn complex_mac_avx2(
     accumulator: &mut [Complex<f64>],
     input: &[Complex<f64>],
@@ -357,6 +395,18 @@ unsafe fn complex_mac_avx2(
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 #[allow(unsafe_op_in_unsafe_fn)]
+/// # Safety
+///
+/// The caller must guarantee all of the following:
+/// - NEON target features are enabled on the executing CPU (this
+///   function is only called on AArch64, and carries
+///   `#[target_feature(enable = "neon")]`);
+/// - the three slices are valid for reads/writes of `Complex<f64>`
+///   elements at their full lengths (the kernel uses unaligned
+///   `vld1q_f64`/`vst1q_f64`, so no 32-byte alignment is required, but
+///   the pointers must be valid);
+/// - all three slices have equal lengths (checked with `assert_eq!` by
+///   the safe wrapper [`complex_mac_accumulate`]).
 unsafe fn complex_mac_neon(
     accumulator: &mut [Complex<f64>],
     input: &[Complex<f64>],

@@ -5,25 +5,60 @@ use physics_piano::engine::PianoEngine;
 use std::env;
 use std::time::Instant;
 
-fn print_usage() {
-    println!("Physics Piano (Rust High-Performance Physical Modeling Engine)");
-    println!("Usage:");
-    println!(
-        "  physics-piano-rs render <note> <duration_sec> <output.wav> [velocity] [--sustain] [--upols]"
-    );
-    println!(
-        "  physics-piano-rs chord <notes_comma_separated> <duration_sec> <output.wav> [velocity] [--sustain] [--upols]"
-    );
-    println!("  physics-piano-rs benchmark [num_modes]");
-    println!("Examples:");
-    println!("  physics-piano-rs render A4 3.0 output_a4.wav 0.85");
-    println!("  physics-piano-rs render A0 4.0 bass_a0.wav 0.90");
-    println!("  physics-piano-rs chord \"C4,E4,G4,C5\" 4.0 chord.wav 0.85 --sustain");
-    println!("  physics-piano-rs benchmark 35");
+fn usage_lines() -> [&'static str; 10] {
+    [
+        "Physics Piano (Rust High-Performance Physical Modeling Engine)",
+        "Usage:",
+        "  physics-piano-rs render <note> <duration_sec> <output.wav> [velocity] [--sustain] [--upols]",
+        "  physics-piano-rs chord <notes_comma_separated> <duration_sec> <output.wav> [velocity] [--sustain] [--upols]",
+        "  physics-piano-rs benchmark [num_modes]",
+        "Examples:",
+        "  physics-piano-rs render A4 3.0 output_a4.wav 0.85",
+        "  physics-piano-rs render A0 4.0 bass_a0.wav 0.90",
+        "  physics-piano-rs chord \"C4,E4,G4,C5\" 4.0 chord.wav 0.85 --sustain",
+        "  physics-piano-rs benchmark 35",
+    ]
 }
 
-fn note_to_midi(note: &str) -> u8 {
+fn print_usage() {
+    for line in usage_lines() {
+        println!("{line}");
+    }
+}
+
+/// Report a bad argument on stderr with the usage text and exit nonzero,
+/// instead of silently substituting a default value.
+fn fail_with_usage(message: String) -> ! {
+    eprintln!("error: {message}");
+    for line in usage_lines() {
+        eprintln!("{line}");
+    }
+    std::process::exit(2);
+}
+
+fn parse_f64_arg(value: &str, name: &str) -> f64 {
+    match value.parse::<f64>() {
+        Ok(parsed) if parsed.is_finite() => parsed,
+        _ => fail_with_usage(format!(
+            "invalid {name} {value:?}: expected a finite number"
+        )),
+    }
+}
+
+fn parse_usize_arg(value: &str, name: &str) -> usize {
+    match value.parse::<usize>() {
+        Ok(parsed) => parsed,
+        Err(_) => fail_with_usage(format!(
+            "invalid {name} {value:?}: expected a non-negative integer"
+        )),
+    }
+}
+
+fn note_to_midi(note: &str) -> Option<u8> {
     let note = note.trim();
+    if note.is_empty() || !note.is_ascii() {
+        return None;
+    }
     let (name, oct_str) = if note.len() >= 3
         && (note.chars().nth(1) == Some('#') || note.chars().nth(1) == Some('b'))
     {
@@ -47,8 +82,8 @@ fn note_to_midi(note: &str) -> u8 {
         "B" => 11,
         _ => 9,
     };
-    let oct: i32 = oct_str.parse().unwrap_or(4);
-    ((oct + 1) * 12 + base_idx).clamp(21, 108) as u8
+    let oct: i32 = oct_str.parse().ok()?;
+    Some(((oct + 1) * 12 + base_idx).clamp(21, 108) as u8)
 }
 
 fn save_wav(out_path: &str, sample_rate: f64, left: &[f64], right: &[f64]) {
@@ -94,7 +129,12 @@ fn cmd_render(
         engine.set_sustain_pedal(true, 1.0);
     }
 
-    let key = note_to_midi(note_name);
+    let key = match note_to_midi(note_name) {
+        Some(key) => key,
+        None => fail_with_usage(format!(
+            "invalid note {note_name:?}: expected a note name like A4 or C#3"
+        )),
+    };
     println!(
         "[*] Rendering physical piano note: {} (MIDI {}) in Rust...",
         note_name, key
@@ -141,7 +181,15 @@ fn cmd_chord(
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .collect();
-    let keys: Vec<u8> = notes.iter().map(|n| note_to_midi(n)).collect();
+    let keys: Vec<u8> = notes
+        .iter()
+        .map(|n| match note_to_midi(n) {
+            Some(key) => key,
+            None => fail_with_usage(format!(
+                "invalid note {n:?} in chord: expected note names like C4,E4,G4"
+            )),
+        })
+        .collect();
 
     println!("[*] Rendering physical piano chord: {:?} in Rust...", notes);
     println!(
@@ -179,7 +227,12 @@ fn cmd_benchmark(num_modes: usize) {
     let mut total_time = 0.0;
     for &note in &test_keys {
         let mut engine = PianoEngine::new(sample_rate, num_modes, true);
-        let key = note_to_midi(note);
+        let key = match note_to_midi(note) {
+            Some(key) => key,
+            None => fail_with_usage(format!(
+                "invalid note {note:?}: expected a note name like A4 or C#3"
+            )),
+        };
         let t0 = Instant::now();
         engine.note_on(key, 0.85);
         let _ = engine.render(dur);
@@ -210,7 +263,7 @@ fn main() {
         "render" => {
             let note = if args.len() > 2 { &args[2] } else { "A4" };
             let duration: f64 = if args.len() > 3 {
-                args[3].parse().unwrap_or(3.0)
+                parse_f64_arg(&args[3], "duration_sec")
             } else {
                 3.0
             };
@@ -220,7 +273,7 @@ fn main() {
                 "rust_output.wav"
             };
             let velocity: f64 = if args.len() > 5 {
-                args[5].parse().unwrap_or(0.85)
+                parse_f64_arg(&args[5], "velocity")
             } else {
                 0.85
             };
@@ -231,7 +284,7 @@ fn main() {
         "chord" => {
             let chord_str = if args.len() > 2 { &args[2] } else { "C4,E4,G4" };
             let duration: f64 = if args.len() > 3 {
-                args[3].parse().unwrap_or(4.0)
+                parse_f64_arg(&args[3], "duration_sec")
             } else {
                 4.0
             };
@@ -241,7 +294,7 @@ fn main() {
                 "rust_chord.wav"
             };
             let velocity: f64 = if args.len() > 5 {
-                args[5].parse().unwrap_or(0.85)
+                parse_f64_arg(&args[5], "velocity")
             } else {
                 0.85
             };
@@ -251,7 +304,7 @@ fn main() {
         }
         "benchmark" => {
             let modes: usize = if args.len() > 2 {
-                args[2].parse().unwrap_or(35)
+                parse_usize_arg(&args[2], "num_modes")
             } else {
                 35
             };

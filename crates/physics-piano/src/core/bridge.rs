@@ -47,7 +47,11 @@ impl BridgeSoundboard {
 
         let mut biquad_coeffs = [(0.0, 0.0, 0.0, 0.0); 9];
         for i in 0..9 {
-            let w0 = 2.0 * PI * body_freqs[i] / sample_rate;
+            // Clamp the angular frequency to Nyquist exactly like
+            // `Biquad::angular_frequency` does: below ~16 kHz the 3.2 kHz
+            // body mode would otherwise wrap past pi and the filter
+            // would go wrong/unstable.
+            let w0 = 2.0 * PI * (body_freqs[i] / sample_rate).clamp(0.0001, 0.499);
             let alpha = w0.sin() / (2.0 * body_q[i]);
             let cos_w0 = w0.cos();
             let a0 = 1.0 + alpha;
@@ -158,5 +162,40 @@ impl BridgeSoundboard {
         let pan_l = ((1.0 - pan_clamped) * PI * 0.5).sin();
         let pan_r = (pan_clamped * PI * 0.5).sin();
         self.step_soundboard_stereo(f_in * pan_l, f_in * pan_r)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BridgeSoundboard;
+
+    #[test]
+    fn body_filters_stay_finite_and_stable_at_very_low_sample_rates() {
+        // At 1 kHz the 3.2 kHz body mode sits far above Nyquist; without
+        // the w0 clamp its angular frequency wraps past pi and the
+        // modal filter can go unstable.
+        for sample_rate in [1000.0, 4000.0, 8000.0] {
+            let mut bridge = BridgeSoundboard::new(sample_rate);
+            assert!(
+                bridge.biquad_coeffs.iter().all(|c| c.0.is_finite()
+                    && c.1.is_finite()
+                    && c.2.is_finite()
+                    && c.3.is_finite())
+            );
+            let mut peak = 0.0f64;
+            for i in 0..4096 {
+                let input = if i == 0 { 1.0 } else { 0.0 };
+                let (l, r) = bridge.step_soundboard_stereo(input, input);
+                assert!(
+                    l.is_finite() && r.is_finite(),
+                    "sample {i} at {sample_rate} Hz"
+                );
+                peak = peak.max(l.abs()).max(r.abs());
+            }
+            assert!(
+                peak < 10.0,
+                "impulse response must stay bounded at {sample_rate} Hz, peak={peak}"
+            );
+        }
     }
 }

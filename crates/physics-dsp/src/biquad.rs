@@ -233,11 +233,14 @@ impl Biquad {
         let output = self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2
             - self.a1 * self.y1
             - self.a2 * self.y2;
-        self.x2 = self.x1;
-        self.x1 = input;
-        self.y2 = self.y1;
-        self.y1 = output;
-        output
+        // Flush subnormal history to zero so decaying tails go exactly
+        // silent instead of lingering in the denormal range (see
+        // `crate::flush_denormal`).
+        self.x2 = crate::flush_denormal(self.x1);
+        self.x1 = crate::flush_denormal(input);
+        self.y2 = crate::flush_denormal(self.y1);
+        self.y1 = crate::flush_denormal(output);
+        self.y1
     }
 
     pub fn reset(&mut self) {
@@ -280,5 +283,18 @@ mod tests {
         filter.process(1.0);
         filter.set_bandpass(48_000.0, 2_000.0, 2.0);
         assert!(filter.process(0.0).is_finite());
+    }
+
+    #[test]
+    fn subnormal_input_flushes_to_exact_silence() {
+        let mut filter = Biquad::peaking(48_000.0, 1_000.0, 1.0, 0.0);
+        // A subnormal impulse must not leave subnormal state behind:
+        // the first output is flushed to exactly zero, and the filter
+        // stays exactly silent on zero input afterwards.
+        let out = filter.process(f64::MIN_POSITIVE / 2.0);
+        assert_eq!(out, 0.0);
+        for _ in 0..16 {
+            assert_eq!(filter.process(0.0), 0.0);
+        }
     }
 }

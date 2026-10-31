@@ -42,15 +42,16 @@ This roadmap tracks milestones for the piano engine and its supporting research,
 ---
 
 ### Tier 4: Native CLAP Plugin Architecture - [COMPLETED]
-- [x] **Host Collaborative Thread Pool Integration (`clap_host_thread_pool`)**:
-  - Implemented `clap_plugin_thread_pool` interface with Rayon work-stealing fallback for standalone hosts.
-  - Eliminates OS priority inversion and lock contention under low buffer sizes (64 samples).
-- [x] **Sample-Accurate Modulation & Note Expressions**:
+- [x] **CLAP Export via nice-plug**:
+  - No hand-written host thread-pool integration: the plugin layer is
+    provided by nice-plug, which owns host interaction (there is no
+    `clap_host_thread_pool` interface and no Rayon work-stealing fallback
+    in this tree).
   - Sample-accurate event dispatch with sub-block timestamp indexing.
   - Per-note tuning modulation (`CLAP_NOTE_EXPRESSION_TUNING`) for dynamic microtonal adjustments.
   - Continuous damper pedal articulation (half-pedaling $[0, 1]$) and Una Corda soft-pedal felt strike displacement.
 - [x] **CLAP C-ABI Export**:
-  - `clap_entry` symbol exported from `libphysics_piano.so` (`cdylib`).
+  - The `clap_entry` symbol is exported from `libphysics_piano.so` (`cdylib`) by nice-plug.
   - Note (2026-10-29): the hand-written C-ABI layer (`clap_plugin.rs`) was removed as dead code — no host could discover its entry point; CLAP export is provided by nice-plug (`nice_export_clap!` in `src/lib.rs`).
 
 ---

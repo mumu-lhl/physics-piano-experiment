@@ -58,6 +58,16 @@ impl LidPosition {
     }
 }
 
+/// Delay-buffer length for a sample rate: 2.5 ms of headroom over the
+/// longest (2.0 ms) lid reflection, so the tap always fits.
+fn delay_buffer_len(sample_rate: f64) -> usize {
+    ((0.0025 * sample_rate) as usize).max(2)
+}
+
+/// Number of samples a tap change crossfades over, so dragging the lid
+/// does not jump the reflection read position (a click/zipper).
+const TAP_CROSSFADE_SAMPLES: f64 = 64.0;
+
 /// Grand Piano Lid Baffle & Acoustic Reflection Processor.
 pub struct LidBaffle {
     sample_rate: f64,
@@ -65,28 +75,39 @@ pub struct LidBaffle {
     shelf_l: HighShelf,
     shelf_r: HighShelf,
 
-    // Delay ring buffer for early lid reflection (~2.5ms max = 256 samples)
-    delay_buf_l: [f64; 256],
-    delay_buf_r: [f64; 256],
+    // Delay ring buffer for early lid reflection, sized from the sample
+    // rate (2.5 ms) instead of a fixed 256 samples.
+    delay_buf_l: Vec<f64>,
+    delay_buf_r: Vec<f64>,
     delay_idx: usize,
     delay_samples: usize,
+    /// Tap the crossfade started from while `tap_blend < 1.0`.
+    prev_delay_samples: usize,
+    /// 0.0 = fully the previous tap, 1.0 = fully the current tap.
+    tap_blend: f64,
     reflection_gain: f64,
 }
 
 impl LidBaffle {
     pub fn new(sample_rate: f64) -> Self {
+        let delay_len = delay_buffer_len(sample_rate);
         let mut baffle = Self {
             sample_rate,
             current_angle: f64::NAN, // Force the initial filter setup below.
             shelf_l: HighShelf::new(sample_rate, 3500.0, 0.0),
             shelf_r: HighShelf::new(sample_rate, 3500.0, 0.0),
-            delay_buf_l: [0.0; 256],
-            delay_buf_r: [0.0; 256],
+            delay_buf_l: vec![0.0; delay_len],
+            delay_buf_r: vec![0.0; delay_len],
             delay_idx: 0,
-            delay_samples: (0.0018 * sample_rate) as usize,
+            delay_samples: ((0.0018 * sample_rate) as usize).clamp(1, delay_len - 1),
+            prev_delay_samples: ((0.0018 * sample_rate) as usize).clamp(1, delay_len - 1),
+            tap_blend: 1.0,
             reflection_gain: 0.25,
         };
         baffle.set_angle_deg(45.0);
+        // The buffers start zeroed, so the initial tap needs no crossfade.
+        baffle.tap_blend = 1.0;
+        baffle.prev_delay_samples = baffle.delay_samples;
         baffle
     }
 
@@ -118,7 +139,15 @@ impl LidBaffle {
         self.reflection_gain = refl_gain;
 
         let delay_s = 0.0012 + 0.0008 * (1.0 - (self.current_angle / 45.0).clamp(0.0, 1.0));
-        self.delay_samples = ((delay_s * self.sample_rate) as usize).clamp(1, 255);
+        let new_delay =
+            ((delay_s * self.sample_rate) as usize).clamp(1, self.delay_buf_l.len() - 1);
+        if new_delay != self.delay_samples {
+            // Crossfade the reflection tap instead of jumping it, so a
+            // lid-angle change cannot click.
+            self.prev_delay_samples = self.delay_samples;
+            self.delay_samples = new_delay;
+            self.tap_blend = 0.0;
+        }
     }
 
     pub fn set_position(&mut self, pos: LidPosition) {
@@ -131,14 +160,26 @@ impl LidBaffle {
         let filt_l = self.shelf_l.process(in_l);
         let filt_r = self.shelf_r.process(in_r);
 
-        // 2. Early lid reflection delay path
-        let read_idx = (self.delay_idx + 256 - self.delay_samples) % 256;
-        let refl_l = self.delay_buf_l[read_idx];
-        let refl_r = self.delay_buf_r[read_idx];
+        // 2. Early lid reflection delay path, crossfading between the
+        // previous and current taps while the tap is moving.
+        let buf_len = self.delay_buf_l.len();
+        let read_idx = (self.delay_idx + buf_len - self.delay_samples) % buf_len;
+        let prev_idx = (self.delay_idx + buf_len - self.prev_delay_samples) % buf_len;
+        let blend = self.tap_blend;
+        let refl_l =
+            self.delay_buf_l[prev_idx] * (1.0 - blend) + self.delay_buf_l[read_idx] * blend;
+        let refl_r =
+            self.delay_buf_r[prev_idx] * (1.0 - blend) + self.delay_buf_r[read_idx] * blend;
 
         self.delay_buf_l[self.delay_idx] = in_l;
         self.delay_buf_r[self.delay_idx] = in_r;
-        self.delay_idx = (self.delay_idx + 1) % 256;
+        self.delay_idx = (self.delay_idx + 1) % buf_len;
+        if self.tap_blend < 1.0 {
+            self.tap_blend = (self.tap_blend + 1.0 / TAP_CROSSFADE_SAMPLES).min(1.0);
+            if self.tap_blend >= 1.0 {
+                self.prev_delay_samples = self.delay_samples;
+            }
+        }
 
         let out_l = filt_l + refl_l * self.reflection_gain;
         let out_r = filt_r + refl_r * self.reflection_gain;
@@ -152,5 +193,65 @@ impl LidBaffle {
         self.delay_buf_l.fill(0.0);
         self.delay_buf_r.fill(0.0);
         self.delay_idx = 0;
+        self.tap_blend = 1.0;
+        self.prev_delay_samples = self.delay_samples;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LidBaffle;
+
+    #[test]
+    fn delay_buffer_scales_with_sample_rate_and_tap_is_clamped() {
+        let mut baffle = LidBaffle::new(192_000.0);
+        assert_eq!(baffle.delay_buf_l.len(), 480);
+        assert_eq!(baffle.delay_buf_r.len(), 480);
+        // Widest reflection (lid closed, 2.0 ms) must fit with headroom.
+        baffle.set_angle_deg(0.0);
+        assert_eq!(baffle.delay_samples, 384);
+        baffle.set_angle_deg(60.0);
+        assert!(baffle.delay_samples >= 1 && baffle.delay_samples < 480);
+        // Low rates keep a usable buffer too.
+        let low = LidBaffle::new(8000.0);
+        assert_eq!(low.delay_buf_l.len(), 20);
+    }
+
+    #[test]
+    fn tap_change_crossfades_over_64_samples() {
+        let mut baffle = LidBaffle::new(48_000.0);
+        let before = baffle.delay_samples;
+        assert_eq!(baffle.tap_blend, 1.0);
+        baffle.set_angle_deg(0.0);
+        assert_ne!(baffle.delay_samples, before);
+        assert_eq!(baffle.prev_delay_samples, before);
+        assert_eq!(baffle.tap_blend, 0.0);
+        for _ in 0..63 {
+            baffle.process(0.0, 0.0);
+            assert!(baffle.tap_blend < 1.0);
+        }
+        baffle.process(0.0, 0.0);
+        assert_eq!(baffle.tap_blend, 1.0);
+        assert_eq!(baffle.prev_delay_samples, baffle.delay_samples);
+        // Re-setting the same angle must not restart the crossfade.
+        baffle.set_angle_deg(0.0);
+        assert_eq!(baffle.tap_blend, 1.0);
+    }
+
+    #[test]
+    fn reflection_arrives_at_the_configured_delay() {
+        let mut baffle = LidBaffle::new(48_000.0);
+        baffle.set_angle_deg(45.0);
+        let delay = baffle.delay_samples;
+        let mut outputs = Vec::new();
+        for i in 0..delay + 4 {
+            let input = if i == 0 { 1.0 } else { 0.0 };
+            let (l, _) = baffle.process(input, input);
+            outputs.push(l);
+        }
+        // The shelf is flat at 45 degrees, so the reflection peaks
+        // exactly at the configured delay and nothing leaks before it.
+        assert!(outputs[delay].abs() > 0.1);
+        assert!(outputs[1..delay].iter().all(|x| x.abs() < 0.05));
     }
 }

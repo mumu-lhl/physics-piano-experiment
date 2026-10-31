@@ -102,7 +102,6 @@ pub struct StiffStringModal {
 
     // Damper
     pub damper_active: bool,
-    pub damper_decay_mult: f64,
     pub damper_depth: f64,
     pub has_damper: bool,
     pub target_damper_depth: f64,
@@ -237,7 +236,6 @@ impl StiffStringModal {
             state_p: ModalStateSoA::zeros(m),
             current_delta_t: 0.0,
             damper_active: true,
-            damper_decay_mult: 1.0,
             damper_depth: 1.0,
             has_damper: true,
             target_damper_depth: 1.0,
@@ -322,17 +320,10 @@ impl StiffStringModal {
         if !self.has_damper {
             self.damper_depth = 0.0;
             self.target_damper_depth = 0.0;
-            self.damper_decay_mult = 1.0;
             return;
         }
         self.damper_depth = depth.clamp(0.0, 1.0);
         self.target_damper_depth = if active { self.damper_depth } else { 0.0 };
-        self.damper_decay_mult = 1.0
-            + (if active {
-                15.0 * self.damper_depth
-            } else {
-                0.0
-            });
     }
 
     #[inline]
