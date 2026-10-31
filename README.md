@@ -20,14 +20,13 @@ physics-piano-experiment/
 │   │   ├── src/dsp/              # Multi-perspective UPOLS convolution & lid opening baffle
 │   │   ├── src/gui/              # Vizia interface & 88-key keyboard
 │   │   ├── src/params/           # 88-key grand piano physical parameter generator
-│   │   ├── src/clap_plugin.rs    # Low-level CLAP C-ABI bindings
-│   │   └── src/nice_plugin.rs    # nice-plug adapter (CLAP, VST3, Standalone)
+│   │   ├── src/nice_plugin.rs    # nice-plug adapter (CLAP, VST3, Standalone; CLAP ships via nice-plug)
 │   └── physics-guitar/           # Acoustic & Electric Guitar physical modeling engine
 │       ├── src/bin/              # Guitar standalone playable app & CLI
 │       ├── src/core/             # Guitar string, tension modulation, body radiation, pluck
 │       ├── src/gui/              # Real-time fretboard tracking & string energy visualizer
 │       ├── src/presets.rs        # 6 factory presets (Martin D-28, Strat, Les Paul, etc.)
-│       └── src/nih_plugin.rs     # Native CLAP / VST3 / Standalone guitar plugin
+│       └── src/nice_plugin.rs    # Native CLAP / VST3 / Standalone guitar plugin
 │   ├── physics-bass/             # FDTD electric/acoustic bass engine and plugin adapter
 │   │   ├── src/string.rs         # CFL-bounded stiff-string grid, fret contact, slap
 │   │   ├── src/acoustic.rs       # Finite pickup aperture and bass-body modes
@@ -73,7 +72,7 @@ physics-piano-experiment/
 * **Adaptive Pluck & Tactile Snap**: String fundamental-dependent release impedance $|S(\omega)|$ and celluloid pick tactile snap impulse.
 * **Stereo Acoustic Radiation & Body Modes**: Christensen soundhole center radiation, upper/lower bout binaural radiation, and dual allpass wood dispersion.
 * **Factory Presets & Real-Time GUI**:
-  - 6 Built-in Factory Presets: *Martin D-28 Fingerstyle*, *Dreadnought Strummer*, *Strat Clean Chime*, *Texas Blues Breakup*, *Les Paul Warm Jazz*, and *Flamenco Con Brio*.
+  - 6 Built-in Factory Presets: *Martin D-28 Fingerstyle*, *Dreadnought Strummer*, *Strat Clean Chime*, *Texas Blues Breakup*, *Les Paul Warm Jazz*, and *Heavy Metal Chug*.
   - Vizia interface featuring real-time fretboard tracking, active fret indicators, string energy meters, and parameter racks.
 
 ### 3. Physical Bass Engine (`crates/physics-bass`)
@@ -90,10 +89,55 @@ release it. The planned replacement is a sample-based engine; see the
 
 ---
 
+## Editor Features
+
+### Preset browser & tags
+The preset browser (the Browse button in the preset bar) lists factory and
+user presets with search, category chips, and a favorites filter. Presets
+can carry comma-separated tags, edited in the Tags row at the bottom of the
+browser (press Enter to save). Clicking tag chips filters the list to
+presets carrying **all** of the selected tags. Tags are stored per
+instrument in a `preset_tags.json` sidecar next to the user presets.
+
+### Free resize & zoom
+Plugin editors can be resized by dragging the window edge or corner; the
+UI scale follows the window size and the aspect ratio is preserved. The
+scale persists across sessions. The Zoom stepper in the preset bar offers
+fixed steps from 0.75× to 2.0×.
+
+### Device settings (standalone only)
+Standalone apps show an audio/MIDI device row under the MIDI Learn row:
+Audio In, Audio Out, MIDI In, and MIDI Out dropdowns. A selection saves
+immediately and takes effect when the app is relaunched — use the
+**Restart to apply** button, which relaunches the app with the same
+arguments. The row is hidden in plugin builds, where the host owns the
+devices. A device given explicitly on the command line always wins over
+the saved setting for that device.
+
+### Light / dark theme
+The header button toggles the editor between dark and light themes. The
+choice persists across sessions. The canvas displays (keyboard,
+fretboards, spectrum, waveform, meters) keep their dark look in both
+themes.
+
+### MIDI Learn
+Press the **LEARN** button in the preset bar, click a knob, then move a
+control on your MIDI controller to bind that controller (CC) to the knob.
+Bindings are saved per instrument in a `midi_mappings.json` file next to
+the user presets (under the platform data directory, in
+`physics-instruments/presets/<instrument>/`), as CC number → parameter
+mappings. Bindings are exclusive both ways: binding a CC steals it from
+whatever parameter had it, and binding a parameter steals it from whatever
+CC had it. CCs 64, 66, 67, 11, and 4 are reserved for pedals and expression
+and cannot be learned. Currently only knobs can be bound; discrete
+selectors, buttons, and the lid/mic/curve widgets cannot.
+
+---
+
 ## Quickstart: Building & Running
 
 ### Prerequisites
-- **Rust Toolchain**: `stable` (MSRV 1.85+, Rust 2024 Edition)
+- **Rust Toolchain**: `stable` (MSRV 1.88+, Rust 2024 Edition)
 - **System Libraries (Linux)**:
   ```bash
   # Debian / Ubuntu
@@ -140,17 +184,17 @@ cargo run --release -p physics-piano --bin physics-piano-rs -- render A4 3.0 pia
 cargo run --release -p physics-piano --bin physics-piano-rs -- benchmark 35
 
 # Guitar: render open E2 note
-cargo run --release -p physics-guitar --bin physics-guitar-cli -- render E2 3.0 guitar_e2.wav 0.85
+cargo run --release -p physics-guitar --bin physics-guitar-rs -- render E2 3.0 guitar_e2.wav 0.85
 
 # Bass: render low E1 (electric; use "acoustic" as the final argument for body radiation)
 cargo run --release -p physics-bass --bin physics-bass-rs -- E1 3.0 bass_e1.wav 0.85
 ```
 
 ### 4. Running Workspace Test Suite
-Verify the active piano, guitar, and bass crates:
+Verify the active piano, guitar, and bass crates (the same gate CI runs):
 
 ```bash
-cargo test --workspace --exclude physics-drum
+CI=1 cargo nextest run --workspace --exclude physics-drum
 ```
 
 The archived drum timbre evaluation is separate and needs downloaded reference

@@ -11,7 +11,7 @@
 - **先做可离线验证的引擎，再接插件和 GUI。** 物理模型能单独渲染、测试和测量后，再接实时事件、参数和界面。
 - **实时处理路径以零分配为目标。** 初始化时准备引擎和工作区，音频回调只处理已有状态和缓冲区。
 
-仓库已有物理建模背景文档位于 [`docs/design/`](design/)；可对照 [Bass 设计](design/Physical%20Modeling%20Bass%20Synthesis.md)、[Drum 设计](design/Physical%20Modeling%20Drum%20Synthesizer.md) 和 [Bass/Drum 实现范围与限制](PHYSICAL_MODELING_STATUS.md)。新增音源前，先记录其激励方式、主要状态、耦合路径、阻尼、离散化方法和预期听感；不要只从 GUI 或插件参数开始。明确区分数值稳定、物理近似和经测量校准的声学准确度；没有实测数据时，不要宣称模型已匹配特定乐器。
+仓库已有物理建模背景文档位于 [`docs/design/`](design/)，目前仅有 [Drum 设计](design/DRUM_PHYSICAL_MODELING_SPECIFICATION.md)；[Bass/Drum 实现范围与限制](PHYSICAL_MODELING_STATUS.md) 记录了两个已有音源实际模拟的内容与已知限制。新增音源前，先记录其激励方式、主要状态、耦合路径、阻尼、离散化方法和预期听感；不要只从 GUI 或插件参数开始。明确区分数值稳定、物理近似和经测量校准的声学准确度；没有实测数据时，不要宣称模型已匹配特定乐器。
 
 ## 2. 可复用 crate
 
@@ -117,7 +117,7 @@ physics-presets = { path = "../physics-presets" }
 - 在 `initialize` 中读取采样率和最大 block size，创建/准备引擎及 scratch buffers。
 - 在 `process` 中转换 MIDI/宿主事件，保留采样偏移，调用引擎并写出音频。
 - `reset`、参数自动化、预设加载和 Note Off 都要有明确的状态语义。
-- 若暴露 CLAP/VST3，按现有 crate 使用的导出宏和构建设置配置 `lib.rs`。只有确实需要原始 CLAP C ABI 能力时才参考 piano 的 `clap_plugin.rs`；通常不必为新乐器复制这层。
+- 若暴露 CLAP/VST3，按现有 crate 使用的导出宏和构建设置配置 `lib.rs`：CLAP/VST3/Standalone 导出由 nice-plug 提供，无需、也不应为新乐器手写 C ABI 层。
 - standalone 与离线 CLI 是适配层，不应维护另一份物理模型。
 
 ### 第四步：接入编辑器和 preset

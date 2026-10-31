@@ -457,10 +457,6 @@ msgctxt "guitar.pickup_type_label"
 msgid "Coil:"
 msgstr "Coil:"
 
-msgctxt "guitar.rack_pickup"
-msgid "PICKUP SELECTOR"
-msgstr "PICKUP SELECTOR"
-
 msgctxt "guitar.rack_stompbox"
 msgid "STOMPBOX & EXPRESSION"
 msgstr "STOMPBOX & EXPRESSION"
@@ -478,10 +474,6 @@ msgid "PluckPos:"
 msgstr "PluckPos:"
 
 msgctxt "guitar.cab_enabled"
-msgid "12\" Celestion Cab"
-msgstr "12\" Celestion Cab"
-
-msgctxt "guitar.cab_enabled"
 msgid "12\" Cab"
 msgstr "12\" Cab"
 
@@ -490,16 +482,8 @@ msgid "UPOLS IR"
 msgstr "UPOLS IR"
 
 msgctxt "guitar.rack_amp"
-msgid "AMP & CABINET"
-msgstr "AMP & CABINET"
-
-msgctxt "guitar.rack_amp"
 msgid "VINTAGE AMP HEAD"
 msgstr "VINTAGE AMP HEAD"
-
-msgctxt "guitar.amp_drive_label"
-msgid "Overdrive:"
-msgstr "Overdrive:"
 
 msgctxt "guitar.amp_drive_label"
 msgid "Drive:"
@@ -545,10 +529,6 @@ msgctxt "guitar.cabinet_model_label"
 msgid "Cabinet:"
 msgstr "Cabinet:"
 
-msgctxt "guitar.rack_master"
-msgid "GROOVE & MASTER"
-msgstr "GROOVE & MASTER"
-
 msgctxt "guitar.groove_pattern_label"
 msgid "Pattern:"
 msgstr "Pattern:"
@@ -560,10 +540,6 @@ msgstr "BPM:"
 msgctxt "guitar.master_gain_label"
 msgid "Volume:"
 msgstr "Volume:"
-
-msgctxt "guitar.fretboard_hint"
-msgid "Interactive 6-String Fretboard (Click or Drag frets to play):"
-msgstr "Interactive 6-String Fretboard (Click or Drag frets to play):"
 
 msgctxt "guitar.fretboard_hint"
 msgid "Interactive 6-String Fretboard (Click/Drag strums · Keys 1-6 open strings · A-L notes · Z/X octaves):"
@@ -686,10 +662,6 @@ msgid "Slap shares the FDTD contact state"
 msgstr "Slap shares the FDTD contact state"
 
 msgctxt "bass.output"
-msgid "OUTPUT"
-msgstr "OUTPUT"
-
-msgctxt "bass.output"
 msgid "AMP & OUTPUT"
 msgstr "AMP & OUTPUT"
 
@@ -704,10 +676,6 @@ msgstr "Master gain"
 msgctxt "bass.output_note"
 msgid "Electric: drive & pickup · Acoustic: cavity"
 msgstr "Electric: drive & pickup · Acoustic: cavity"
-
-msgctxt "bass.fretboard_hint"
-msgid "Open notes + 24 frets · MIDI pitch bend remains available"
-msgstr "Open notes + 24 frets · MIDI pitch bend remains available"
 
 msgctxt "bass.fretboard_hint"
 msgid "Open notes + 24 frets · Keys 1-5 open strings · A-L notes · Z/X octaves"
@@ -816,98 +784,6 @@ msgstr "Ride Cymbal"
 msgctxt "drum.pad-map.hint"
 msgid "35/36 kick · 38 snare · 41–51 kit"
 msgstr "35/36 kick · 38 snare · 41–51 kit"
-
-#~ msgctxt "guitar.amp_drive"
-#~ msgid "12AX7 Tube Drive:"
-#~ msgstr "12AX7 Tube Drive:"
-
-#~ msgctxt "guitar.finger_squeak"
-#~ msgid "Finger Squeak:"
-#~ msgstr "Finger Squeak:"
-
-#~ msgctxt "guitar.fret_buzz"
-#~ msgid "Fret Clatter / Buzz:"
-#~ msgstr "Fret Clatter / Buzz:"
-
-#~ msgctxt "guitar.groove_pattern"
-#~ msgid "Groove Style:"
-#~ msgstr "Groove Style:"
-
-#~ msgctxt "guitar.master_gain"
-#~ msgid "Master Gain:"
-#~ msgstr "Master Gain:"
-
-#~ msgctxt "guitar.palm_mute"
-#~ msgid "Palm Mute:"
-#~ msgstr "Palm Mute:"
-
-#~ msgctxt "guitar.pickup_bm"
-#~ msgid "B+M"
-#~ msgstr "B+M"
-
-#~ msgctxt "guitar.pickup_bn"
-#~ msgid "B+N"
-#~ msgstr "B+N"
-
-#~ msgctxt "guitar.pickup_pos"
-#~ msgid "Position:"
-#~ msgstr "Position:"
-
-#~ msgctxt "guitar.pickup_type"
-#~ msgid "Type:"
-#~ msgstr "Type:"
-
-#~ msgctxt "guitar.pluck_pos"
-#~ msgid "Pluck Position:"
-#~ msgstr "Pluck Position:"
-
-#~ msgctxt "guitar.pluck_style"
-#~ msgid "Pluck Style:"
-#~ msgstr "Pluck Style:"
-
-#~ msgctxt "guitar.rack_mechanics"
-#~ msgid "MECHANICS & NOISE"
-#~ msgstr "MECHANICS & NOISE"
-
-#~ msgctxt "guitar.rack_output"
-#~ msgid "MASTER OUTPUT"
-#~ msgstr "MASTER OUTPUT"
-
-#~ msgctxt "guitar.rack_pluck"
-#~ msgid "PLUCK & TONE"
-#~ msgstr "PLUCK & TONE"
-
-#~ msgctxt "guitar.rack_strum"
-#~ msgid "STRUM & ACTION"
-#~ msgstr "STRUM & ACTION"
-
-#~ msgctxt "guitar.strum_speed"
-#~ msgid "Strum Speed:"
-#~ msgstr "Strum Speed:"
-
-#~ msgctxt "guitar.subtitle"
-#~ msgid "FIRST-PRINCIPLES PHYSICAL MODELING VIRTUAL INSTRUMENT"
-#~ msgstr "FIRST-PRINCIPLES PHYSICAL MODELING VIRTUAL INSTRUMENT"
-
-#~ msgctxt "guitar.title"
-#~ msgid "PHYSICS GUITAR"
-#~ msgstr "PHYSICS GUITAR"
-
-#~ msgctxt "guitar.tone_knob"
-#~ msgid "Passive Tone:"
-#~ msgstr "Passive Tone:"
-
-#~ msgctxt "piano.preset"
-#~ msgid "Preset:"
-#~ msgstr "Preset:"
-
-#~ msgctxt "piano.subtitle"
-#~ msgid "Acoustic Grand Physical Modeling Synthesizer (Rust Engine)"
-#~ msgstr "Acoustic Grand Physical Modeling Synthesizer (Rust Engine)"
-
-#~ msgctxt "piano.title"
-#~ msgid "PHYSICS PIANO"
-#~ msgstr "PHYSICS PIANO"
 
 msgctxt "piano.tooltip.sustain"
 msgid "How much the sustain pedal holds notes after you lift the keys."

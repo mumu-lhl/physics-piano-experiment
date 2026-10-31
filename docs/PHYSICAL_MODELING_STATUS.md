@@ -1,5 +1,13 @@
 # Physical Bass and Drum Implementation Status
 
+> Status: the drum instrument (`physics-drum`) is **archived** (see
+> `crates/physics-drum/ROADMAP.md`): its physical-modeling timbres did not
+> match recorded and sampled drum kits well enough, it is excluded from the
+> default workspace test command in CI and from all release bundles, and
+> the planned replacement is a sample-based engine. The drum description
+> below records what the archived code simulates; it is not a current
+> product. The bass instrument remains an active release product.
+
 This document records what the current Bass and Drum crates actually simulate. “Implemented” describes the shipped finite-dimensional real-time models; it does not imply calibration against a particular instrument or a formal stability proof for every parameter combination.
 
 ## Bass (`physics-bass`)
@@ -10,7 +18,11 @@ This document records what the current Bass and Drum crates actually simulate. �
 - Modal body response feeds bridge displacement back into the string boundary.
 - String routing, parameter smoothing, presets, MIDI/editor/CLI paths are integrated.
 
-## Drum kit (`physics-drum`)
+## Drum kit (`physics-drum`) — archived
+
+The drum crate is archived and excluded from CI's default test command and
+from release bundles (see the note at the top of this document). What
+follows describes the archived model only:
 
 - Kick, snare, and tom heads use spatially excited circular-membrane Bessel modes, with fixed modal arrays, nonlinear restoring terms, and point-force/pressure coupling.
 - Kick/snare double heads exchange force through a compliant, damped air-cavity state.

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-01 15:00+0800\n"
+"POT-Creation-Date: 2026-10-31 17:38+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,248 +17,1050 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: crates/physics-ui/src/language.rs:34
-msgctxt "meta.language-name"
-msgid "Language name"
+
+#: crates/physics-bass/src/gui.rs:303
+#: crates/physics-guitar/src/gui/editor.rs:413
+#: crates/physics-piano/src/gui/editor.rs:344
+msgctxt "learn.on"
+msgid "Learn on: click a knob"
 msgstr ""
 
-#: crates/physics-ui/src/preset_panel.rs:162
-#: crates/physics-ui/src/preset_panel.rs:163
-msgctxt "shared.preset-name"
-msgid "Preset name"
+#: crates/physics-bass/src/gui.rs:308
+#: crates/physics-guitar/src/gui/editor.rs:418
+#: crates/physics-piano/src/gui/editor.rs:349
+msgctxt "learn.off"
+msgid "Learn off"
 msgstr ""
 
-#: crates/physics-ui/src/preset_panel.rs:189
-msgctxt "shared.save-as"
-msgid "Save As"
+#: crates/physics-bass/src/gui.rs:329
+#: crates/physics-guitar/src/gui/editor.rs:439
+#: crates/physics-piano/src/gui/editor.rs:370
+#, rust-format
+msgctxt "learn.move_controller"
+msgid "Move a controller to bind {param}"
 msgstr ""
 
-#: crates/physics-ui/src/preset_panel.rs:195
-msgctxt "shared.rename"
-msgid "Rename"
+#: crates/physics-bass/src/gui.rs:346
+#: crates/physics-guitar/src/gui/editor.rs:456
+#: crates/physics-piano/src/gui/editor.rs:387
+#, rust-format
+msgctxt "learn.bound"
+msgid "Bound CC{cc} to {param}"
 msgstr ""
 
-#: crates/physics-ui/src/preset_panel.rs:206
-msgctxt "shared.overwrite"
-msgid "Overwrite"
+#: crates/physics-bass/src/gui.rs:354
+#: crates/physics-guitar/src/gui/editor.rs:464
+#: crates/physics-piano/src/gui/editor.rs:395
+#, rust-format
+msgctxt "learn.reserved"
+msgid "CC{cc} is reserved and can't be learned"
 msgstr ""
 
-#: crates/physics-ui/src/preset_panel.rs:217
-msgctxt "shared.delete"
-msgid "Delete"
+#: crates/physics-bass/src/gui.rs:363
+#: crates/physics-guitar/src/gui/editor.rs:473
+#: crates/physics-piano/src/gui/editor.rs:404
+#, rust-format
+msgctxt "learn.save_failed"
+msgid "Failed to save binding for {param}: {error}"
 msgstr ""
 
-#: crates/physics-ui/src/preset_panel.rs:228
-msgctxt "shared.undo"
-msgid "Undo"
+#: crates/physics-bass/src/gui.rs:467
+msgctxt "bass.preset.default-name"
+msgid "Custom Bass"
 msgstr ""
 
-#: crates/physics-ui/src/preset_panel.rs:236
-msgctxt "shared.redo"
-msgid "Redo"
+#: crates/physics-bass/src/gui.rs:965
+msgctxt "bass.title"
+msgid "PHYSICS BASS"
 msgstr ""
 
-#: crates/physics-ui/src/widgets.rs:320
-msgctxt "preset.name.steinway_concert_d"
-msgid "Steinway D Concert Grand"
+#: crates/physics-bass/src/gui.rs:966
+msgctxt "bass.subtitle"
+msgid "FDTD stiff string · fret contact · finite pickup aperture · body modes"
 msgstr ""
 
-#: crates/physics-ui/src/widgets.rs:325
-msgctxt "preset.name.bright_pop_grand"
-msgid "Bright Pop & Jazz Grand"
+#: crates/physics-bass/src/gui.rs:969
+msgctxt "bass.audition"
+msgid "Click or drag the fretboard below to audition"
 msgstr ""
 
-#: crates/physics-ui/src/widgets.rs:330
-msgctxt "preset.name.warm_intimate_chamber"
-msgid "Warm Intimate Chamber"
+#: crates/physics-bass/src/gui.rs:987
+msgctxt "bass.preset"
+msgid "Preset:"
 msgstr ""
 
-#: crates/physics-ui/src/widgets.rs:335
-msgctxt "preset.name.vintage_upright"
-msgid "Vintage Honky-Tonk Upright"
+#: crates/physics-bass/src/gui.rs:1005
+#: crates/physics-guitar/src/gui/editor.rs:1264
+#: crates/physics-piano/src/gui/editor.rs:1030
+msgctxt "gui.zoom"
+msgid "Zoom"
 msgstr ""
 
-#: crates/physics-ui/src/widgets.rs:340
-msgctxt "preset.name.cinematic_dream"
-msgid "Cinematic Ambient Dream"
+#: crates/physics-bass/src/gui.rs:1037
+msgctxt "bass.instrument"
+msgid "INSTRUMENT"
 msgstr ""
 
-#: crates/physics-ui/src/widgets.rs:345
-msgctxt "preset.name.classical_pure_solo"
-msgid "Classical Pure Solo"
+#: crates/physics-bass/src/gui.rs:1040
+msgctxt "bass.model"
+msgid "Model"
 msgstr ""
 
-#: crates/physics-ui/src/widgets.rs:348
-msgctxt "preset.name.strat_clean_chime"
-msgid "Strat Clean Chime"
+#: crates/physics-bass/src/gui.rs:1043
+msgctxt "bass.electric"
+msgid "Electric"
 msgstr ""
 
-#: crates/physics-ui/src/widgets.rs:353
-msgctxt "preset.name.dreadnought_acoustic_fingerstyle"
+#: crates/physics-bass/src/gui.rs:1044
+msgctxt "bass.acoustic"
+msgid "Acoustic"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1054
+msgctxt "bass.exciter"
+msgid "Exciter"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1057
+msgctxt "bass.finger"
+msgid "Finger"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1058
+msgctxt "bass.pick"
+msgid "Pick"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1059
+msgctxt "bass.slap"
+msgid "Slap"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1068
+msgctxt "bass.tuning"
+msgid "Tuning"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1070
+msgctxt "bass.five_string"
+msgid "Five-string B0"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1078
+msgctxt "bass.string_pickup"
+msgid "STRING / PICKUP"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1082
+msgctxt "bass.pluck_position"
+msgid "Pluck position"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1085
+msgctxt "bass.tooltip.pluck_position"
+msgid "Where the string is plucked, from bridge to neck."
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1088
+msgctxt "bass.pickup_position"
+msgid "Pickup position"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1091
+msgctxt "bass.tooltip.pickup_position"
+msgid "Pickup position along the string."
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1097
+msgctxt "bass.tone"
+msgid "Tone"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1100
+msgctxt "bass.tooltip.tone"
+msgid "Tone control: darker to brighter."
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1108
+msgctxt "bass.contact_body"
+msgid "CONTACT / BODY"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1110
+msgctxt "bass.fret_buzz"
+msgid "Fret buzz"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1110
+msgctxt "bass.tooltip.fret_buzz"
+msgid "Fret buzz amount."
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1111
+msgctxt "bass.body_mix"
+msgid "Body mix"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1111
+msgctxt "bass.tooltip.body_mix"
+msgid ""
+"Body resonance mix: how much of the instrument body sound is blended in."
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1114
+msgctxt "bass.slap_note"
+msgid "Slap shares the FDTD contact state"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1120
+msgctxt "bass.output"
+msgid "AMP & OUTPUT"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1122
+msgctxt "bass.drive"
+msgid "Drive"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1122
+msgctxt "bass.tooltip.drive"
+msgid "Drive amount: tube/FET saturation."
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1123
+msgctxt "bass.master_gain"
+msgid "Master gain"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1123
+msgctxt "bass.tooltip.master_gain"
+msgid "Overall output volume."
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1126
+msgctxt "bass.output_note"
+msgid "Electric: drive & pickup · Acoustic: cavity"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1137
+#: crates/physics-guitar/src/gui/editor.rs:1550
+#: crates/physics-piano/src/gui/editor.rs:1273
+msgctxt "fx.rack"
+msgid "FX"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1139
+#: crates/physics-guitar/src/gui/editor.rs:1554
+#: crates/physics-piano/src/gui/editor.rs:1277
+msgctxt "fx.eq_low"
+msgid "EQ Low:"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1139
+#: crates/physics-guitar/src/gui/editor.rs:1556
+#: crates/physics-piano/src/gui/editor.rs:1279
+msgctxt "fx.tooltip.eq_low"
+msgid "Low shelf EQ at 120 Hz: boosts or cuts bass."
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1140
+#: crates/physics-guitar/src/gui/editor.rs:1565
+#: crates/physics-piano/src/gui/editor.rs:1288
+msgctxt "fx.eq_mid"
+msgid "EQ Mid:"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1140
+#: crates/physics-guitar/src/gui/editor.rs:1567
+#: crates/physics-piano/src/gui/editor.rs:1290
+msgctxt "fx.tooltip.eq_mid"
+msgid "Peaking EQ at 1 kHz: boosts or cuts the midrange."
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1141
+#: crates/physics-guitar/src/gui/editor.rs:1576
+#: crates/physics-piano/src/gui/editor.rs:1299
+msgctxt "fx.eq_high"
+msgid "EQ High:"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1141
+#: crates/physics-guitar/src/gui/editor.rs:1578
+#: crates/physics-piano/src/gui/editor.rs:1301
+msgctxt "fx.tooltip.eq_high"
+msgid "High shelf EQ at 8 kHz: boosts or cuts treble."
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1142
+#: crates/physics-guitar/src/gui/editor.rs:1587
+#: crates/physics-piano/src/gui/editor.rs:1310
+msgctxt "fx.reverb_mix"
+msgid "Reverb Mix:"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1142
+#: crates/physics-guitar/src/gui/editor.rs:1589
+#: crates/physics-piano/src/gui/editor.rs:1312
+msgctxt "fx.tooltip.reverb_mix"
+msgid "Reverb amount: 0 is dry, higher adds hall sound."
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1143
+#: crates/physics-guitar/src/gui/editor.rs:1598
+#: crates/physics-piano/src/gui/editor.rs:1321
+msgctxt "fx.reverb_decay"
+msgid "Reverb Decay:"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1143
+#: crates/physics-guitar/src/gui/editor.rs:1600
+#: crates/physics-piano/src/gui/editor.rs:1323
+msgctxt "fx.tooltip.reverb_decay"
+msgid "Reverb length: longer decay means a bigger hall."
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1151
+msgctxt "bass.fretboard_hint"
+msgid "Open notes + 24 frets · Keys 1-5 open strings · A-L notes · Z/X octaves"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1166
+#: crates/physics-guitar/src/gui/editor.rs:1756
+#: crates/physics-piano/src/gui/editor.rs:1349
+msgctxt "gui.spectrum"
+msgid "Spectrum"
+msgstr ""
+
+#: crates/physics-bass/src/gui.rs:1174
+#: crates/physics-guitar/src/gui/editor.rs:1764
+#: crates/physics-piano/src/gui/editor.rs:1357
+msgctxt "gui.waveform"
+msgid "Waveform"
+msgstr ""
+
+#: crates/physics-bass/src/gui/fretboard_view.rs:241
+msgctxt "bass.fretboard.five-string"
+msgid "5-STRING"
+msgstr ""
+
+#: crates/physics-bass/src/gui/fretboard_view.rs:243
+msgctxt "bass.fretboard.four-string"
+msgid "4-STRING"
+msgstr ""
+
+#: crates/physics-bass/src/gui/fretboard_view.rs:366
+msgctxt "bass.fretboard.hint"
+msgid "click or drag strings to play · open notes + 24 frets"
+msgstr ""
+
+#: crates/physics-drum/src/gui.rs:213
+msgctxt "drum.preset.default-name"
+msgid "Custom Drum Kit"
+msgstr ""
+
+#: crates/physics-drum/src/gui.rs:529
+msgctxt "drum.preset"
+msgid "Preset:"
+msgstr ""
+
+#: crates/physics-drum/src/gui.rs:542
+msgctxt "drum.snare_membrane"
+msgid "SNARE / MEMBRANE"
+msgstr ""
+
+#: crates/physics-drum/src/gui.rs:545
+msgctxt "drum.snare_tightness"
+msgid "Snare tightness"
+msgstr ""
+
+#: crates/physics-drum/src/gui.rs:549
+msgctxt "drum.snare_decay"
+msgid "Snare decay"
+msgstr ""
+
+#: crates/physics-drum/src/gui.rs:550
+msgctxt "drum.snare_note"
+msgid "Bottom head drives 16 bilateral wire contacts"
+msgstr ""
+
+#: crates/physics-drum/src/gui.rs:555
+msgctxt "drum.cymbal_output"
+msgid "CYMBAL / OUTPUT"
+msgstr ""
+
+#: crates/physics-drum/src/gui.rs:556
+msgctxt "drum.hihat_open"
+msgid "Hi-hat open"
+msgstr ""
+
+#: crates/physics-drum/src/gui.rs:557
+msgctxt "drum.cymbal_decay"
+msgid "Cymbal decay"
+msgstr ""
+
+#: crates/physics-drum/src/gui.rs:558
+msgctxt "drum.master_gain"
+msgid "Master gain"
+msgstr ""
+
+#: crates/physics-drum/src/gui.rs:574
+msgctxt "drum.hint"
+msgid ""
+"Keyboard: Space/B=Kick · S/D=Snare · F/G/C=HiHat · J/K/L=Toms · E/I=Cymbals "
+"· Click center for accent, rim for ghost note"
+msgstr ""
+
+#: crates/physics-drum/src/gui/pad_view.rs:281
+msgctxt "drum.pad-map.title"
+msgid "MIDI DRUM MAP"
+msgstr ""
+
+#: crates/physics-drum/src/gui/pad_view.rs:436
+msgctxt "drum.pad.36"
+msgid "Bass Drum"
+msgstr ""
+
+#: crates/physics-drum/src/gui/pad_view.rs:437
+msgctxt "drum.pad.38"
+msgid "Acoustic Snare"
+msgstr ""
+
+#: crates/physics-drum/src/gui/pad_view.rs:438
+msgctxt "drum.pad.41"
+msgid "Floor Tom"
+msgstr ""
+
+#: crates/physics-drum/src/gui/pad_view.rs:439
+msgctxt "drum.pad.42"
+msgid "Closed Hi-Hat"
+msgstr ""
+
+#: crates/physics-drum/src/gui/pad_view.rs:440
+msgctxt "drum.pad.44"
+msgid "Pedal Hi-Hat"
+msgstr ""
+
+#: crates/physics-drum/src/gui/pad_view.rs:441
+msgctxt "drum.pad.45"
+msgid "Mid Tom"
+msgstr ""
+
+#: crates/physics-drum/src/gui/pad_view.rs:442
+msgctxt "drum.pad.46"
+msgid "Open Hi-Hat"
+msgstr ""
+
+#: crates/physics-drum/src/gui/pad_view.rs:443
+msgctxt "drum.pad.49"
+msgid "Crash Cymbal"
+msgstr ""
+
+#: crates/physics-drum/src/gui/pad_view.rs:444
+msgctxt "drum.pad.50"
+msgid "High Tom"
+msgstr ""
+
+#: crates/physics-drum/src/gui/pad_view.rs:445
+msgctxt "drum.pad.51"
+msgid "Ride Cymbal"
+msgstr ""
+
+#: crates/physics-drum/src/gui/pad_view.rs:469
+msgctxt "drum.pad-map.hint"
+msgid "35/36 kick · 38 snare · 41–51 kit"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:586
+msgctxt "guitar.preset.default-name"
+msgid "Custom Guitar"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1161
+msgctxt "guitar.mode_electric"
+msgid "Electric"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1165
+msgctxt "guitar.mode_acoustic"
+msgid "Acoustic"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1171
+msgctxt "guitar.pluck_plectrum"
+msgid "Plectrum"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1175
+msgctxt "guitar.pluck_finger"
+msgid "Finger"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1181
+msgctxt "guitar.pickup_bridge"
+msgid "Bridge"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1183
+msgctxt "guitar.pickup_mid"
+msgid "Mid"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1184
+msgctxt "guitar.pickup_neck"
+msgid "Neck"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1187
+msgctxt "guitar.pickup.bridge-neck"
+msgid "Bridge + Neck"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1191
+msgctxt "guitar.pickup.bridge-mid"
+msgid "Bridge + Mid"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1197
+msgctxt "guitar.pickup_single"
+msgid "Single"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1201
+msgctxt "guitar.pickup_humbucker"
+msgid "Humbucker"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1207
+msgctxt "guitar.cab.vintage30"
+msgid "Vintage 30 4x12"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1211
+msgctxt "guitar.cab.twin_reverb"
+msgid "Twin Reverb 2x12"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1215
+msgctxt "guitar.cab.greenback"
+msgid "Greenback 4x12"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1224
+msgctxt "guitar.groove.1"
+msgid "Folk 4/4 Basic"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1227
+msgctxt "guitar.groove.2"
+msgid "Ballad 6/8 Arp"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1230
+msgctxt "guitar.groove.3"
+msgid "Funk 16th Mute"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1232
+msgctxt "guitar.groove.4"
+msgid "Rock 8th Chug"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1233
+msgctxt "guitar.groove.0"
+msgid "Off (Manual)"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1252
+msgctxt "guitar.preset_label"
+msgid "Preset:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1296
+msgctxt "guitar.rack_instrument"
+msgid "INSTRUMENT"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1300
+msgctxt "guitar.mode_param_label"
+msgid "Mode:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1308
+msgctxt "guitar.pluck_style_label"
+msgid "Style:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1316
+msgctxt "guitar.pickup_pos_label"
+msgid "Pickup:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1324
+msgctxt "guitar.pickup_type_label"
+msgid "Coil:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1338
+msgctxt "guitar.rack_stompbox"
+msgid "STOMPBOX & EXPRESSION"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1344
+msgctxt "guitar.tone_label"
+msgid "Tone:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1346
+msgctxt "guitar.tooltip.tone"
+msgid "Passive tone control: darker to brighter."
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1355
+msgctxt "guitar.palm_mute_label"
+msgid "PalmMute:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1357
+msgctxt "guitar.tooltip.palm_mute"
+msgid "Palm muting depth on picked notes."
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1366
+msgctxt "guitar.pluck_pos_label"
+msgid "PluckPos:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1368
+msgctxt "guitar.tooltip.pluck_pos"
+msgid "Where the string is plucked, from bridge to neck."
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1380
+msgctxt "guitar.strum_speed_label"
+msgid "Speed:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1382
+msgctxt "guitar.tooltip.strum_speed"
+msgid "Speed of the strum across the strings."
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1391
+msgctxt "guitar.fret_buzz_label"
+msgid "Buzz:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1393
+msgctxt "guitar.tooltip.fret_buzz"
+msgid "Fret buzz amount."
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1398
+msgctxt "guitar.finger_squeak_label"
+msgid "Squeak:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1400
+msgctxt "guitar.tooltip.finger_squeak"
+msgid "Finger squeak noise when shifting positions."
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1415
+msgctxt "guitar.rack_amp"
+msgid "VINTAGE AMP HEAD"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1420
+msgctxt "guitar.amp_drive_label"
+msgid "Drive:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1422
+msgctxt "guitar.tooltip.amp_drive"
+msgid "Amp overdrive amount."
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1431
+msgctxt "guitar.amp_bass_label"
+msgid "Bass:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1433
+msgctxt "guitar.tooltip.amp_bass"
+msgid "Amp bass EQ."
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1438
+msgctxt "guitar.amp_middle_label"
+msgid "Middle:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1440
+msgctxt "guitar.tooltip.amp_middle"
+msgid "Amp middle EQ."
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1448
+msgctxt "guitar.amp_treble_label"
+msgid "Treble:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1450
+msgctxt "guitar.tooltip.amp_treble"
+msgid "Amp treble EQ."
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1455
+msgctxt "guitar.amp_presence_label"
+msgid "Presence:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1457
+msgctxt "guitar.tooltip.amp_presence"
+msgid "Amp presence: high-frequency air and bite."
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1466
+msgctxt "guitar.amp_sag_label"
+msgid "SAG:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1468
+msgctxt "guitar.tooltip.amp_sag"
+msgid "Power-supply sag: how much the amp compresses under load."
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1485
+msgctxt "guitar.rack_cab_master"
+msgid "CABINET & MASTER"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1490
+msgctxt "guitar.cabinet_model_label"
+msgid "Cabinet:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1497
+msgctxt "guitar.cab_enabled"
+msgid "12\" Cab"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1502
+msgctxt "guitar.use_ir_cab"
+msgid "UPOLS IR"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1511
+msgctxt "guitar.groove_pattern_label"
+msgid "Pattern:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1520
+msgctxt "guitar.bpm_label"
+msgid "BPM:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1522
+msgctxt "guitar.tooltip.bpm"
+msgid "Tempo for the groove pattern player."
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1531
+msgctxt "guitar.master_gain_label"
+msgid "Volume:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1533
+msgctxt "guitar.tooltip.master_gain"
+msgid "Overall output volume."
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1618
+msgctxt "guitar.chord.rack"
+msgid "CHORDS"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1626
+msgctxt "guitar.chord.root_label"
+msgid "Root:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1644
+msgctxt "guitar.chord.quality_label"
+msgid "Chord:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1649
+msgctxt "guitar.chord.quality.major"
+msgid "Major"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1654
+msgctxt "guitar.chord.quality.minor"
+msgid "Minor"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1659
+msgctxt "guitar.chord.quality.dom7"
+msgid "7"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1663
+msgctxt "guitar.chord.quality.maj7"
+msgid "Maj7"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1668
+msgctxt "guitar.chord.quality.min7"
+msgid "Min7"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1681
+msgctxt "guitar.chord.direction_label"
+msgid "Strum:"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1686
+msgctxt "guitar.chord.direction.auto"
+msgid "Auto"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1691
+msgctxt "guitar.chord.direction.down"
+msgid "Down"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1696
+msgctxt "guitar.chord.direction.up"
+msgid "Up"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1709
+msgctxt "guitar.chord.strum"
+msgid "Strum"
+msgstr ""
+
+#: crates/physics-guitar/src/gui/editor.rs:1748
+msgctxt "guitar.fretboard_hint"
+msgid ""
+"Interactive 6-String Fretboard (Click/Drag strums · Keys 1-6 open strings · "
+"A-L notes · Z/X octaves):"
+msgstr ""
+
+#: crates/physics-guitar/src/presets.rs:63
+msgctxt "guitar.factory-preset.0"
 msgid "Martin D-28 Fingerstyle"
 msgstr ""
 
-#: crates/physics-ui/src/widgets.rs:358
-msgctxt "preset.name.blues_overdrive_crunch"
-msgid "Texas Blues Breakup"
-msgstr ""
-
-#: crates/physics-ui/src/widgets.rs:361
-msgctxt "preset.name.warm_jazz_archtop"
-msgid "Les Paul Warm Jazz"
-msgstr ""
-
-#: crates/physics-ui/src/widgets.rs:366
-msgctxt "preset.name.heavy_palm_mute_metal"
-msgid "Heavy Metal Chug"
-msgstr ""
-
-#: crates/physics-ui/src/widgets.rs:371
-msgctxt "preset.name.ambient_dreamy_pluck"
+#: crates/physics-guitar/src/presets.rs:66
+msgctxt "guitar.factory-preset.1"
 msgid "Dreadnought Strummer"
 msgstr ""
 
-#: crates/physics-ui/src/widgets.rs:373
-msgctxt "preset.name.bass_finger_punch"
-msgid "Finger Punch"
+#: crates/physics-guitar/src/presets.rs:69
+msgctxt "guitar.factory-preset.2"
+msgid "Strat Clean Chime"
 msgstr ""
 
-#: crates/physics-ui/src/widgets.rs:374
-msgctxt "preset.name.bass_pick_attack"
-msgid "Picked Attack"
+#: crates/physics-guitar/src/presets.rs:72
+msgctxt "guitar.factory-preset.3"
+msgid "Texas Blues Breakup"
 msgstr ""
 
-#: crates/physics-ui/src/widgets.rs:375
-msgctxt "preset.name.bass_slap_five"
-msgid "Five String Slap"
+#: crates/physics-guitar/src/presets.rs:75
+msgctxt "guitar.factory-preset.4"
+msgid "Les Paul Warm Jazz"
 msgstr ""
 
-#: crates/physics-ui/src/widgets.rs:376
-msgctxt "preset.name.bass_upright_body"
-msgid "Upright Body"
+#: crates/physics-guitar/src/presets.rs:78
+msgctxt "guitar.factory-preset.5"
+msgid "Heavy Metal Chug"
 msgstr ""
 
-#: crates/physics-ui/src/widgets.rs:377
-msgctxt "preset.name.drum_studio_kit"
-msgid "Studio Kit"
-msgstr ""
-
-#: crates/physics-ui/src/widgets.rs:378
-msgctxt "preset.name.drum_dry_tight"
-msgid "Dry Tight"
-msgstr ""
-
-#: crates/physics-ui/src/widgets.rs:379
-msgctxt "preset.name.drum_big_room"
-msgid "Big Room"
-msgstr ""
-
-#: crates/physics-ui/src/widgets.rs:380
-msgctxt "preset.name.drum_low_punch"
-msgid "Low Punch"
-msgstr ""
-
-#: crates/physics-piano/src/gui/editor.rs:278
+#: crates/physics-piano/src/gui/editor.rs:511
 msgctxt "piano.preset.default-name"
 msgid "Custom Piano"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:694
+#: crates/physics-piano/src/gui/editor.rs:1071
+msgctxt "piano.tooltip.lid"
+msgid "Drag to open or close the lid."
+msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1087
+msgctxt "piano.tooltip.mic_stage"
+msgid "Drag a mic up or down to change its gain."
+msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1104
 msgctxt "piano.rack_pedals"
 msgid "PEDALS & MECHANICS"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:699
+#: crates/physics-piano/src/gui/editor.rs:1110
 msgctxt "piano.sustain"
 msgid "Sustain:"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:704
+#: crates/physics-piano/src/gui/editor.rs:1112
+msgctxt "piano.tooltip.sustain"
+msgid "How much the sustain pedal holds notes after you lift the keys."
+msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1116
 msgctxt "piano.key_action"
 msgid "Key Action:"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:709
+#: crates/physics-piano/src/gui/editor.rs:1118
+msgctxt "piano.tooltip.key_action"
+msgid "Loudness of keybed thumps and escapement clicks."
+msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1125
 msgctxt "piano.damper_noise"
 msgid "Damper Noise:"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:714
+#: crates/physics-piano/src/gui/editor.rs:1127
+msgctxt "piano.tooltip.damper_noise"
+msgid "Noise of dampers lifting off and landing on the strings."
+msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1131
 msgctxt "piano.pedal_shock"
 msgid "Pedal Shock:"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:721
+#: crates/physics-piano/src/gui/editor.rs:1133
+msgctxt "piano.tooltip.pedal_shock"
+msgid "Thump from the pedal mechanism itself."
+msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1141
 msgctxt "piano.rack_string"
 msgid "STRING & HAMMER"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:725
+#: crates/physics-piano/src/gui/editor.rs:1146
 msgctxt "piano.inharmonicity"
 msgid "Inharmonicity B:"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:730
+#: crates/physics-piano/src/gui/editor.rs:1148
+msgctxt "piano.tooltip.inharmonicity"
+msgid "String stiffness (B factor): higher values push upper partials sharper."
+msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1152
 msgctxt "piano.hammer_hardness"
 msgid "Hammer Hardness:"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:735
+#: crates/physics-piano/src/gui/editor.rs:1154
+msgctxt "piano.tooltip.hammer_hardness"
+msgid ""
+"Hammer felt hardness: harder hammers sound brighter and more aggressive."
+msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1161
 msgctxt "piano.unison_detune"
 msgid "Unison Detune:"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:740
+#: crates/physics-piano/src/gui/editor.rs:1163
+msgctxt "piano.tooltip.unison_detune"
+msgid "Detuning spread between the strings of each note's trichord."
+msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1167
 msgctxt "piano.phantom_partials"
 msgid "Phantom Partials:"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:749
+#: crates/physics-piano/src/gui/editor.rs:1169
+msgctxt "piano.tooltip.phantom_partials"
+msgid ""
+"Longitudinal phantom partials: extra high shimmer from string vibration."
+msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1179
 msgctxt "piano.rack_spatial"
 msgid "SPATIAL MICS & LID"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:754
+#: crates/physics-piano/src/gui/editor.rs:1185
 msgctxt "piano.mic_close"
 msgid "Close Mic:"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:759
+#: crates/physics-piano/src/gui/editor.rs:1187
+msgctxt "piano.tooltip.mic_close"
+msgid "Close microphone pair over the bridges: direct, detailed sound."
+msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1191
 msgctxt "piano.mic_player"
 msgid "Player Mic:"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:764
+#: crates/physics-piano/src/gui/editor.rs:1193
+msgctxt "piano.tooltip.mic_player"
+msgid "Microphones at the player's seat: what the pianist hears."
+msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1200
 msgctxt "piano.mic_ambient"
 msgid "Ambient Mic:"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:769
+#: crates/physics-piano/src/gui/editor.rs:1202
+msgctxt "piano.tooltip.mic_ambient"
+msgid "Hall microphones in the room: spacious, reverberant sound."
+msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1206
 msgctxt "piano.lid_angle"
 msgid "Lid Angle:"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:776
+#: crates/physics-piano/src/gui/editor.rs:1208
+msgctxt "piano.tooltip.lid_angle"
+msgid "Grand lid opening angle: wider sounds louder and brighter."
+msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1216
 msgctxt "piano.rack_output"
 msgid "OUTPUT"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:780
+#: crates/physics-piano/src/gui/editor.rs:1221
 msgctxt "piano.master_gain"
 msgid "Master Gain:"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:785
+#: crates/physics-piano/src/gui/editor.rs:1223
+msgctxt "piano.tooltip.master_gain"
+msgid "Overall output volume."
+msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1226
 msgctxt "piano.velocity_curve"
 msgid "Touch Curve:"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:791
+#: crates/physics-piano/src/gui/editor.rs:1247
+msgctxt "piano.tooltip.velocity_curve"
+msgid ""
+"Drag points to shape velocity. Double-click / right-click resets a point."
+msgstr ""
+
+#: crates/physics-piano/src/gui/editor.rs:1259
 msgctxt "piano.una_corda"
 msgid "Una Corda"
 msgstr ""
 
-#: crates/physics-piano/src/gui/editor.rs:810
+#: crates/physics-piano/src/gui/editor.rs:1347
 msgctxt "piano.keyboard_hint"
 msgid ""
 "Virtual 88-Key Keyboard (A0-C8) | Play via mouse or QWERTY keys (A-K / "
@@ -270,47 +1072,47 @@ msgctxt "piano.lid.title"
 msgid "LID BAFFLE GEOMETRY"
 msgstr ""
 
-#: crates/physics-piano/src/gui/lid.rs:220
+#: crates/physics-piano/src/gui/lid.rs:217
 #, rust-format
 msgctxt "piano.lid.status.closed"
 msgid "{angle}° (Fully Closed)"
 msgstr ""
 
-#: crates/physics-piano/src/gui/lid.rs:227
+#: crates/physics-piano/src/gui/lid.rs:224
 #, rust-format
 msgctxt "piano.lid.status.short-stick"
 msgid "{angle}° (Short Stick)"
 msgstr ""
 
-#: crates/physics-piano/src/gui/lid.rs:234
+#: crates/physics-piano/src/gui/lid.rs:231
 #, rust-format
 msgctxt "piano.lid.status.half-open"
 msgid "{angle}° (Half Open)"
 msgstr ""
 
-#: crates/physics-piano/src/gui/lid.rs:241
+#: crates/physics-piano/src/gui/lid.rs:238
 #, rust-format
 msgctxt "piano.lid.status.concert"
 msgid "{angle}° (Concert Grand)"
 msgstr ""
 
-#: crates/physics-piano/src/gui/mics.rs:225
+#: crates/physics-piano/src/gui/mics.rs:349
 msgctxt "piano.mics.title"
 msgid "SPATIAL ACOUSTIC SOUNDSTAGE"
 msgstr ""
 
-#: crates/physics-piano/src/gui/mics.rs:244
+#: crates/physics-piano/src/gui/mics.rs:368
 #, rust-format
 msgctxt "piano.mics.readout"
 msgid "Close: {close}dB | Player: {player}dB | Hall: {hall}dB"
 msgstr ""
 
-#: crates/physics-piano/src/gui/mics.rs:260
+#: crates/physics-piano/src/gui/mics.rs:387
 msgctxt "piano.mics.player"
 msgid "Player (Binaural)"
 msgstr ""
 
-#: crates/physics-piano/src/gui/mics.rs:267
+#: crates/physics-piano/src/gui/mics.rs:394
 msgctxt "piano.mics.hall"
 msgid "Decca Tree (Hall)"
 msgstr ""
@@ -345,593 +1147,26 @@ msgctxt "piano.factory-preset.5"
 msgid "Classical Pure Solo"
 msgstr ""
 
-#: crates/physics-guitar/src/gui/editor.rs:308
-msgctxt "guitar.preset.default-name"
-msgid "Custom Guitar"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:605
-msgctxt "guitar.mode_electric"
-msgid "Electric"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:609
-msgctxt "guitar.mode_acoustic"
-msgid "Acoustic"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:615
-msgctxt "guitar.pluck_plectrum"
-msgid "Plectrum"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:619
-msgctxt "guitar.pluck_finger"
-msgid "Finger"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:625
-msgctxt "guitar.pickup_bridge"
-msgid "Bridge"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:627
-msgctxt "guitar.pickup_mid"
-msgid "Mid"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:628
-msgctxt "guitar.pickup_neck"
-msgid "Neck"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:631
-msgctxt "guitar.pickup.bridge-neck"
-msgid "Bridge + Neck"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:635
-msgctxt "guitar.pickup.bridge-mid"
-msgid "Bridge + Mid"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:641
-msgctxt "guitar.pickup_single"
-msgid "Single"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:645
-msgctxt "guitar.pickup_humbucker"
-msgid "Humbucker"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:654
-msgctxt "guitar.groove.1"
-msgid "Folk 4/4 Basic"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:657
-msgctxt "guitar.groove.2"
-msgid "Ballad 6/8 Arp"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:660
-msgctxt "guitar.groove.3"
-msgid "Funk 16th Mute"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:662
-msgctxt "guitar.groove.4"
-msgid "Rock 8th Chug"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:663
-msgctxt "guitar.groove.0"
-msgid "Off (Manual)"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:682
-msgctxt "guitar.preset_label"
-msgid "Preset:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:695
-msgctxt "guitar.rack_instrument"
-msgid "INSTRUMENT"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:699
-msgctxt "guitar.mode_param_label"
-msgid "Mode:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:707
-msgctxt "guitar.pluck_style_label"
-msgid "Style:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:715
-msgctxt "guitar.pickup_pos_label"
-msgid "Pickup:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:723
-msgctxt "guitar.pickup_type_label"
-msgid "Coil:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:734
-msgctxt "guitar.rack_pickup"
-msgid "PICKUP SELECTOR"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:738
-msgctxt "guitar.tone_label"
-msgid "Tone:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:743
-msgctxt "guitar.palm_mute_label"
-msgid "PalmMute:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:748
-msgctxt "guitar.pluck_pos_label"
-msgid "PluckPos:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:754
-msgctxt "guitar.cab_enabled"
-msgid "12\" Celestion Cab"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:761
-msgctxt "guitar.rack_amp"
-msgid "AMP & CABINET"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:765
-msgctxt "guitar.amp_drive_label"
-msgid "Overdrive:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:770
-msgctxt "guitar.strum_speed_label"
-msgid "Speed:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:775
-msgctxt "guitar.fret_buzz_label"
-msgid "Buzz:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:780
-msgctxt "guitar.finger_squeak_label"
-msgid "Squeak:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:788
-msgctxt "guitar.rack_master"
-msgid "GROOVE & MASTER"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:792
-msgctxt "guitar.groove_pattern_label"
-msgid "Pattern:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:800
-msgctxt "guitar.bpm_label"
-msgid "BPM:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:805
-msgctxt "guitar.master_gain_label"
-msgid "Volume:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:828
-msgctxt "guitar.fretboard_hint"
-msgid "Interactive 6-String Fretboard (Click or Drag frets to play):"
-msgstr ""
-
-#: crates/physics-guitar/src/presets.rs:63
-msgctxt "guitar.factory-preset.0"
-msgid "Martin D-28 Fingerstyle"
-msgstr ""
-
-#: crates/physics-guitar/src/presets.rs:66
-msgctxt "guitar.factory-preset.1"
-msgid "Dreadnought Strummer"
-msgstr ""
-
-#: crates/physics-guitar/src/presets.rs:69
-msgctxt "guitar.factory-preset.2"
-msgid "Strat Clean Chime"
-msgstr ""
-
-#: crates/physics-guitar/src/presets.rs:72
-msgctxt "guitar.factory-preset.3"
-msgid "Texas Blues Breakup"
-msgstr ""
-
-#: crates/physics-guitar/src/presets.rs:75
-msgctxt "guitar.factory-preset.4"
-msgid "Les Paul Warm Jazz"
-msgstr ""
-
-#: crates/physics-guitar/src/presets.rs:78
-msgctxt "guitar.factory-preset.5"
-msgid "Heavy Metal Chug"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:1292
-msgctxt "guitar.chord.rack"
-msgid "CHORDS"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:1300
-msgctxt "guitar.chord.root_label"
-msgid "Root:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:1318
-msgctxt "guitar.chord.quality_label"
-msgid "Chord:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:1323
-msgctxt "guitar.chord.quality.major"
-msgid "Major"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:1328
-msgctxt "guitar.chord.quality.minor"
-msgid "Minor"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:1333
-msgctxt "guitar.chord.quality.dom7"
-msgid "7"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:1337
-msgctxt "guitar.chord.quality.maj7"
-msgid "Maj7"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:1342
-msgctxt "guitar.chord.quality.min7"
-msgid "Min7"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:1355
-msgctxt "guitar.chord.direction_label"
-msgid "Strum:"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:1360
-msgctxt "guitar.chord.direction.auto"
-msgid "Auto"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:1365
-msgctxt "guitar.chord.direction.down"
-msgid "Down"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:1370
-msgctxt "guitar.chord.direction.up"
-msgid "Up"
-msgstr ""
-
-#: crates/physics-guitar/src/gui/editor.rs:1383
-msgctxt "guitar.chord.strum"
-msgid "Strum"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:237
-msgctxt "bass.preset.default-name"
-msgid "Custom Bass"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:479
-msgctxt "bass.title"
-msgid "PHYSICS BASS"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:480
-msgctxt "bass.subtitle"
-msgid "FDTD stiff string · fret contact · finite pickup aperture · body modes"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:483 crates/physics-bass/src/gui.rs:510
-msgctxt "bass.audition"
-msgid "Click or drag the fretboard below to audition"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:501
-msgctxt "bass.preset"
-msgid "Preset:"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:516
-msgctxt "bass.instrument"
-msgid "INSTRUMENT"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:519
-msgctxt "bass.model"
-msgid "Model"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:522
-msgctxt "bass.electric"
-msgid "Electric"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:523
-msgctxt "bass.acoustic"
-msgid "Acoustic"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:533
-msgctxt "bass.exciter"
-msgid "Exciter"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:536
-msgctxt "bass.finger"
-msgid "Finger"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:537
-msgctxt "bass.pick"
-msgid "Pick"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:538
-msgctxt "bass.slap"
-msgid "Slap"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:547
-msgctxt "bass.tuning"
-msgid "Tuning"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:549
-msgctxt "bass.five_string"
-msgid "Five-string B0"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:557
-msgctxt "bass.string_pickup"
-msgid "STRING / PICKUP"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:560
-msgctxt "bass.pluck_position"
-msgid "Pluck position"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:566
-msgctxt "bass.pickup_position"
-msgid "Pickup position"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:570
-msgctxt "bass.tone"
-msgid "Tone"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:576
-msgctxt "bass.contact_body"
-msgid "CONTACT / BODY"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:577
-msgctxt "bass.fret_buzz"
-msgid "Fret buzz"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:578
-msgctxt "bass.body_mix"
-msgid "Body mix"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:579
-msgctxt "bass.slap_note"
-msgid "Slap shares the FDTD contact state"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:585
-msgctxt "bass.output"
-msgid "OUTPUT"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:586
-msgctxt "bass.master_gain"
-msgid "Master gain"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:587
-msgctxt "bass.output_note"
-msgid "Electric: drive & pickup · Acoustic: cavity"
-msgstr ""
-
-#: crates/physics-bass/src/gui.rs:597
-msgctxt "bass.fretboard_hint"
-msgid "Open notes + 24 frets · MIDI pitch bend remains available"
-msgstr ""
-
-#: crates/physics-bass/src/gui/fretboard_view.rs:234
-msgctxt "bass.fretboard.five-string"
-msgid "5-STRING"
-msgstr ""
-
-#: crates/physics-bass/src/gui/fretboard_view.rs:236
-msgctxt "bass.fretboard.four-string"
-msgid "4-STRING"
-msgstr ""
-
-#: crates/physics-bass/src/gui/fretboard_view.rs:314
-msgctxt "bass.fretboard.hint"
-msgid "click or drag strings to play · open notes + 24 frets"
-msgstr ""
-
-#: crates/physics-drum/src/gui.rs:212
-msgctxt "drum.preset.default-name"
-msgid "Custom Drum Kit"
-msgstr ""
-
-#: crates/physics-drum/src/gui.rs:439
-msgctxt "drum.preset"
-msgid "Preset:"
-msgstr ""
-
-#: crates/physics-drum/src/gui.rs:452
-msgctxt "drum.snare_membrane"
-msgid "SNARE / MEMBRANE"
-msgstr ""
-
-#: crates/physics-drum/src/gui.rs:455
-msgctxt "drum.snare_tightness"
-msgid "Snare tightness"
-msgstr ""
-
-#: crates/physics-drum/src/gui.rs:459
-msgctxt "drum.snare_decay"
-msgid "Snare decay"
-msgstr ""
-
-#: crates/physics-drum/src/gui.rs:460
-msgctxt "drum.snare_note"
-msgid "Bottom head drives 20 bounded wire contacts"
-msgstr ""
-
-#: crates/physics-drum/src/gui.rs:465
-msgctxt "drum.cymbal_output"
-msgid "CYMBAL / OUTPUT"
-msgstr ""
-
-#: crates/physics-drum/src/gui.rs:466
-msgctxt "drum.hihat_open"
-msgid "Hi-hat open"
-msgstr ""
-
-#: crates/physics-drum/src/gui.rs:467
-msgctxt "drum.cymbal_decay"
-msgid "Cymbal decay"
-msgstr ""
-
-#: crates/physics-drum/src/gui.rs:468
-msgctxt "drum.master_gain"
-msgid "Master gain"
-msgstr ""
-
-#: crates/physics-drum/src/gui.rs:483
-msgctxt "drum.hint"
-msgid ""
-"Closed hat chokes open hat · CC4 controls pedal opening · note-off preserves "
-"physical tails"
-msgstr ""
-
-#: crates/physics-drum/src/gui/pad_view.rs:221
-msgctxt "drum.pad-map.title"
-msgid "MIDI DRUM MAP"
-msgstr ""
-
-#: crates/physics-drum/src/gui/pad_view.rs:268
-msgctxt "drum.pad.36"
-msgid "Bass Drum"
-msgstr ""
-
-#: crates/physics-drum/src/gui/pad_view.rs:269
-msgctxt "drum.pad.38"
-msgid "Acoustic Snare"
-msgstr ""
-
-#: crates/physics-drum/src/gui/pad_view.rs:270
-msgctxt "drum.pad.41"
-msgid "Low Floor Tom"
-msgstr ""
-
-#: crates/physics-drum/src/gui/pad_view.rs:271
-msgctxt "drum.pad.42"
-msgid "Closed Hi-Hat"
-msgstr ""
-
-#: crates/physics-drum/src/gui/pad_view.rs:272
-msgctxt "drum.pad.43"
-msgid "High Floor Tom"
-msgstr ""
-
-#: crates/physics-drum/src/gui/pad_view.rs:273
-msgctxt "drum.pad.44"
-msgid "Pedal Hi-Hat"
-msgstr ""
-
-#: crates/physics-drum/src/gui/pad_view.rs:274
-msgctxt "drum.pad.45"
-msgid "Low Tom"
-msgstr ""
-
-#: crates/physics-drum/src/gui/pad_view.rs:275
-msgctxt "drum.pad.46"
-msgid "Open Hi-Hat"
-msgstr ""
-
-#: crates/physics-drum/src/gui/pad_view.rs:276
-msgctxt "drum.pad.49"
-msgid "Crash Cymbal"
-msgstr ""
-
-#: crates/physics-drum/src/gui/pad_view.rs:277
-msgctxt "drum.pad.51"
-msgid "Ride Cymbal"
-msgstr ""
-
-#: crates/physics-drum/src/gui/pad_view.rs:302
-msgctxt "drum.pad-map.hint"
-msgid "35/36 kick · 38 snare · 41–51 kit"
-msgstr ""
-
-#: crates/physics-ui/src/preset_browser.rs:319
-msgctxt "gui.tags"
-msgid "Tags"
-msgstr ""
-
-#: crates/physics-ui/src/preset_browser.rs:326
-msgctxt "gui.tags-placeholder"
-msgid "Comma-separated tags"
-msgstr ""
-
-#: crates/physics-piano/src/gui/editor.rs:1266
-#: crates/physics-guitar/src/gui/editor.rs:1668
-#: crates/physics-bass/src/gui.rs:1078
-msgctxt "gui.waveform"
-msgid "Waveform"
-msgstr ""
-
-#: crates/physics-ui/src/theme.rs:29
-msgctxt "gui.theme-light"
-msgid "Light"
-msgstr ""
-
-#: crates/physics-ui/src/theme.rs:31
-msgctxt "gui.theme-dark"
-msgid "Dark"
-msgstr ""
-
 #: crates/physics-ui/src/device_row.rs:32
 msgctxt "gui.device-audio-in"
 msgid "Audio In"
 msgstr ""
 
+#: crates/physics-ui/src/device_row.rs:37
+#: crates/physics-ui/src/device_row.rs:57
+#: crates/physics-ui/src/device_row.rs:67
+msgctxt "gui.device-none"
+msgid "None"
+msgstr ""
+
 #: crates/physics-ui/src/device_row.rs:42
 msgctxt "gui.device-audio-out"
 msgid "Audio Out"
+msgstr ""
+
+#: crates/physics-ui/src/device_row.rs:47
+msgctxt "gui.device-default-output"
+msgid "System default"
 msgstr ""
 
 #: crates/physics-ui/src/device_row.rs:52
@@ -944,19 +1179,198 @@ msgctxt "gui.device-midi-out"
 msgid "MIDI Out"
 msgstr ""
 
-#: crates/physics-ui/src/device_row.rs:47
-msgctxt "gui.device-default-output"
-msgid "System default"
-msgstr ""
-
-#: crates/physics-ui/src/device_row.rs:37
-#: crates/physics-ui/src/device_row.rs:57
-#: crates/physics-ui/src/device_row.rs:67
-msgctxt "gui.device-none"
-msgid "None"
-msgstr ""
-
 #: crates/physics-ui/src/device_row.rs:73
 msgctxt "gui.device-restart"
 msgid "Restart to apply"
+msgstr ""
+
+#: crates/physics-ui/src/language.rs:34
+msgctxt "meta.language-name"
+msgid "Language name"
+msgstr ""
+
+#: crates/physics-ui/src/preset_browser.rs:180
+msgctxt "gui.preset-browser"
+msgid "Preset Browser"
+msgstr ""
+
+#: crates/physics-ui/src/preset_browser.rs:190
+msgctxt "gui.search-presets"
+msgid "Search presets…"
+msgstr ""
+
+#: crates/physics-ui/src/preset_browser.rs:199
+msgctxt "gui.all"
+msgid "All"
+msgstr ""
+
+#: crates/physics-ui/src/preset_browser.rs:222
+msgctxt "gui.favorites"
+msgid "Favorites"
+msgstr ""
+
+#: crates/physics-ui/src/preset_browser.rs:266
+msgctxt "gui.no-presets-match"
+msgid "No presets match"
+msgstr ""
+
+#: crates/physics-ui/src/preset_browser.rs:321
+msgctxt "gui.tags"
+msgid "Tags"
+msgstr ""
+
+#: crates/physics-ui/src/preset_browser.rs:327
+msgctxt "gui.tags-placeholder"
+msgid "Comma-separated tags"
+msgstr ""
+
+#: crates/physics-ui/src/preset_panel.rs:120
+msgctxt "gui.browse"
+msgid "Browse"
+msgstr ""
+
+#: crates/physics-ui/src/preset_panel.rs:168
+#: crates/physics-ui/src/preset_panel.rs:169
+msgctxt "shared.preset-name"
+msgid "Preset name"
+msgstr ""
+
+#: crates/physics-ui/src/preset_panel.rs:195
+msgctxt "shared.save-as"
+msgid "Save As"
+msgstr ""
+
+#: crates/physics-ui/src/preset_panel.rs:201
+msgctxt "shared.rename"
+msgid "Rename"
+msgstr ""
+
+#: crates/physics-ui/src/preset_panel.rs:212
+msgctxt "shared.overwrite"
+msgid "Overwrite"
+msgstr ""
+
+#: crates/physics-ui/src/preset_panel.rs:223
+msgctxt "shared.delete"
+msgid "Delete"
+msgstr ""
+
+#: crates/physics-ui/src/preset_panel.rs:234
+msgctxt "shared.undo"
+msgid "Undo"
+msgstr ""
+
+#: crates/physics-ui/src/preset_panel.rs:242
+msgctxt "shared.redo"
+msgid "Redo"
+msgstr ""
+
+#: crates/physics-ui/src/theme.rs:26
+msgctxt "gui.theme-dark"
+msgid "Dark"
+msgstr ""
+
+#: crates/physics-ui/src/theme.rs:26
+msgctxt "gui.theme-light"
+msgid "Light"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:450
+msgctxt "preset.name.steinway_concert_d"
+msgid "Steinway D Concert Grand"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:455
+msgctxt "preset.name.bright_pop_grand"
+msgid "Bright Pop & Jazz Grand"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:460
+msgctxt "preset.name.warm_intimate_chamber"
+msgid "Warm Intimate Chamber"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:465
+msgctxt "preset.name.vintage_upright"
+msgid "Vintage Honky-Tonk Upright"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:470
+msgctxt "preset.name.cinematic_dream"
+msgid "Cinematic Ambient Dream"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:475
+msgctxt "preset.name.classical_pure_solo"
+msgid "Classical Pure Solo"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:481
+msgctxt "preset.name.strat_clean_chime"
+msgid "Strat Clean Chime"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:483
+msgctxt "preset.name.dreadnought_acoustic_fingerstyle"
+msgid "Martin D-28 Fingerstyle"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:488
+msgctxt "preset.name.blues_overdrive_crunch"
+msgid "Texas Blues Breakup"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:494
+msgctxt "preset.name.warm_jazz_archtop"
+msgid "Les Paul Warm Jazz"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:496
+msgctxt "preset.name.heavy_palm_mute_metal"
+msgid "Heavy Metal Chug"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:501
+msgctxt "preset.name.ambient_dreamy_pluck"
+msgid "Dreadnought Strummer"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:506
+msgctxt "preset.name.bass_finger_punch"
+msgid "Finger Punch"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:507
+msgctxt "preset.name.bass_pick_attack"
+msgid "Picked Attack"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:508
+msgctxt "preset.name.bass_slap_five"
+msgid "Five String Slap"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:509
+msgctxt "preset.name.bass_upright_body"
+msgid "Upright Body"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:510
+msgctxt "preset.name.drum_studio_kit"
+msgid "Studio Kit"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:511
+msgctxt "preset.name.drum_dry_tight"
+msgid "Dry Tight"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:512
+msgctxt "preset.name.drum_big_room"
+msgid "Big Room"
+msgstr ""
+
+#: crates/physics-ui/src/widgets.rs:513
+msgctxt "preset.name.drum_low_punch"
+msgid "Low Punch"
 msgstr ""

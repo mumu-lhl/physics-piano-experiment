@@ -15,17 +15,25 @@ This workspace contains extensive acoustic simulations, FDTD grid calculations, 
 
 | Task | Recommended Command |
 | :--- | :--- |
-| **Run all workspace tests** | `cargo nextest run --workspace` |
+| **Run all workspace tests** | `CI=1 cargo nextest run --workspace --exclude physics-drum` |
 | **Run tests for a single crate** | `cargo nextest run -p <crate_name>` (e.g. `cargo nextest run -p physics-piano`) |
 | **Run a specific test by name** | `cargo nextest run <test_filter>` |
-| **Run tests without fail-fast** | `cargo nextest run --workspace --no-fail-fast` |
-| **Run documentation tests** | `cargo test --doc` *(Nextest does not execute doctests; use standard cargo only for `--doc`)* |
+| **Run tests without fail-fast** | `cargo nextest run --workspace --exclude physics-drum --no-fail-fast` |
+| **Run documentation tests** | `cargo test --doc --workspace --exclude physics-drum` *(Nextest does not execute doctests; use standard cargo only for `--doc`)* |
+
+> [!IMPORTANT]
+> **The `physics-drum` exclusion is part of the gate, not an omission.**
+> The drum crate is archived and its `timbre_eval` tests need reference
+> audio downloaded with `tools/download_drum_references.py` (stored under
+> the ignored `target/` directory). CI runs the same excluded command.
+> To run the drum tests, download the references first, then run
+> `cargo nextest run -p physics-drum` separately.
 
 ### Non-Interactive / Automation Tip
 
 When running tests in automated environments or headless background tasks:
 ```bash
-CI=1 cargo nextest run --workspace
+CI=1 cargo nextest run --workspace --exclude physics-drum
 ```
 Setting `CI=1` prevents nextest from entering interactive terminal/pager modes.
 
@@ -39,14 +47,21 @@ Before submitting or committing changes, run the following verification steps:
    ```bash
    cargo check --workspace --all-targets
    ```
-2. **Execute Full Test Suite**:
+2. **Execute Full Test Suite** (same gate as CI; drum excluded, see above):
    ```bash
-   CI=1 cargo nextest run --workspace
+   CI=1 cargo nextest run --workspace --exclude physics-drum
    ```
-3. **Run Doctests (if library documentation changed)**:
+3. **Run Doctests** (same exclusion as CI; nextest never runs doctests):
    ```bash
-   cargo test --doc
+   cargo test --doc --workspace --exclude physics-drum
    ```
+
+CI (`.github/workflows/ci.yml`) runs the same nextest gate and doctest
+step, plus advisory-only clippy and `cargo fmt --check` steps
+(`continue-on-error`) and an MSRV job pinned to Rust 1.88 in the workflow
+only (there is deliberately no `rust-toolchain.toml`, so local toolchains
+are not overridden). Clippy and formatting are advisory until their
+warnings/drift are fixed; do not make them deny-warnings gates.
 
 ---
 
