@@ -20,6 +20,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+use crate::manager::{backup_corrupt_sidecar, write_sidecar_atomic};
+
 /// File name of the per-instrument device sidecar, next to `favorites.json`
 /// and `preset_tags.json` in the instrument's presets directory.
 pub const DEVICE_SETTINGS_FILE: &str = "device_settings.json";
@@ -43,6 +45,14 @@ pub fn mark_standalone() {
 /// running inside a host).
 pub fn is_standalone() -> bool {
     IS_STANDALONE.load(Ordering::Acquire)
+}
+
+/// Test-only reset for the process-global standalone flag, so tests
+/// that exercise [`mark_standalone`] cannot poison the flag assertion
+/// of a test running later in the same process.
+#[cfg(test)]
+fn reset_standalone_flag() {
+    IS_STANDALONE.store(false, Ordering::Release);
 }
 
 /// Saved device selection. `None` means "wrapper default": no input device
@@ -85,6 +95,27 @@ fn dedup(names: Vec<String>) -> Vec<String> {
         .into_iter()
         .filter(|name| !name.is_empty() && seen.insert(name.clone()))
         .collect()
+}
+
+/// One optional device-name field from a parsed sidecar object: a
+/// string is kept, a missing field or JSON `null` means unset, and any
+/// other type is dropped with a diagnostic naming the file and field.
+fn string_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    path: &Path,
+    field: &str,
+) -> Option<String> {
+    match object.get(field) {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(value)) => Some(value.clone()),
+        Some(other) => {
+            eprintln!(
+                "physics-presets: dropping wrong-typed device setting {field}={other} in {}",
+                path.display()
+            );
+            None
+        }
+    }
 }
 
 /// Enumerate audio input/output devices (cpal) and MIDI ports (midir).
@@ -152,13 +183,44 @@ impl DeviceSettings {
         crate::manager::default_user_presets_dir(instrument).join(DEVICE_SETTINGS_FILE)
     }
 
-    /// Load the saved selection from a directory. A missing or malformed
-    /// file simply means "all defaults".
+    /// Load the saved selection from a directory, leniently: fields
+    /// with the wrong type fall back to their default (unset) with a
+    /// diagnostic, while valid fields are kept. A missing file means
+    /// "all defaults"; a whole file that is not a JSON object is backed
+    /// up as `<file>.corrupt` and loads defaults.
     pub fn load_from_dir(dir: &Path) -> DeviceSettings {
-        let Ok(content) = std::fs::read_to_string(dir.join(DEVICE_SETTINGS_FILE)) else {
+        let path = dir.join(DEVICE_SETTINGS_FILE);
+        let raw = match std::fs::read(&path) {
+            Ok(raw) => raw,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return DeviceSettings::default();
+            }
+            Err(err) => {
+                eprintln!(
+                    "physics-presets: failed to read device settings {}: {err}",
+                    path.display()
+                );
+                return DeviceSettings::default();
+            }
+        };
+        let Ok(content) = std::str::from_utf8(&raw) else {
+            backup_corrupt_sidecar(&path, &raw);
             return DeviceSettings::default();
         };
-        serde_json::from_str(&content).unwrap_or_default()
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+            backup_corrupt_sidecar(&path, &raw);
+            return DeviceSettings::default();
+        };
+        let Some(object) = value.as_object() else {
+            backup_corrupt_sidecar(&path, &raw);
+            return DeviceSettings::default();
+        };
+        DeviceSettings {
+            input: string_field(object, &path, "input"),
+            output: string_field(object, &path, "output"),
+            midi_input: string_field(object, &path, "midi_input"),
+            midi_output: string_field(object, &path, "midi_output"),
+        }
     }
 
     /// Save the selection to a directory, creating it as needed.
@@ -166,7 +228,7 @@ impl DeviceSettings {
         std::fs::create_dir_all(dir)?;
         let json = serde_json::to_string_pretty(self)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
-        std::fs::write(dir.join(DEVICE_SETTINGS_FILE), json)
+        write_sidecar_atomic(&dir.join(DEVICE_SETTINGS_FILE), json.as_bytes())
     }
 
     /// Load the saved selection for one instrument.
@@ -220,11 +282,20 @@ pub fn has_device_flag(args: &[String], flag: &str) -> bool {
 /// for one device never blocks the saved selection for another. Skipped
 /// entirely when the user asked for help.
 pub fn inject_saved_devices(args: &mut Vec<String>, instrument: &str) {
+    let dir = crate::manager::default_user_presets_dir(instrument);
+    let available = enumerate_devices();
+    inject_saved_devices_in_dir(args, &dir, &available);
+}
+
+/// [`inject_saved_devices`] against an explicit directory and device
+/// list, so tests can exercise startup injection with a temp dir and a
+/// stubbed [`DeviceList`] instead of the real home directory and real
+/// hardware enumeration.
+pub fn inject_saved_devices_in_dir(args: &mut Vec<String>, dir: &Path, available: &DeviceList) {
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {
         return;
     }
-    let available = enumerate_devices();
-    let settings = DeviceSettings::load(instrument).validate(&available);
+    let settings = DeviceSettings::load_from_dir(dir).validate(available);
     for (flag, field) in DEVICE_FLAGS {
         if let Some(name) = field(&settings) {
             if !has_device_flag(args, flag) {
@@ -291,9 +362,12 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn temp_dir() -> PathBuf {
+    fn temp_dir(tag: &str) -> PathBuf {
+        // Per-test tag + pid: under `cargo test` several tests share one
+        // process (one pid), so a pid-only name lets them clobber the
+        // same directory. Nextest's per-test processes mask this.
         let dir = std::env::temp_dir().join(format!(
-            "physics-device-settings-test-{}",
+            "physics-device-settings-test-{tag}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
@@ -312,7 +386,7 @@ mod tests {
 
     #[test]
     fn round_trip_save_load() {
-        let dir = temp_dir();
+        let dir = temp_dir("round-trip");
         let settings = full_settings();
         settings.save_to_dir(&dir).unwrap();
         assert_eq!(DeviceSettings::load_from_dir(&dir), settings);
@@ -321,7 +395,7 @@ mod tests {
 
     #[test]
     fn load_missing_or_malformed_returns_defaults() {
-        let dir = temp_dir();
+        let dir = temp_dir("malformed");
         assert_eq!(
             DeviceSettings::load_from_dir(&dir),
             DeviceSettings::default()
@@ -427,17 +501,151 @@ mod tests {
 
     #[test]
     fn restart_delay_defaults_to_zero() {
-        // The var is unset in the test environment; a missing value means
-        // "no wait" rather than an error.
-        if std::env::var(RESTART_DELAY_ENV_VAR).is_err() {
-            assert_eq!(restart_delay(), Duration::from_millis(0));
+        // Save/restore the process-global env var so this test asserts
+        // unconditionally and never leaks a value into another test.
+        // SAFETY: no other test in this crate reads this variable.
+        let saved = std::env::var_os(RESTART_DELAY_ENV_VAR);
+        unsafe {
+            std::env::remove_var(RESTART_DELAY_ENV_VAR);
+        }
+        assert_eq!(restart_delay(), Duration::from_millis(0));
+        unsafe {
+            std::env::set_var(RESTART_DELAY_ENV_VAR, "250");
+        }
+        assert_eq!(restart_delay(), Duration::from_millis(250));
+        unsafe {
+            match saved {
+                Some(value) => std::env::set_var(RESTART_DELAY_ENV_VAR, value),
+                None => std::env::remove_var(RESTART_DELAY_ENV_VAR),
+            }
         }
     }
 
     #[test]
     fn standalone_flag_defaults_to_false() {
-        // `mark_standalone` is only called from a standalone binary's main;
-        // unit tests run in-process, so the flag stays false here.
+        // Reset first: the flag is process-global, and a test running
+        // earlier in this process may have called `mark_standalone`.
+        // Reset again at the end so this test leaves the flag clean.
+        reset_standalone_flag();
         assert!(!is_standalone());
+        mark_standalone();
+        assert!(is_standalone());
+        reset_standalone_flag();
+        assert!(!is_standalone());
+    }
+
+    #[test]
+    fn load_from_dir_keeps_valid_fields_and_drops_wrong_typed() {
+        let dir = temp_dir("lenient");
+        std::fs::write(
+            dir.join(DEVICE_SETTINGS_FILE),
+            r#"{"input": 42, "output": "Speakers", "midi_input": null, "bogus": true}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            DeviceSettings::load_from_dir(&dir),
+            DeviceSettings {
+                input: None,
+                output: Some("Speakers".to_string()),
+                midi_input: None,
+                midi_output: None,
+            }
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_from_dir_truncated_file_backed_up_and_preserved_by_save() {
+        let dir = temp_dir("truncated");
+        let raw = b"{\"input\": \"Mi";
+        std::fs::write(dir.join(DEVICE_SETTINGS_FILE), raw).unwrap();
+        let backup = dir.join(format!("{DEVICE_SETTINGS_FILE}.corrupt"));
+        assert_eq!(
+            DeviceSettings::load_from_dir(&dir),
+            DeviceSettings::default()
+        );
+        assert_eq!(std::fs::read(&backup).unwrap(), raw);
+        full_settings().save_to_dir(&dir).unwrap();
+        assert_eq!(std::fs::read(&backup).unwrap(), raw);
+        assert_eq!(DeviceSettings::load_from_dir(&dir), full_settings());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inject_saved_devices_in_dir_explicit_flag_wins_per_field() {
+        let dir = temp_dir("inject-explicit");
+        full_settings().save_to_dir(&dir).unwrap();
+        let available = DeviceList {
+            inputs: vec!["Mic".to_string()],
+            outputs: vec!["Speakers".to_string(), "Other".to_string()],
+            midi_inputs: vec!["Keyboard".to_string(), "Other2".to_string()],
+            midi_outputs: vec!["Synth".to_string()],
+        };
+        let mut args = vec![
+            "--output-device".to_string(),
+            "Other".to_string(),
+            "--midi-input=Other2".to_string(),
+        ];
+        inject_saved_devices_in_dir(&mut args, &dir, &available);
+        // Explicit flags win for their own field only; the saved
+        // selections for the other fields are still injected.
+        assert_eq!(
+            args,
+            vec![
+                "--output-device".to_string(),
+                "Other".to_string(),
+                "--midi-input=Other2".to_string(),
+                "--input-device".to_string(),
+                "Mic".to_string(),
+                "--midi-output".to_string(),
+                "Synth".to_string(),
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inject_saved_devices_in_dir_help_skips() {
+        let dir = temp_dir("inject-help");
+        full_settings().save_to_dir(&dir).unwrap();
+        let available = DeviceList {
+            inputs: vec!["Mic".to_string()],
+            outputs: vec!["Speakers".to_string()],
+            midi_inputs: vec!["Keyboard".to_string()],
+            midi_outputs: vec!["Synth".to_string()],
+        };
+        for help in ["--help", "-h"] {
+            let mut args = vec![help.to_string()];
+            inject_saved_devices_in_dir(&mut args, &dir, &available);
+            assert_eq!(args, vec![help.to_string()]);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inject_saved_devices_in_dir_drops_stale_names() {
+        let dir = temp_dir("inject-stale");
+        full_settings().save_to_dir(&dir).unwrap();
+        // Only the input and MIDI input are still available.
+        let available = DeviceList {
+            inputs: vec!["Mic".to_string()],
+            outputs: vec![],
+            midi_inputs: vec!["Keyboard".to_string()],
+            midi_outputs: vec![],
+        };
+        let mut args = vec!["--backend".to_string(), "alsa".to_string()];
+        inject_saved_devices_in_dir(&mut args, &dir, &available);
+        assert_eq!(
+            args,
+            vec![
+                "--backend".to_string(),
+                "alsa".to_string(),
+                "--input-device".to_string(),
+                "Mic".to_string(),
+                "--midi-input".to_string(),
+                "Keyboard".to_string(),
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
