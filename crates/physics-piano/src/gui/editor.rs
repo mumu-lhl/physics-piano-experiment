@@ -6,6 +6,7 @@ use nice_plug::prelude::Param;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicU64};
 use vizia_plug::vizia::prelude::*;
+use vizia_plug::widgets::param_registry::ParamRegistry;
 use vizia_plug::widgets::util::ModifiersExt;
 use vizia_plug::widgets::*;
 use vizia_plug::{ViziaEditor, ViziaState, ViziaTheming, create_vizia_editor};
@@ -42,6 +43,25 @@ fn knob<P: Param + 'static>(
     learn: &LearnArm,
 ) {
     parameter_knob(cx, label, param, 120.0, tooltip, Some(learn.clone()));
+}
+
+/// Whether the currently focused view is a text input.
+///
+/// `Model::event` handlers get an `EventContext`, which has no
+/// `focused_element()` (that lives on `Context`, used by vizia-plug's
+/// `key_inject` idle poll). The equivalent here is downcasting the
+/// focused entity's view to the `Textbox` instantiations used in this
+/// UI: `Signal<String>` lenses (preset name, browser search/tags) and
+/// the `Memo<String>` lens (slider value entry). A future textbox with
+/// a different lens type must be added here, or QWERTY playing will
+/// fire while it is focused.
+fn textbox_focused(cx: &EventContext) -> bool {
+    let focused = cx.focused();
+    cx.get_view_with::<Textbox<Signal<String>, String>>(focused)
+        .is_some()
+        || cx
+            .get_view_with::<Textbox<Memo<String>, String>>(focused)
+            .is_some()
 }
 
 struct PianoUiState {
@@ -314,6 +334,12 @@ impl Model for PianoUiState {
                 let on = !self.learn_arm.mode.get();
                 self.learn_arm.mode.set(on);
                 if on {
+                    // A controller moved before Learn was armed must
+                    // not bind the first knob clicked afterwards:
+                    // forget any CC seen so far. (The pending-arm
+                    // resync in RefreshDisplay covers moves between
+                    // arming Learn and arming a knob.)
+                    self.last_seen_seq = self.last_cc.seq();
                     self.learn_status
                         .set(translate(lang, "learn.on", "Learn on: click a knob").to_string());
                 } else {
@@ -329,6 +355,26 @@ impl Model for PianoUiState {
                 // successful bind so several knobs can be bound in a row.
                 if self.learn_arm.mode.get() {
                     let seq = self.last_cc.seq();
+                    // A newly armed knob (pending changed) prompts the
+                    // user to move a controller, and forgets any CC
+                    // moved before this knob was armed, so only a
+                    // post-arm move can bind it. This runs before the
+                    // bind poll below so a stale CC cannot bind on
+                    // the same tick the knob is armed.
+                    let pending = self.learn_arm.pending.get();
+                    if pending != self.last_seen_pending {
+                        self.last_seen_pending = pending.clone();
+                        self.last_seen_seq = seq;
+                        if let Some(id) = pending {
+                            let lang = self.language.get();
+                            self.learn_status.set(translate_format(
+                                lang,
+                                "learn.move_controller",
+                                "Move a controller to bind {param}",
+                                &[("param", &id)],
+                            ));
+                        }
+                    }
                     if seq != self.last_seen_seq {
                         self.last_seen_seq = seq;
                         if let Some(id) = self.learn_arm.pending.get() {
@@ -354,31 +400,36 @@ impl Model for PianoUiState {
                                     ));
                                 }
                                 Err(err) => {
-                                    eprintln!("MIDI Learn: failed to save binding: {err}");
+                                    let err_text = err.to_string();
+                                    self.learn_status.set(translate_format(
+                                        lang,
+                                        "learn.save_failed",
+                                        "Failed to save binding for {param}: {error}",
+                                        &[("param", &id), ("error", &err_text)],
+                                    ));
                                 }
                             }
                         }
                     }
-                    // A newly armed knob (pending changed to Some) prompts
-                    // the user to move a controller.
-                    let pending = self.learn_arm.pending.get();
-                    if pending != self.last_seen_pending {
-                        self.last_seen_pending = pending.clone();
-                        if let Some(id) = pending {
-                            let lang = self.language.get();
-                            self.learn_status.set(translate_format(
-                                lang,
-                                "learn.move_controller",
-                                "Move a controller to bind {param}",
-                                &[("param", &id)],
-                            ));
-                        }
-                    }
+                }
+                // Knob/slider signals are refreshed only by the
+                // host-driven parameter-change callbacks, but a
+                // learned CC writes ParamPtr values directly on the
+                // audio thread with no such notification, so re-sync
+                // the registry signals from the current ParamPtr
+                // values on every refresh. The flush only writes
+                // values that changed, so an in-progress knob drag
+                // (which writes the same ParamPtr value) is
+                // undisturbed. No registry means this editor was not
+                // created via create_vizia_editor; skip silently.
+                if let Some(registry) = cx.try_data::<ParamRegistry>() {
+                    registry.flush_all();
                 }
                 redraw_custom_view(cx, "piano-keyboard-widget");
                 redraw_custom_view(cx, "lissajous-scope-widget");
                 redraw_custom_view(cx, "stereo-vu-meter-widget");
                 redraw_custom_view(cx, "spectrum-analyzer-widget");
+                redraw_custom_view(cx, "waveform-widget");
                 redraw_custom_view(cx, "velocity-curve-editor");
             }
             PianoUiEvent::PreviousPreset | PianoUiEvent::NextPreset => {
@@ -663,6 +714,17 @@ impl Model for PianoUiState {
 
         event.map(|window: &WindowEvent, meta| match window {
             WindowEvent::KeyDown(code, _) => {
+                // Typing in a textbox must reach the textbox, not the
+                // QWERTY keyboard / octave shift / Undo handling
+                // below: KeyDown propagates up from the focused
+                // textbox to this model. Return without consuming so
+                // the textbox handles the key. Host-injected keys are
+                // unaffected: they are only injected while a textbox
+                // is focused (see vizia-plug's key_inject) and arrive
+                // targeted at the textbox itself.
+                if textbox_focused(cx) {
+                    return;
+                }
                 if cx.modifiers().command() {
                     if *code == Code::KeyZ && !cx.modifiers().shift() {
                         cx.emit(PianoUiEvent::Undo);
@@ -715,10 +777,19 @@ impl Model for PianoUiState {
                 }
             }
             WindowEvent::KeyUp(code, _) => {
+                // No early return here: a note started before focus
+                // moved into a textbox must still be released, or it
+                // would stick. KeyUp only ever releases held keys,
+                // so running it while a textbox is focused is safe;
+                // the event is left unconsumed in that case so the
+                // textbox still sees the release.
+                let text_focused = textbox_focused(cx);
                 self.held_nav_keys.remove(code);
                 if let Some(midi) = self.held_qwerty_keys.remove(code) {
                     self.release_note(midi);
-                    meta.consume();
+                    if !text_focused {
+                        meta.consume();
+                    }
                 }
             }
             WindowEvent::FocusOut => {
@@ -911,6 +982,15 @@ pub fn create_vizia_piano_editor(
             let theme_signal = zoom_state.theme_signal();
             let theme_state = zoom_state.clone();
             let presets_dir = presets_dir_ui.clone();
+            // Themed ancestor for both the content VStack and the
+            // preset browser overlay below: `.theme-light ...`
+            // descendant selectors must match the browser too, so
+            // the class lives on this wrapper, not on the content
+            // VStack. Stretch/Stretch keeps the overlay's absolute
+            // positioning identical to the un-wrapped tree. (The
+            // content below keeps its original indentation so this
+            // restructure stays a minimal diff.)
+            VStack::new(cx, move |cx| {
             VStack::new(cx, move |cx| {
                 preset_panel(
                     cx,
@@ -1281,8 +1361,7 @@ pub fn create_vizia_piano_editor(
                 })
                 .height(Pixels(56.0))
                 .horizontal_gap(Pixels(8.0));
-            })
-            .toggle_class("theme-light", theme_signal);
+            });
 
             preset_browser(
                 cx,
@@ -1300,6 +1379,10 @@ pub fn create_vizia_piano_editor(
                     current_name: browser_current_name,
                 },
             );
+            })
+            .toggle_class("theme-light", theme_signal)
+            .width(Stretch(1.0))
+            .height(Stretch(1.0));
         });
     })
 }

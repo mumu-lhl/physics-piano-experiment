@@ -401,6 +401,18 @@ msgctxt "guitar.pickup_humbucker"
 msgid "Humbucker"
 msgstr "双线圈"
 
+msgctxt "guitar.cab.vintage30"
+msgid "Vintage 30 4x12"
+msgstr "Vintage 30 4x12"
+
+msgctxt "guitar.cab.twin_reverb"
+msgid "Twin Reverb 2x12"
+msgstr "Twin Reverb 2x12"
+
+msgctxt "guitar.cab.greenback"
+msgid "Greenback 4x12"
+msgstr "Greenback 4x12"
+
 msgctxt "guitar.groove.1"
 msgid "Folk 4/4 Basic"
 msgstr "民谣 4/4 扫弦"
@@ -449,6 +461,10 @@ msgctxt "guitar.rack_pickup"
 msgid "PICKUP SELECTOR"
 msgstr "拾音器选择"
 
+msgctxt "guitar.rack_stompbox"
+msgid "STOMPBOX & EXPRESSION"
+msgstr "单块效果器与表情控制"
+
 msgctxt "guitar.tone_label"
 msgid "Tone:"
 msgstr "音色旋钮:"
@@ -465,13 +481,49 @@ msgctxt "guitar.cab_enabled"
 msgid "12\" Celestion Cab"
 msgstr "12寸箱体模拟"
 
+msgctxt "guitar.cab_enabled"
+msgid "12\" Cab"
+msgstr "12寸箱体"
+
+msgctxt "guitar.use_ir_cab"
+msgid "UPOLS IR"
+msgstr "UPOLS IR"
+
 msgctxt "guitar.rack_amp"
 msgid "AMP & CABINET"
 msgstr "电子管音箱与箱体"
 
+msgctxt "guitar.rack_amp"
+msgid "VINTAGE AMP HEAD"
+msgstr "复古音箱头"
+
 msgctxt "guitar.amp_drive_label"
 msgid "Overdrive:"
 msgstr "前级过载:"
+
+msgctxt "guitar.amp_drive_label"
+msgid "Drive:"
+msgstr "驱动:"
+
+msgctxt "guitar.amp_bass_label"
+msgid "Bass:"
+msgstr "低频:"
+
+msgctxt "guitar.amp_middle_label"
+msgid "Middle:"
+msgstr "中频:"
+
+msgctxt "guitar.amp_treble_label"
+msgid "Treble:"
+msgstr "高频:"
+
+msgctxt "guitar.amp_presence_label"
+msgid "Presence:"
+msgstr "临场感:"
+
+msgctxt "guitar.amp_sag_label"
+msgid "SAG:"
+msgstr "电源塌陷:"
 
 msgctxt "guitar.strum_speed_label"
 msgid "Speed:"
@@ -484,6 +536,14 @@ msgstr "打品碰撞:"
 msgctxt "guitar.finger_squeak_label"
 msgid "Squeak:"
 msgstr "指擦杂音:"
+
+msgctxt "guitar.rack_cab_master"
+msgid "CABINET & MASTER"
+msgstr "箱体与主输出"
+
+msgctxt "guitar.cabinet_model_label"
+msgid "Cabinet:"
+msgstr "箱体:"
 
 msgctxt "guitar.rack_master"
 msgid "GROOVE & MASTER"
@@ -504,6 +564,10 @@ msgstr "主音量:"
 msgctxt "guitar.fretboard_hint"
 msgid "Interactive 6-String Fretboard (Click or Drag frets to play):"
 msgstr "6弦交互式物理指板 (鼠标点击或拖拽品位弹奏):"
+
+msgctxt "guitar.fretboard_hint"
+msgid "Interactive 6-String Fretboard (Click/Drag strums · Keys 1-6 open strings · A-L notes · Z/X octaves):"
+msgstr "交互式 6 弦指板 (点击/拖拽扫弦 · 按键 1-6 弹空弦 · A-L 弹音符 · Z/X 切换八度):"
 
 msgctxt "guitar.factory-preset.0"
 msgid "Martin D-28 Fingerstyle"
@@ -625,6 +689,14 @@ msgctxt "bass.output"
 msgid "OUTPUT"
 msgstr "输出"
 
+msgctxt "bass.output"
+msgid "AMP & OUTPUT"
+msgstr "音箱与输出"
+
+msgctxt "bass.drive"
+msgid "Drive"
+msgstr "驱动"
+
 msgctxt "bass.master_gain"
 msgid "Master gain"
 msgstr "总输出增益"
@@ -636,6 +708,10 @@ msgstr "电贝斯：驱动与拾音 · 木贝斯：共鸣腔"
 msgctxt "bass.fretboard_hint"
 msgid "Open notes + 24 frets · MIDI pitch bend remains available"
 msgstr "空弦 + 24 品 · MIDI 仍可控制弯音"
+
+msgctxt "bass.fretboard_hint"
+msgid "Open notes + 24 frets · Keys 1-5 open strings · A-L notes · Z/X octaves"
+msgstr "空弦 + 24 品 · 按键 1-5 弹空弦 · A-L 弹音符 · Z/X 切换八度"
 
 msgctxt "bass.fretboard.five-string"
 msgid "5-STRING"
@@ -1096,3 +1172,7 @@ msgstr "已将 CC{cc} 绑定到 {param}"
 msgctxt "learn.reserved"
 msgid "CC{cc} is reserved and can't be learned"
 msgstr "CC{cc} 已保留，不可学习"
+
+msgctxt "learn.save_failed"
+msgid "Failed to save binding for {param}: {error}"
+msgstr "保存 {param} 的绑定失败：{error}"
