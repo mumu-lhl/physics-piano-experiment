@@ -58,7 +58,7 @@ fn reset_standalone_flag() {
 /// Saved device selection. `None` means "wrapper default": no input device
 /// for `input`, the system default output for `output`, and no MIDI device
 /// for the MIDI fields.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DeviceSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<String>,
@@ -68,7 +68,34 @@ pub struct DeviceSettings {
     pub midi_input: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub midi_output: Option<String>,
+    /// Last state this value was loaded from disk with, for the
+    /// save-time three-way merge in [`DeviceSettings::save_to_dir`]
+    /// (same per-key rules as the aggregate sidecars in
+    /// `manager.rs`: only-disk-changed fields are kept, only-writer-
+    /// changed fields win — including an explicit clear to `None` —
+    /// and both-changed fields resolve writer-wins). Never
+    /// serialized, and ignored by equality: a value loaded from disk
+    /// equals the value it was saved from. `None` means "no known
+    /// disk baseline" (freshly constructed, or loaded from a missing
+    /// or malformed file); such a value saves wholesale, as before.
+    #[serde(skip)]
+    baseline: Option<Box<DeviceSettings>>,
 }
+
+/// Equality compares only the four device fields, never the merge
+/// baseline: loading a saved value must compare equal to the value
+/// that was saved, even though only the loaded one carries a
+/// baseline.
+impl PartialEq for DeviceSettings {
+    fn eq(&self, other: &Self) -> bool {
+        self.input == other.input
+            && self.output == other.output
+            && self.midi_input == other.midi_input
+            && self.midi_output == other.midi_output
+    }
+}
+
+impl Eq for DeviceSettings {}
 
 /// Devices currently visible to the host APIs. Enumeration never fails: a
 /// missing backend yields an empty list, and the selectors fall back to the
@@ -118,6 +145,88 @@ fn string_field(
     }
 }
 
+/// Leniently parse a device-settings sidecar's raw bytes: fields
+/// with the wrong type fall back to unset with a diagnostic, while
+/// valid fields are kept. Returns `None` when the whole file is not
+/// a JSON object (the raw bytes are backed up by
+/// [`backup_corrupt_sidecar`]). The returned value carries no merge
+/// baseline; [`DeviceSettings::load_from_dir`] attaches one.
+fn parse_device_settings(path: &Path, raw: &[u8]) -> Option<DeviceSettings> {
+    let Ok(content) = std::str::from_utf8(raw) else {
+        backup_corrupt_sidecar(path, raw);
+        return None;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+        backup_corrupt_sidecar(path, raw);
+        return None;
+    };
+    let Some(object) = value.as_object() else {
+        backup_corrupt_sidecar(path, raw);
+        return None;
+    };
+    Some(DeviceSettings {
+        input: string_field(object, path, "input"),
+        output: string_field(object, path, "output"),
+        midi_input: string_field(object, path, "midi_input"),
+        midi_output: string_field(object, path, "midi_output"),
+        baseline: None,
+    })
+}
+
+/// Re-read a device-settings sidecar from disk for a save-time
+/// merge. A missing file means "all defaults"; a malformed or
+/// otherwise unreadable file yields `None`, telling the caller to
+/// fall back to a wholesale write.
+fn read_device_settings_from_disk(path: &Path) -> Option<DeviceSettings> {
+    match std::fs::read(path) {
+        Ok(raw) => parse_device_settings(path, &raw),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Some(DeviceSettings::default()),
+        Err(err) => {
+            eprintln!(
+                "physics-presets: failed to re-read device settings {path}: {err}",
+                path = path.display()
+            );
+            None
+        }
+    }
+}
+
+/// Per-field three-way merge, with the same rules as the aggregate
+/// sidecars (see `manager.rs`): a field only the writer changed
+/// wins — including an explicit clear to `None`, which is how a
+/// cleared selection is distinguished from a field the writer
+/// never touched — a field only changed on disk wins, including
+/// an external clear, and a field both sides changed resolves
+/// writer-wins.
+fn merge_device_settings(
+    baseline: &DeviceSettings,
+    disk: &DeviceSettings,
+    memory: &DeviceSettings,
+) -> DeviceSettings {
+    let merge_field = |base: &Option<String>,
+                       on_disk: &Option<String>,
+                       in_memory: &Option<String>|
+     -> Option<String> {
+        if on_disk == base {
+            in_memory.clone()
+        } else if in_memory == base {
+            on_disk.clone()
+        } else {
+            in_memory.clone()
+        }
+    };
+    DeviceSettings {
+        input: merge_field(&baseline.input, &disk.input, &memory.input),
+        output: merge_field(&baseline.output, &disk.output, &memory.output),
+        midi_input: merge_field(&baseline.midi_input, &disk.midi_input, &memory.midi_input),
+        midi_output: merge_field(
+            &baseline.midi_output,
+            &disk.midi_output,
+            &memory.midi_output,
+        ),
+        baseline: None,
+    }
+}
 /// Enumerate audio input/output devices (cpal) and MIDI ports (midir).
 /// Every backend is best-effort: an unavailable backend contributes an
 /// empty list instead of an error.
@@ -203,32 +312,46 @@ impl DeviceSettings {
                 return DeviceSettings::default();
             }
         };
-        let Ok(content) = std::str::from_utf8(&raw) else {
-            backup_corrupt_sidecar(&path, &raw);
+        let Some(mut settings) = parse_device_settings(&path, &raw) else {
             return DeviceSettings::default();
         };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
-            backup_corrupt_sidecar(&path, &raw);
-            return DeviceSettings::default();
-        };
-        let Some(object) = value.as_object() else {
-            backup_corrupt_sidecar(&path, &raw);
-            return DeviceSettings::default();
-        };
-        DeviceSettings {
-            input: string_field(object, &path, "input"),
-            output: string_field(object, &path, "output"),
-            midi_input: string_field(object, &path, "midi_input"),
-            midi_output: string_field(object, &path, "midi_output"),
-        }
+        // The parsed state is the merge baseline for later saves:
+        // this value was read from disk, so a save can tell which
+        // fields the caller changed from the on-disk state.
+        let baseline = settings.clone();
+        settings.baseline = Some(Box::new(baseline));
+        settings
+    }
+
+    /// This value without its merge baseline, for wholesale writes
+    /// and serialization (the baseline is never serialized anyway).
+    fn without_baseline(&self) -> DeviceSettings {
+        let mut settings = self.clone();
+        settings.baseline = None;
+        settings
     }
 
     /// Save the selection to a directory, creating it as needed.
+    /// When this value was loaded from disk (see
+    /// [`DeviceSettings::load_from_dir`]), the save re-reads the
+    /// file and merges per field, so a selection another instance
+    /// saved for a different field survives; a value with no known
+    /// disk baseline saves wholesale, as before. The write itself
+    /// is atomic (temp file + rename) either way.
     pub fn save_to_dir(&self, dir: &Path) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
-        let json = serde_json::to_string_pretty(self)
+        let path = dir.join(DEVICE_SETTINGS_FILE);
+        let merged = match &self.baseline {
+            Some(baseline) => match read_device_settings_from_disk(&path) {
+                Some(disk) => merge_device_settings(baseline, &disk, self),
+                // Malformed/unreadable re-read: wholesale write.
+                None => self.without_baseline(),
+            },
+            None => self.without_baseline(),
+        };
+        let json = serde_json::to_string_pretty(&merged)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
-        write_sidecar_atomic(&dir.join(DEVICE_SETTINGS_FILE), json.as_bytes())
+        write_sidecar_atomic(&path, json.as_bytes())
     }
 
     /// Load the saved selection for one instrument.
@@ -254,6 +377,11 @@ impl DeviceSettings {
             output: keep(&self.output, &available.outputs),
             midi_input: keep(&self.midi_input, &available.midi_inputs),
             midi_output: keep(&self.midi_output, &available.midi_outputs),
+            // Validation drops stale names from the value, but the
+            // merge baseline stays the on-disk state: a field
+            // dropped here counts as writer-changed on the next
+            // save, so a stale name is not resurrected by merging.
+            baseline: self.baseline.clone(),
         }
     }
 
@@ -381,6 +509,7 @@ mod tests {
             output: Some("Speakers".to_string()),
             midi_input: Some("Keyboard".to_string()),
             midi_output: Some("Synth".to_string()),
+            baseline: None,
         }
     }
 
@@ -424,6 +553,7 @@ mod tests {
                 output: None,
                 midi_input: Some("Keyboard".to_string()),
                 midi_output: None,
+                baseline: None,
             }
         );
         assert_eq!(
@@ -441,6 +571,7 @@ mod tests {
                 output: Some("Speakers".to_string()),
                 midi_input: None,
                 midi_output: Some("Synth".to_string()),
+                baseline: None,
             }
             .to_args(),
             vec![
@@ -549,6 +680,7 @@ mod tests {
                 output: Some("Speakers".to_string()),
                 midi_input: None,
                 midi_output: None,
+                baseline: None,
             }
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -645,6 +777,117 @@ mod tests {
                 "--midi-input".to_string(),
                 "Keyboard".to_string(),
             ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_to_dir_merges_disjoint_field_changes() {
+        let dir = temp_dir("merge-disjoint");
+        std::fs::write(
+            dir.join(DEVICE_SETTINGS_FILE),
+            r#"{"input": "Mic", "output": "Speakers"}"#,
+        )
+        .unwrap();
+        let mut loaded = DeviceSettings::load_from_dir(&dir);
+        // Another instance changes the output and adds a MIDI input
+        // after this value was loaded.
+        std::fs::write(
+            dir.join(DEVICE_SETTINGS_FILE),
+            r#"{"input": "Mic", "output": "Other", "midi_input": "Keyboard"}"#,
+        )
+        .unwrap();
+        loaded.input = Some("Mic2".to_string());
+        loaded.save_to_dir(&dir).unwrap();
+        assert_eq!(
+            DeviceSettings::load_from_dir(&dir),
+            DeviceSettings {
+                input: Some("Mic2".to_string()),
+                output: Some("Other".to_string()),
+                midi_input: Some("Keyboard".to_string()),
+                midi_output: None,
+                baseline: None,
+            }
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_to_dir_explicit_clear_wins_over_unchanged_disk() {
+        let dir = temp_dir("merge-clear");
+        std::fs::write(
+            dir.join(DEVICE_SETTINGS_FILE),
+            r#"{"input": "Mic", "output": "Speakers"}"#,
+        )
+        .unwrap();
+        let mut loaded = DeviceSettings::load_from_dir(&dir);
+        // Clearing a field is a writer change, not a stale default:
+        // the merged file must not keep the old device.
+        loaded.output = None;
+        loaded.save_to_dir(&dir).unwrap();
+        assert_eq!(
+            DeviceSettings::load_from_dir(&dir),
+            DeviceSettings {
+                input: Some("Mic".to_string()),
+                output: None,
+                midi_input: None,
+                midi_output: None,
+                baseline: None,
+            }
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_to_dir_external_clear_is_not_resurrected() {
+        let dir = temp_dir("merge-ext-clear");
+        full_settings().save_to_dir(&dir).unwrap();
+        let mut loaded = DeviceSettings::load_from_dir(&dir);
+        // Another instance clears everything but the input.
+        std::fs::write(dir.join(DEVICE_SETTINGS_FILE), r#"{"input": "Mic"}"#).unwrap();
+        loaded.midi_output = Some("Synth2".to_string());
+        loaded.save_to_dir(&dir).unwrap();
+        assert_eq!(
+            DeviceSettings::load_from_dir(&dir),
+            DeviceSettings {
+                input: Some("Mic".to_string()),
+                output: None,
+                midi_input: None,
+                midi_output: Some("Synth2".to_string()),
+                baseline: None,
+            }
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_to_dir_without_baseline_writes_wholesale() {
+        let dir = temp_dir("merge-wholesale");
+        full_settings().save_to_dir(&dir).unwrap();
+        // A freshly constructed value never read the file, so it
+        // carries no baseline and saves wholesale, as before.
+        let fresh = DeviceSettings {
+            input: Some("Mic2".to_string()),
+            output: None,
+            midi_input: None,
+            midi_output: None,
+            baseline: None,
+        };
+        fresh.save_to_dir(&dir).unwrap();
+        assert_eq!(DeviceSettings::load_from_dir(&dir), fresh);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_to_dir_loaded_value_rewrites_identical_bytes() {
+        let dir = temp_dir("merge-noop");
+        full_settings().save_to_dir(&dir).unwrap();
+        let before = std::fs::read(dir.join(DEVICE_SETTINGS_FILE)).unwrap();
+        let loaded = DeviceSettings::load_from_dir(&dir);
+        loaded.save_to_dir(&dir).unwrap();
+        assert_eq!(
+            std::fs::read(dir.join(DEVICE_SETTINGS_FILE)).unwrap(),
+            before
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

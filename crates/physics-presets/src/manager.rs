@@ -52,10 +52,12 @@ fn sanitize_preset_filename(id: &str) -> String {
 /// directory, then a rename, so a concurrent reader never sees a torn
 /// file and a crash mid-write leaves the previous contents intact.
 /// Temp names carry the pid plus a per-process counter so concurrent
-/// writers in one process never share a temp file. This is
-/// last-writer-wins: there is no locking and no re-read/merge, so two
-/// instances writing the same sidecar can still clobber each other
-/// (wholesale, never torn).
+/// writers in one process never share a temp file. Atomicity is not
+/// merging: the aggregate sidecars (`favorites.json`,
+/// `midi_mappings.json`, `preset_tags.json`) re-read and three-way-merge
+/// before calling this (see [`merge_sidecar_maps`]); per-preset
+/// `<id>.json` files and exports are single documents and are written
+/// wholesale here, last-writer-wins per file.
 pub(crate) fn write_sidecar_atomic(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
     let file_name = path.file_name().ok_or_else(|| {
@@ -121,6 +123,256 @@ fn read_sidecar_bytes(path: &Path) -> Option<Vec<u8>> {
     }
 }
 
+/// Sidecar merge semantics (P2-12), shared by the three aggregate
+/// sidecars in this file and, per field, by `device_settings.json`.
+///
+/// Every aggregate sidecar is a keyed collection:
+///
+/// * `favorites.json`: set of preset IDs (key = ID, value = starred).
+/// * `midi_mappings.json`: CC number -> parameter id.
+/// * `preset_tags.json`: preset ID -> tag list (one value per ID; the
+///   writer's whole list wins for an ID it touched, tags are not
+///   merged element-wise within a list).
+///
+/// A save re-reads the file immediately before writing and merges
+/// three states per key: `baseline` (last state this instance read
+/// from disk, or wrote), `disk` (the fresh re-read), and `memory`
+/// (this instance's current state):
+///
+/// * disk unchanged since baseline, memory changed: the writer's
+///   value wins, including a deletion (present in baseline, absent
+///   in memory).
+/// * memory unchanged since baseline, disk changed: the disk value
+///   wins, including an external deletion (absent in disk) — a save
+///   never resurrects a key another instance deleted.
+/// * neither changed: the (identical) value.
+/// * both changed the same key: the writer's value wins
+///   (per-key last-writer-wins). This is the only case that can
+///   silently drop the other side's change to that same key, and
+///   the only case where a writer deletion can drop a concurrent
+///   external edit to that key, or a writer edit can resurrect a
+///   key deleted concurrently. Disjoint keys never conflict, so
+///   sequential interleaved writes from two instances preserve
+///   both instances' keys.
+///
+/// There is deliberately no tombstone format and no file locking:
+/// a deletion is expressed by absence relative to the baseline,
+/// which is expressible without changing the on-disk format, and
+/// two writes executing truly simultaneously can still interleave
+/// their re-read/write pairs (the clobber window shrinks from
+/// "the whole file" to "the same key in the same instant"). A
+/// malformed or unreadable re-read cannot be merged, so the save
+/// falls back to writing the in-memory state wholesale (after the
+/// malformed bytes are backed up, as on load).
+fn merge_sidecar_maps<K, V>(
+    baseline: &std::collections::HashMap<K, V>,
+    disk: &std::collections::HashMap<K, V>,
+    memory: &std::collections::HashMap<K, V>,
+) -> std::collections::HashMap<K, V>
+where
+    K: Eq + std::hash::Hash + Clone,
+    V: Eq + Clone,
+{
+    let mut merged = std::collections::HashMap::new();
+    for key in baseline.keys().chain(disk.keys()).chain(memory.keys()) {
+        if merged.contains_key(key) {
+            continue;
+        }
+        let base = baseline.get(key);
+        let on_disk = disk.get(key);
+        let in_memory = memory.get(key);
+        // Only the writer changed (or neither did): writer wins.
+        // Only disk changed: disk wins. Both changed: writer wins.
+        let value = if on_disk == base {
+            in_memory.cloned()
+        } else if in_memory == base {
+            on_disk.cloned()
+        } else {
+            in_memory.cloned()
+        };
+        if let Some(value) = value {
+            merged.insert(key.clone(), value);
+        }
+    }
+    merged
+}
+
+/// Set form of [`merge_sidecar_maps`]: a favorite is a key whose
+/// value is "starred".
+fn merge_sidecar_sets(
+    baseline: &std::collections::HashSet<String>,
+    disk: &std::collections::HashSet<String>,
+    memory: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<String> {
+    let to_map =
+        |set: &std::collections::HashSet<String>| set.iter().map(|id| (id.clone(), ())).collect();
+    merge_sidecar_maps(&to_map(baseline), &to_map(disk), &to_map(memory))
+        .into_keys()
+        .collect()
+}
+
+/// Leniently parse a favorites sidecar's raw bytes, with the same
+/// rules as [`PresetManager::load_favorites`]: non-string entries are
+/// dropped with a diagnostic and only IDs of known presets are kept.
+/// Returns `None` when the whole file is malformed (the raw bytes are
+/// backed up by [`backup_corrupt_sidecar`]).
+fn parse_favorites_sidecar(
+    path: &Path,
+    raw: &[u8],
+    presets: &[Preset],
+) -> Option<std::collections::HashSet<String>> {
+    let Ok(content) = std::str::from_utf8(raw) else {
+        backup_corrupt_sidecar(path, raw);
+        return None;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+        backup_corrupt_sidecar(path, raw);
+        return None;
+    };
+    let Some(entries) = value.as_array() else {
+        backup_corrupt_sidecar(path, raw);
+        return None;
+    };
+    Some(
+        entries
+            .iter()
+            .filter_map(|entry| match entry {
+                serde_json::Value::String(id) => Some(id.clone()),
+                other => {
+                    eprintln!(
+                        "physics-presets: dropping non-string favorite entry {other} in {}",
+                        path.display()
+                    );
+                    None
+                }
+            })
+            .filter(|id| presets.iter().any(|p| &p.id == id))
+            .collect(),
+    )
+}
+
+/// Leniently parse a MIDI mappings sidecar's raw bytes, with the same
+/// rules as [`PresetManager::load_midi_mappings`]: non-`u8` keys and
+/// non-string values are dropped with a diagnostic, and excluded CCs
+/// are filtered. Returns `None` when the whole file is malformed.
+fn parse_midi_mappings_sidecar(
+    path: &Path,
+    raw: &[u8],
+    _presets: &[Preset],
+) -> Option<std::collections::HashMap<u8, String>> {
+    let Ok(content) = std::str::from_utf8(raw) else {
+        backup_corrupt_sidecar(path, raw);
+        return None;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+        backup_corrupt_sidecar(path, raw);
+        return None;
+    };
+    let Some(entries) = value.as_object() else {
+        backup_corrupt_sidecar(path, raw);
+        return None;
+    };
+    let mut mappings = std::collections::HashMap::new();
+    for (key, entry) in entries {
+        let Ok(cc) = key.parse::<u8>() else {
+            eprintln!(
+                "physics-presets: dropping MIDI mapping with non-u8 key {key:?} in {}",
+                path.display()
+            );
+            continue;
+        };
+        let serde_json::Value::String(param_id) = entry else {
+            eprintln!(
+                "physics-presets: dropping MIDI mapping for CC {cc} with non-string value {entry} in {}",
+                path.display()
+            );
+            continue;
+        };
+        if !MIDI_LEARN_EXCLUDED_CCS.contains(&cc) {
+            mappings.insert(cc, param_id.clone());
+        }
+    }
+    Some(mappings)
+}
+
+/// Leniently parse a tags sidecar's raw bytes, with the same rules as
+/// [`PresetManager::load_tags`]: entries for unknown presets and
+/// non-array values are dropped, non-string elements are dropped
+/// while valid strings are kept, and lists are normalized. Returns
+/// `None` when the whole file is malformed.
+fn parse_tags_sidecar(
+    path: &Path,
+    raw: &[u8],
+    presets: &[Preset],
+) -> Option<std::collections::HashMap<String, Vec<String>>> {
+    let Ok(content) = std::str::from_utf8(raw) else {
+        backup_corrupt_sidecar(path, raw);
+        return None;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+        backup_corrupt_sidecar(path, raw);
+        return None;
+    };
+    let Some(entries) = value.as_object() else {
+        backup_corrupt_sidecar(path, raw);
+        return None;
+    };
+    let mut tags = std::collections::HashMap::new();
+    for (id, entry) in entries {
+        if !presets.iter().any(|p| &p.id == id) {
+            continue;
+        }
+        let Some(list) = entry.as_array() else {
+            eprintln!(
+                "physics-presets: dropping non-array tags entry for {id:?} in {}",
+                path.display()
+            );
+            continue;
+        };
+        let kept: Vec<String> = list
+            .iter()
+            .filter_map(|item| match item {
+                serde_json::Value::String(tag) => Some(tag.clone()),
+                other => {
+                    eprintln!(
+                        "physics-presets: dropping non-string tag {other} for {id:?} in {}",
+                        path.display()
+                    );
+                    None
+                }
+            })
+            .collect();
+        let kept = normalize_tags(kept);
+        if !kept.is_empty() {
+            tags.insert(id.clone(), kept);
+        }
+    }
+    Some(tags)
+}
+
+/// Re-read a sidecar from disk for a save-time merge. A missing file
+/// means "empty on disk" (`Some(empty)`); a malformed or otherwise
+/// unreadable file yields `None`, telling the caller to fall back to
+/// a wholesale write of the in-memory state.
+fn reread_sidecar<T>(
+    path: &Path,
+    parse: fn(&Path, &[u8], &[Preset]) -> Option<T>,
+    presets: &[Preset],
+    empty: T,
+) -> Option<T> {
+    match fs::read(path) {
+        Ok(raw) => parse(path, &raw, presets),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Some(empty),
+        Err(err) => {
+            eprintln!(
+                "physics-presets: failed to re-read sidecar {} before save: {err}",
+                path.display()
+            );
+            None
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PresetManager {
     instrument: String,
@@ -139,6 +391,15 @@ pub struct PresetManager {
     /// presets can be tagged without touching their embedded definitions,
     /// and tagging never migrates the preset format.
     tags: std::collections::HashMap<String, Vec<String>>,
+    /// Last state each sidecar was known to have on disk (from the most
+    /// recent load, or from the last successful merged save). The
+    /// three-way merge in the `save_*` methods compares this baseline
+    /// against a fresh re-read and the in-memory state, so a save only
+    /// overwrites keys this instance changed and never drops keys
+    /// another instance added. See [`merge_sidecar_maps`].
+    favorites_baseline: std::collections::HashSet<String>,
+    midi_mappings_baseline: std::collections::HashMap<u8, String>,
+    tags_baseline: std::collections::HashMap<String, Vec<String>>,
 }
 
 impl PresetManager {
@@ -159,6 +420,9 @@ impl PresetManager {
             favorites: std::collections::HashSet::new(),
             midi_mappings: std::collections::HashMap::new(),
             tags: std::collections::HashMap::new(),
+            favorites_baseline: std::collections::HashSet::new(),
+            midi_mappings_baseline: std::collections::HashMap::new(),
+            tags_baseline: std::collections::HashMap::new(),
         };
 
         // Attempt to load existing user presets from disk
@@ -192,6 +456,9 @@ impl PresetManager {
             favorites: std::collections::HashSet::new(),
             midi_mappings: std::collections::HashMap::new(),
             tags: std::collections::HashMap::new(),
+            favorites_baseline: std::collections::HashSet::new(),
+            midi_mappings_baseline: std::collections::HashMap::new(),
+            tags_baseline: std::collections::HashMap::new(),
         };
         if let Err(err) = mgr.load_user_presets() {
             eprintln!(
@@ -243,46 +510,53 @@ impl PresetManager {
     pub fn load_favorites(&mut self) {
         let path = self.favorites_file();
         let Some(raw) = read_sidecar_bytes(&path) else {
+            // No file on disk: the baseline is empty; the in-memory
+            // state is left untouched, as before.
+            self.favorites_baseline = std::collections::HashSet::new();
             return;
         };
-        let Ok(content) = std::str::from_utf8(&raw) else {
-            backup_corrupt_sidecar(&path, &raw);
-            return;
-        };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
-            backup_corrupt_sidecar(&path, &raw);
-            return;
-        };
-        let Some(entries) = value.as_array() else {
-            backup_corrupt_sidecar(&path, &raw);
-            return;
-        };
-        self.favorites = entries
-            .iter()
-            .filter_map(|entry| match entry {
-                serde_json::Value::String(id) => Some(id.clone()),
-                other => {
-                    eprintln!(
-                        "physics-presets: dropping non-string favorite entry {other} in {}",
-                        path.display()
-                    );
-                    None
-                }
-            })
-            .filter(|id| self.presets.iter().any(|p| &p.id == id))
-            .collect();
+        match parse_favorites_sidecar(&path, &raw, &self.presets) {
+            Some(favorites) => {
+                self.favorites_baseline = favorites.clone();
+                self.favorites = favorites;
+            }
+            // Malformed: backed up by the parser; the in-memory state
+            // is left untouched, as before, and the baseline is empty
+            // (a later save falls back to a wholesale write).
+            None => self.favorites_baseline = std::collections::HashSet::new(),
+        }
     }
 
-    /// Persist the current starred IDs to disk.
-    pub fn save_favorites(&self) -> Result<(), std::io::Error> {
+    /// Persist the current starred IDs to disk, merging with any
+    /// keys another instance (or a hand edit) added to the file
+    /// since this instance loaded it; see [`merge_sidecar_maps`].
+    /// On success the in-memory state and the baseline become the
+    /// merged state just written. Takes `&mut self` so the baseline
+    /// can be updated; callers already hold `&mut` (see
+    /// [`Self::toggle_favorite`]).
+    pub fn save_favorites(&mut self) -> Result<(), std::io::Error> {
         if !self.user_presets_dir.exists() {
             fs::create_dir_all(&self.user_presets_dir)?;
         }
-        let mut ids: Vec<&String> = self.favorites.iter().collect();
+        let path = self.favorites_file();
+        let merged = match reread_sidecar(
+            &path,
+            parse_favorites_sidecar,
+            &self.presets,
+            std::collections::HashSet::new(),
+        ) {
+            Some(disk) => merge_sidecar_sets(&self.favorites_baseline, &disk, &self.favorites),
+            // Malformed/unreadable re-read: wholesale write.
+            None => self.favorites.clone(),
+        };
+        let mut ids: Vec<&String> = merged.iter().collect();
         ids.sort();
         let json = serde_json::to_string_pretty(&ids)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        write_sidecar_atomic(&self.favorites_file(), json.as_bytes())
+        write_sidecar_atomic(&path, json.as_bytes())?;
+        self.favorites_baseline = merged.clone();
+        self.favorites = merged;
+        Ok(())
     }
 
     /// Toggle the starred state of a preset and persist it. Returns the new
@@ -326,56 +600,46 @@ impl PresetManager {
     pub fn load_midi_mappings(&mut self) {
         let path = self.midi_mappings_file();
         let Some(raw) = read_sidecar_bytes(&path) else {
+            self.midi_mappings_baseline = std::collections::HashMap::new();
             return;
         };
-        let Ok(content) = std::str::from_utf8(&raw) else {
-            backup_corrupt_sidecar(&path, &raw);
-            return;
-        };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
-            backup_corrupt_sidecar(&path, &raw);
-            return;
-        };
-        let Some(entries) = value.as_object() else {
-            backup_corrupt_sidecar(&path, &raw);
-            return;
-        };
-        let mut mappings = std::collections::HashMap::new();
-        for (key, entry) in entries {
-            let Ok(cc) = key.parse::<u8>() else {
-                eprintln!(
-                    "physics-presets: dropping MIDI mapping with non-u8 key {key:?} in {}",
-                    path.display()
-                );
-                continue;
-            };
-            let serde_json::Value::String(param_id) = entry else {
-                eprintln!(
-                    "physics-presets: dropping MIDI mapping for CC {cc} with non-string value {entry} in {}",
-                    path.display()
-                );
-                continue;
-            };
-            if !MIDI_LEARN_EXCLUDED_CCS.contains(&cc) {
-                mappings.insert(cc, param_id.clone());
+        match parse_midi_mappings_sidecar(&path, &raw, &self.presets) {
+            Some(mappings) => {
+                self.midi_mappings_baseline = mappings.clone();
+                self.midi_mappings = mappings;
             }
+            None => self.midi_mappings_baseline = std::collections::HashMap::new(),
         }
-        self.midi_mappings = mappings;
     }
 
-    /// Persist the current MIDI Learn bindings to disk.
-    pub fn save_midi_mappings(&self) -> Result<(), std::io::Error> {
+    /// Persist the current MIDI Learn bindings to disk, merging with
+    /// any bindings another instance added since this instance loaded
+    /// the file; see [`merge_sidecar_maps`]. On success the in-memory
+    /// state and the baseline become the merged state just written.
+    pub fn save_midi_mappings(&mut self) -> Result<(), std::io::Error> {
         if !self.user_presets_dir.exists() {
             fs::create_dir_all(&self.user_presets_dir)?;
         }
-        let sorted: std::collections::BTreeMap<u8, &String> = self
-            .midi_mappings
-            .iter()
-            .map(|(cc, id)| (*cc, id))
-            .collect();
+        let path = self.midi_mappings_file();
+        let merged = match reread_sidecar(
+            &path,
+            parse_midi_mappings_sidecar,
+            &self.presets,
+            std::collections::HashMap::new(),
+        ) {
+            Some(disk) => {
+                merge_sidecar_maps(&self.midi_mappings_baseline, &disk, &self.midi_mappings)
+            }
+            None => self.midi_mappings.clone(),
+        };
+        let sorted: std::collections::BTreeMap<u8, &String> =
+            merged.iter().map(|(cc, id)| (*cc, id)).collect();
         let json = serde_json::to_string_pretty(&sorted)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        write_sidecar_atomic(&self.midi_mappings_file(), json.as_bytes())
+        write_sidecar_atomic(&path, json.as_bytes())?;
+        self.midi_mappings_baseline = merged.clone();
+        self.midi_mappings = merged;
+        Ok(())
     }
 
     /// Bind a controller CC to a parameter id, exclusively: any previous
@@ -471,62 +735,43 @@ impl PresetManager {
     pub fn load_tags(&mut self) {
         let path = self.tags_file();
         let Some(raw) = read_sidecar_bytes(&path) else {
+            self.tags_baseline = std::collections::HashMap::new();
             return;
         };
-        let Ok(content) = std::str::from_utf8(&raw) else {
-            backup_corrupt_sidecar(&path, &raw);
-            return;
-        };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
-            backup_corrupt_sidecar(&path, &raw);
-            return;
-        };
-        let Some(entries) = value.as_object() else {
-            backup_corrupt_sidecar(&path, &raw);
-            return;
-        };
-        let mut tags = std::collections::HashMap::new();
-        for (id, entry) in entries {
-            if !self.presets.iter().any(|p| &p.id == id) {
-                continue;
+        match parse_tags_sidecar(&path, &raw, &self.presets) {
+            Some(tags) => {
+                self.tags_baseline = tags.clone();
+                self.tags = tags;
             }
-            let Some(list) = entry.as_array() else {
-                eprintln!(
-                    "physics-presets: dropping non-array tags entry for {id:?} in {}",
-                    path.display()
-                );
-                continue;
-            };
-            let kept: Vec<String> = list
-                .iter()
-                .filter_map(|item| match item {
-                    serde_json::Value::String(tag) => Some(tag.clone()),
-                    other => {
-                        eprintln!(
-                            "physics-presets: dropping non-string tag {other} for {id:?} in {}",
-                            path.display()
-                        );
-                        None
-                    }
-                })
-                .collect();
-            let kept = normalize_tags(kept);
-            if !kept.is_empty() {
-                tags.insert(id.clone(), kept);
-            }
+            None => self.tags_baseline = std::collections::HashMap::new(),
         }
-        self.tags = tags;
     }
 
-    /// Persist the current tags to disk.
-    pub fn save_tags(&self) -> Result<(), std::io::Error> {
+    /// Persist the current tags to disk, merging with any tags
+    /// another instance added since this instance loaded the file;
+    /// see [`merge_sidecar_maps`]. On success the in-memory state
+    /// and the baseline become the merged state just written.
+    pub fn save_tags(&mut self) -> Result<(), std::io::Error> {
         if !self.user_presets_dir.exists() {
             fs::create_dir_all(&self.user_presets_dir)?;
         }
-        let sorted: std::collections::BTreeMap<&String, &Vec<String>> = self.tags.iter().collect();
+        let path = self.tags_file();
+        let merged = match reread_sidecar(
+            &path,
+            parse_tags_sidecar,
+            &self.presets,
+            std::collections::HashMap::new(),
+        ) {
+            Some(disk) => merge_sidecar_maps(&self.tags_baseline, &disk, &self.tags),
+            None => self.tags.clone(),
+        };
+        let sorted: std::collections::BTreeMap<&String, &Vec<String>> = merged.iter().collect();
         let json = serde_json::to_string_pretty(&sorted)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        write_sidecar_atomic(&self.tags_file(), json.as_bytes())
+        write_sidecar_atomic(&path, json.as_bytes())?;
+        self.tags_baseline = merged.clone();
+        self.tags = merged;
+        Ok(())
     }
 
     /// Replace the tags of a preset and persist them. Returns whether the
@@ -1243,5 +1488,155 @@ mod tests {
             fs::read_to_string(mgr3.midi_mappings_file()).unwrap(),
             before
         );
+    }
+
+    #[test]
+    fn sidecar_merge_two_stale_instances_preserve_disjoint_keys() {
+        let guard = TempDirGuard::new("merge-two");
+        // Both instances load before either writes: each is stale
+        // with respect to the other's saves.
+        let mut a = test_manager(&guard.0);
+        let mut b = test_manager(&guard.0);
+        assert!(a.toggle_favorite("a").unwrap());
+        assert!(b.toggle_favorite("b").unwrap());
+        assert!(a.set_tags("a", vec!["warm".to_string()]).unwrap());
+        assert!(b.set_tags("b", vec!["bright".to_string()]).unwrap());
+        assert!(a.bind_midi_cc(7, "tone").unwrap());
+        assert!(b.bind_midi_cc(8, "gain").unwrap());
+        // Neither instance's save clobbered the other's keys.
+        let fresh = PresetManager::with_custom_dir("piano", factory_pair(), guard.0.clone());
+        assert!(fresh.is_favorite("a"));
+        assert!(fresh.is_favorite("b"));
+        assert_eq!(fresh.tags_for("a"), vec!["warm"]);
+        assert_eq!(fresh.tags_for("b"), vec!["bright"]);
+        assert_eq!(fresh.midi_mapping(7), Some("tone"));
+        assert_eq!(fresh.midi_mapping(8), Some("gain"));
+    }
+
+    #[test]
+    fn sidecar_merge_preserves_external_modification() {
+        let guard = TempDirGuard::new("merge-external");
+        let mut mgr = test_manager(&guard.0);
+        // A hand edit / another writer's save lands after load.
+        fs::write(mgr.favorites_file(), r#"["b"]"#).unwrap();
+        fs::write(mgr.midi_mappings_file(), r#"{"8": "gain"}"#).unwrap();
+        fs::write(mgr.tags_file(), r#"{"b": ["bright"]}"#).unwrap();
+        assert!(mgr.toggle_favorite("a").unwrap());
+        assert!(mgr.set_tags("a", vec!["warm".to_string()]).unwrap());
+        assert!(mgr.bind_midi_cc(7, "tone").unwrap());
+        let fresh = PresetManager::with_custom_dir("piano", factory_pair(), guard.0.clone());
+        assert!(fresh.is_favorite("a"));
+        assert!(fresh.is_favorite("b"));
+        assert_eq!(fresh.tags_for("a"), vec!["warm"]);
+        assert_eq!(fresh.tags_for("b"), vec!["bright"]);
+        assert_eq!(fresh.midi_mapping(7), Some("tone"));
+        assert_eq!(fresh.midi_mapping(8), Some("gain"));
+    }
+
+    #[test]
+    fn sidecar_merge_deletion_wins_over_unchanged_disk_and_keeps_disjoint_keys() {
+        let guard = TempDirGuard::new("merge-delete");
+        let mut a = test_manager(&guard.0);
+        assert!(a.toggle_favorite("a").unwrap());
+        assert!(a.bind_midi_cc(7, "tone").unwrap());
+        assert!(a.set_tags("a", vec!["warm".to_string()]).unwrap());
+        // B loads A's state, so B still holds every key A deletes.
+        let mut b = PresetManager::with_custom_dir("piano", factory_pair(), guard.0.clone());
+        // Toggling off returns the new (unstarred) state: false.
+        assert_eq!(a.toggle_favorite("a").unwrap(), false);
+        assert!(a.unbind_midi_cc(7).unwrap());
+        assert!(a.set_tags("a", vec![]).unwrap());
+        // B adds only disjoint keys; its save must not resurrect
+        // A's deletions.
+        assert!(b.toggle_favorite("b").unwrap());
+        assert!(b.bind_midi_cc(8, "gain").unwrap());
+        assert!(b.set_tags("b", vec!["bright".to_string()]).unwrap());
+        let fresh = PresetManager::with_custom_dir("piano", factory_pair(), guard.0.clone());
+        assert!(!fresh.is_favorite("a"));
+        assert!(fresh.is_favorite("b"));
+        assert_eq!(fresh.midi_mapping(7), None);
+        assert_eq!(fresh.midi_mapping(8), Some("gain"));
+        assert!(fresh.tags_for("a").is_empty());
+        assert_eq!(fresh.tags_for("b"), vec!["bright"]);
+    }
+
+    #[test]
+    fn sidecar_merge_external_deletion_is_not_resurrected() {
+        let guard = TempDirGuard::new("merge-ext-delete");
+        let mut mgr = test_manager(&guard.0);
+        assert!(mgr.toggle_favorite("a").unwrap());
+        assert!(mgr.bind_midi_cc(7, "tone").unwrap());
+        assert!(mgr.set_tags("a", vec!["warm".to_string()]).unwrap());
+        // Another writer deletes everything; this instance then
+        // adds disjoint keys. Its save must not bring back the
+        // deleted keys.
+        fs::write(mgr.favorites_file(), "[]").unwrap();
+        fs::write(mgr.midi_mappings_file(), "{}").unwrap();
+        fs::write(mgr.tags_file(), "{}").unwrap();
+        assert!(mgr.toggle_favorite("b").unwrap());
+        assert!(mgr.bind_midi_cc(8, "gain").unwrap());
+        assert!(mgr.set_tags("b", vec!["bright".to_string()]).unwrap());
+        let fresh = PresetManager::with_custom_dir("piano", factory_pair(), guard.0.clone());
+        assert!(!fresh.is_favorite("a"));
+        assert!(fresh.is_favorite("b"));
+        assert_eq!(fresh.midi_mapping(7), None);
+        assert_eq!(fresh.midi_mapping(8), Some("gain"));
+        assert!(fresh.tags_for("a").is_empty());
+        assert_eq!(fresh.tags_for("b"), vec!["bright"]);
+    }
+
+    #[test]
+    fn sidecar_merge_same_key_conflict_resolves_writer_wins() {
+        let guard = TempDirGuard::new("merge-conflict");
+        let mut a = test_manager(&guard.0);
+        assert!(a.bind_midi_cc(7, "tone").unwrap());
+        assert!(a.set_tags("a", vec!["warm".to_string()]).unwrap());
+        let mut b = PresetManager::with_custom_dir("piano", factory_pair(), guard.0.clone());
+        // B changes the same keys A is about to change.
+        assert!(b.bind_midi_cc(7, "gain").unwrap());
+        assert!(b.set_tags("a", vec!["bright".to_string()]).unwrap());
+        // A's deletion of CC 7 and edit of A's tags both win over
+        // B's concurrent edits to those same keys (documented
+        // per-key last-writer-wins on conflict).
+        assert!(a.unbind_midi_cc(7).unwrap());
+        assert!(a.set_tags("a", vec!["crisp".to_string()]).unwrap());
+        let fresh = PresetManager::with_custom_dir("piano", factory_pair(), guard.0.clone());
+        assert_eq!(fresh.midi_mapping(7), None);
+        assert_eq!(fresh.tags_for("a"), vec!["crisp"]);
+    }
+
+    #[test]
+    fn sidecar_save_with_no_external_change_rewrites_identical_bytes() {
+        let guard = TempDirGuard::new("merge-noop");
+        let mut mgr = test_manager(&guard.0);
+        assert!(mgr.toggle_favorite("a").unwrap());
+        assert!(mgr.set_tags("a", vec!["warm".to_string()]).unwrap());
+        assert!(mgr.bind_midi_cc(7, "tone").unwrap());
+        let fav_before = fs::read(mgr.favorites_file()).unwrap();
+        let tags_before = fs::read(mgr.tags_file()).unwrap();
+        let midi_before = fs::read(mgr.midi_mappings_file()).unwrap();
+        mgr.save_favorites().unwrap();
+        mgr.save_tags().unwrap();
+        mgr.save_midi_mappings().unwrap();
+        assert_eq!(fs::read(mgr.favorites_file()).unwrap(), fav_before);
+        assert_eq!(fs::read(mgr.tags_file()).unwrap(), tags_before);
+        assert_eq!(fs::read(mgr.midi_mappings_file()).unwrap(), midi_before);
+    }
+
+    #[test]
+    fn sidecar_merge_malformed_reread_falls_back_to_wholesale_write() {
+        let guard = TempDirGuard::new("merge-malformed");
+        let mut mgr = test_manager(&guard.0);
+        assert!(mgr.toggle_favorite("a").unwrap());
+        let raw = b"not json at all";
+        fs::write(mgr.favorites_file(), raw).unwrap();
+        // The re-read cannot be merged, so the save writes the
+        // in-memory state wholesale and backs the corrupt bytes up.
+        assert!(mgr.toggle_favorite("b").unwrap());
+        let backup = guard.0.join("favorites.json.corrupt");
+        assert_eq!(fs::read(&backup).unwrap(), raw);
+        let ids: Vec<String> =
+            serde_json::from_str(&fs::read_to_string(mgr.favorites_file()).unwrap()).unwrap();
+        assert_eq!(ids, vec!["a", "b"]);
     }
 }
