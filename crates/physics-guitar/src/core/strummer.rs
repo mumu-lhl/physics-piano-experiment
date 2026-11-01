@@ -52,6 +52,21 @@ impl SmartStrummer {
         self.strum_speed_ms = ms.clamp(0.0, 80.0);
     }
 
+    /// Clears all sequencing state (transport stop / seek /
+    /// restart): queued plucks, the chord-accumulation buffer and
+    /// window, and the Auto-alternation memory, so the next Auto
+    /// strum starts with a down-stroke again. Playing settings are
+    /// preserved: `strum_speed_ms`, `direction` and `sample_rate`
+    /// are configuration, not state, and the plugin re-applies the
+    /// speed every block. Allocation-free: the queues are cleared
+    /// in place, keeping their capacity.
+    pub fn reset(&mut self) {
+        self.pending_plucks.clear();
+        self.accum_buffer.clear();
+        self.accum_timer = 0;
+        self.last_direction_was_down = false;
+    }
+
     /// Receives an individual note event (e.g. from MIDI Note On).
     /// If strumming is disabled (speed <= 1ms), it triggers immediately.
     /// Otherwise, aggregates notes arriving within ~6ms into a single chord strum.
@@ -248,5 +263,34 @@ mod tests {
             .pending_plucks
             .iter()
             .all(|p| p.delay_samples == 0));
+    }
+
+    #[test]
+    fn reset_clears_queues_and_restarts_auto_alternation() {
+        let mut strummer = SmartStrummer::new(44100.0);
+        strummer.direction = StrumDirection::Auto;
+        strummer.trigger_chord(&c_major_notes());
+        assert_eq!(string_order(&strummer.pending_plucks), vec![4, 3, 2, 1, 0]);
+        strummer.pending_plucks.clear();
+        strummer.trigger_chord(&c_major_notes());
+        assert_eq!(string_order(&strummer.pending_plucks), vec![0, 1, 2, 3, 4]);
+
+        // A queued accumulation must be dropped too: a note
+        // accumulated just before the reset must not fire after it.
+        strummer.trigger_note(0, 0, 0.9);
+        assert!(!strummer.accum_buffer.is_empty());
+        assert_ne!(strummer.accum_timer, 0);
+        let speed_before = strummer.strum_speed_ms;
+        strummer.reset();
+        assert!(strummer.pending_plucks.is_empty());
+        assert!(strummer.accum_buffer.is_empty());
+        assert_eq!(strummer.accum_timer, 0);
+        // Settings survive the reset; only sequencing state clears.
+        assert_eq!(strummer.strum_speed_ms, speed_before);
+        assert_eq!(strummer.direction, StrumDirection::Auto);
+
+        // The Auto alternation restarts at a down-stroke.
+        strummer.trigger_chord(&c_major_notes());
+        assert_eq!(string_order(&strummer.pending_plucks), vec![4, 3, 2, 1, 0]);
     }
 }

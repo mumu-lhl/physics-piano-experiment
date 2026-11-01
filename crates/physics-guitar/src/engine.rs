@@ -17,6 +17,12 @@ const ELECTRIC_OUTPUT_TRIM: f64 = 0.5;
 const ACOUSTIC_OUTPUT_TRIM: f64 = 0.05;
 const SOFT_LIMIT_KNEE: f64 = 0.9;
 
+/// Engine output soft limiter (knee 0.9, asymptote 1.0). This is the
+/// engine's output contract, not just a plugin convenience: the CLI
+/// renderer (`bin/cli.rs`) writes `process_sample()` straight to a WAV
+/// with no second limiter, so removing it would let loud engine output
+/// hard-clip at quantization. The plugin adds its own post-FX limiter
+/// (see `nice_plugin.rs`); both are kept deliberately.
 #[inline]
 fn soft_limit(sample: f64) -> f64 {
     let magnitude = sample.abs();
@@ -79,6 +85,14 @@ pub struct GuitarEngine {
     pub sostenuto_strings: [bool; 6],
     pub sostenuto_deferred: [bool; 6],
 
+    // Sustain (damper) pedal, CC64: note-offs arriving while the pedal
+    // is down are deferred (see `sustain_deferred`) instead of
+    // releasing the string. Unlike sostenuto there is no at-pedal-down
+    // capture: every note-off while the pedal is down is held,
+    // including notes struck after the pedal went down.
+    pub sustain_down: bool,
+    pub sustain_deferred: [bool; 6],
+
     // Acoustic feedback closed-loop
     pub feedback_gain: f64,
     pub feedback_delay_ms: f64,
@@ -131,6 +145,8 @@ impl GuitarEngine {
             sostenuto_down: false,
             sostenuto_strings: [false; 6],
             sostenuto_deferred: [false; 6],
+            sustain_down: false,
+            sustain_deferred: [false; 6],
             feedback_gain: 0.0,
             feedback_delay_ms: 4.5,
             feedback_buffer: [0.0; 2048],
@@ -174,15 +190,15 @@ impl GuitarEngine {
             string.reset();
         }
         self.ready_plucks.clear();
-        self.strummer.pending_plucks.clear();
-        self.strummer.accum_buffer.clear();
-        self.strummer.accum_timer = 0;
+        self.strummer.reset();
         self.groove.reset();
         self.active_notes_on_string = [None; 6];
         self.global_pitch_bend = 0.0;
         self.sostenuto_down = false;
         self.sostenuto_strings = [false; 6];
         self.sostenuto_deferred = [false; 6];
+        self.sustain_down = false;
+        self.sustain_deferred = [false; 6];
         self.feedback_buffer = [0.0; 2048];
         self.feedback_write_idx = 0;
         self.amp_cab.reset();
@@ -346,7 +362,7 @@ impl GuitarEngine {
             }
         } else {
             for i in 0..6 {
-                if self.sostenuto_deferred[i] {
+                if self.sostenuto_deferred[i] && !self.sustain_deferred[i] {
                     self.strings[i].release();
                     self.active_notes_on_string[i] = None;
                 }
@@ -356,22 +372,58 @@ impl GuitarEngine {
         }
     }
 
-    /// A fresh strike on a string supersedes any sostenuto capture:
-    /// notes started after the pedal went down are not held by it.
-    /// Every excitation path (MIDI note-on, strummer drain, groove
-    /// pluck, GUI strike) must clear the capture for the struck
-    /// string, or pedal-up later releases a freshly sounding string.
+    /// Sustain pedal (CC64): pressing holds every note-off that
+    /// arrives while it is down; releasing applies the deferred
+    /// note-offs, except for strings still held by the sostenuto
+    /// pedal (whose own pedal-up releases them instead). No capture
+    /// is taken on press: deferral is decided at note-off time, so
+    /// notes struck after the pedal went down are held too.
+    pub fn set_sustain_pedal(&mut self, down: bool) {
+        if down == self.sustain_down {
+            return;
+        }
+        self.sustain_down = down;
+        if down {
+            self.sustain_deferred = [false; 6];
+        } else {
+            for i in 0..6 {
+                if self.sustain_deferred[i] {
+                    self.sustain_deferred[i] = false;
+                    if !self.sostenuto_deferred[i] {
+                        self.strings[i].release();
+                        self.active_notes_on_string[i] = None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// A fresh strike on a string supersedes any sostenuto capture
+    /// AND any sustain deferral: notes started after a pedal went
+    /// down are not held by it. Every excitation path (MIDI note-on,
+    /// strummer drain, groove pluck, GUI strike) must clear the
+    /// capture for the struck string, or pedal-up later releases a
+    /// freshly sounding string.
     pub(crate) fn clear_sostenuto_capture(&mut self, str_idx: usize) {
         self.sostenuto_strings[str_idx] = false;
         self.sostenuto_deferred[str_idx] = false;
+        self.sustain_deferred[str_idx] = false;
     }
 
     /// Release a string, deferring to the sostenuto pedal when it holds
-    /// this string: the note-off is remembered and applied on pedal-up.
+    /// this string and/or to the sustain pedal when it is down: the
+    /// note-off is remembered and applied on pedal-up.
     fn release_or_defer(&mut self, str_idx: usize) {
+        let mut deferred = false;
         if self.sostenuto_down && self.sostenuto_strings[str_idx] {
             self.sostenuto_deferred[str_idx] = true;
-        } else {
+            deferred = true;
+        }
+        if self.sustain_down {
+            self.sustain_deferred[str_idx] = true;
+            deferred = true;
+        }
+        if !deferred {
             self.strings[str_idx].release();
             self.active_notes_on_string[str_idx] = None;
         }
@@ -575,6 +627,7 @@ impl GuitarEngine {
                 // called here.
                 self.sostenuto_strings[p.string_index] = false;
                 self.sostenuto_deferred[p.string_index] = false;
+                self.sustain_deferred[p.string_index] = false;
                 let s = &mut self.strings[p.string_index];
                 s.set_fret(p.fret);
                 // Re-apply this string's own MPE bend when it has one:
@@ -836,6 +889,8 @@ mod tests {
         assert!(engine.strings.iter().any(|s| s.total_energy() > 0.0));
         engine.set_sostenuto_pedal(true);
         assert!(engine.sostenuto_down);
+        engine.set_sustain_pedal(true);
+        assert!(engine.sustain_down);
 
         // Advance the groove past its first step.
         engine.groove.set_pattern(GroovePattern::FolkStrum44);
@@ -872,6 +927,8 @@ mod tests {
         assert!(!engine.sostenuto_down);
         assert_eq!(engine.sostenuto_strings, [false; 6]);
         assert_eq!(engine.sostenuto_deferred, [false; 6]);
+        assert!(!engine.sustain_down);
+        assert_eq!(engine.sustain_deferred, [false; 6]);
         assert_eq!(engine.global_pitch_bend, 0.0);
         assert!(engine
             .strings
@@ -1002,6 +1059,215 @@ mod tests {
     }
 
     #[test]
+    fn sustain_pedal_defers_note_off_until_pedal_up() {
+        let mut engine = new_engine();
+        engine.strummer.set_strum_speed_ms(0.0);
+        engine.note_on(0, 64, 0.9);
+        let str_idx = engine
+            .active_notes_on_string
+            .iter()
+            .position(|&n| n == Some(64))
+            .expect("note allocated to a string");
+        for _ in 0..100 {
+            engine.process_sample();
+        }
+        assert!(engine.strings[str_idx].is_held);
+
+        engine.set_sustain_pedal(true);
+        engine.note_off(0, 64);
+        assert!(engine.sustain_deferred[str_idx]);
+        assert!(engine.strings[str_idx].is_held);
+        assert_eq!(engine.active_notes_on_string[str_idx], Some(64));
+        for _ in 0..100 {
+            engine.process_sample();
+        }
+        assert!(
+            engine.strings[str_idx].is_held && engine.strings[str_idx].total_energy() > 1e-6,
+            "string must keep sounding while the sustain pedal is down"
+        );
+
+        engine.set_sustain_pedal(false);
+        assert!(!engine.sustain_deferred[str_idx]);
+        assert!(!engine.strings[str_idx].is_held);
+        assert!(engine.strings[str_idx].is_releasing);
+        assert_eq!(engine.active_notes_on_string[str_idx], None);
+    }
+
+    #[test]
+    fn sustain_pedal_holds_notes_struck_after_pedal_down() {
+        // Unlike sostenuto (which captures only notes sounding when
+        // the pedal goes down), sustain holds note-offs for notes
+        // struck after the pedal went down too.
+        let mut engine = new_engine();
+        engine.strummer.set_strum_speed_ms(0.0);
+        engine.set_sustain_pedal(true);
+        engine.note_on(0, 64, 0.9);
+        let str_idx = engine
+            .active_notes_on_string
+            .iter()
+            .position(|&n| n == Some(64))
+            .expect("note allocated to a string");
+        for _ in 0..100 {
+            engine.process_sample();
+        }
+        engine.note_off(0, 64);
+        assert!(engine.sustain_deferred[str_idx]);
+        assert!(engine.strings[str_idx].is_held);
+        engine.set_sustain_pedal(false);
+        assert!(!engine.strings[str_idx].is_held);
+    }
+
+    #[test]
+    fn sustain_re_strike_supersedes_deferred_release() {
+        let mut engine = new_engine();
+        engine.strummer.set_strum_speed_ms(0.0);
+        engine.note_on(0, 64, 0.9);
+        let str_idx = engine
+            .active_notes_on_string
+            .iter()
+            .position(|&n| n == Some(64))
+            .expect("note allocated to a string");
+        for _ in 0..100 {
+            engine.process_sample();
+        }
+        engine.set_sustain_pedal(true);
+        engine.note_off(0, 64);
+        assert!(engine.sustain_deferred[str_idx]);
+
+        // Fresh strike wins: the deferred release is dropped.
+        engine.note_on(0, 64, 0.9);
+        assert!(!engine.sustain_deferred[str_idx]);
+        engine.set_sustain_pedal(false);
+        for _ in 0..100 {
+            engine.process_sample();
+        }
+        assert!(
+            engine.strings[str_idx].is_held,
+            "re-struck string was released on pedal-up"
+        );
+        assert_eq!(engine.active_notes_on_string[str_idx], Some(64));
+        assert!(engine.strings[str_idx].total_energy() > 1e-6);
+    }
+
+    #[test]
+    fn sustain_pedal_unused_leaves_note_off_unchanged() {
+        let mut engine = new_engine();
+        engine.strummer.set_strum_speed_ms(0.0);
+        engine.note_on(0, 64, 0.9);
+        let str_idx = engine
+            .active_notes_on_string
+            .iter()
+            .position(|&n| n == Some(64))
+            .expect("note allocated to a string");
+        for _ in 0..100 {
+            engine.process_sample();
+        }
+        // Pedal never touched: note-off releases immediately, and a
+        // pedal press/release with no notes sounding is a no-op.
+        engine.note_off(0, 64);
+        assert!(!engine.sustain_deferred[str_idx]);
+        assert!(!engine.strings[str_idx].is_held);
+        engine.set_sustain_pedal(true);
+        engine.set_sustain_pedal(false);
+        assert!(!engine.sustain_down);
+        assert_eq!(engine.sustain_deferred, [false; 6]);
+    }
+
+    #[test]
+    fn sustain_and_sostenuto_pedals_hold_independently() {
+        let mut engine = new_engine();
+        engine.strummer.set_strum_speed_ms(0.0);
+        engine.note_on(0, 64, 0.9);
+        let str_idx = engine
+            .active_notes_on_string
+            .iter()
+            .position(|&n| n == Some(64))
+            .expect("note allocated to a string");
+        for _ in 0..100 {
+            engine.process_sample();
+        }
+        engine.set_sostenuto_pedal(true);
+        engine.set_sustain_pedal(true);
+        engine.note_off(0, 64);
+        assert!(engine.sostenuto_deferred[str_idx] && engine.sustain_deferred[str_idx]);
+
+        // Sostenuto up must not release while sustain still holds.
+        engine.set_sostenuto_pedal(false);
+        assert!(engine.strings[str_idx].is_held);
+        engine.set_sustain_pedal(false);
+        assert!(!engine.strings[str_idx].is_held);
+
+        // Reverse order: sustain up first, sostenuto still holds.
+        engine.note_on(0, 64, 0.9);
+        for _ in 0..100 {
+            engine.process_sample();
+        }
+        engine.set_sustain_pedal(true);
+        engine.set_sostenuto_pedal(true);
+        engine.note_off(0, 64);
+        engine.set_sustain_pedal(false);
+        assert!(engine.strings[str_idx].is_held);
+        engine.set_sostenuto_pedal(false);
+        assert!(!engine.strings[str_idx].is_held);
+    }
+
+    #[test]
+    fn engine_reset_restarts_strummer_auto_alternation() {
+        // `GuitarEngine::reset` must route through `SmartStrummer::reset`
+        // (P1-8c): after a reset the Auto alternation restarts at a
+        // down-strum instead of continuing the pre-reset alternation.
+        let mut engine = new_engine();
+        engine.strummer.direction = StrumDirection::Auto;
+        let notes = [(0usize, 0u8, 0.9f64), (1, 1, 0.9), (2, 0, 0.9)];
+        engine.strummer.trigger_chord(&notes);
+        let down_order: Vec<usize> = engine
+            .strummer
+            .pending_plucks
+            .iter()
+            .map(|p| p.string_index)
+            .collect();
+        assert_eq!(down_order, vec![2, 1, 0]);
+        engine.strummer.pending_plucks.clear();
+        engine.strummer.trigger_chord(&notes);
+        let up_order: Vec<usize> = engine
+            .strummer
+            .pending_plucks
+            .iter()
+            .map(|p| p.string_index)
+            .collect();
+        assert_eq!(up_order, vec![0, 1, 2]);
+        engine.reset();
+        engine.strummer.trigger_chord(&notes);
+        let after_reset: Vec<usize> = engine
+            .strummer
+            .pending_plucks
+            .iter()
+            .map(|p| p.string_index)
+            .collect();
+        assert_eq!(after_reset, down_order);
+        // Reset preserved the playing settings, not just the queues.
+        assert_eq!(engine.strummer.direction, StrumDirection::Auto);
+    }
+
+    #[test]
+    fn engine_output_is_bounded_without_the_plugin_limiter() {
+        // The engine-level soft limiter is the output contract for
+        // engine-only consumers (CLI renderer, tests): loud output
+        // must stay within [-1, 1] before any plugin post-FX limiter.
+        let mut engine = new_engine();
+        engine.strummer.set_strum_speed_ms(0.0);
+        engine.set_acoustic_feedback(1.0, 4.5);
+        engine.amp_cab.drive = 1.0;
+        engine.master_volume = 2.0;
+        engine.note_on(6, 40, 1.0);
+        for _ in 0..44_100 {
+            let (l, r) = engine.process_sample();
+            assert!(l.is_finite() && r.is_finite());
+            assert!(l.abs() <= 1.0 && r.abs() <= 1.0);
+        }
+    }
+
+    #[test]
     fn feedback_loop_stays_bounded_at_max_gain_and_drive() {
         let mut engine = new_engine();
         engine.strummer.set_strum_speed_ms(0.0);
@@ -1073,6 +1339,30 @@ mod no_alloc_regression_tests {
         );
         let before = violation_count();
         assert_no_alloc(|| engine.reset());
+        assert_eq!(violation_count(), before);
+    }
+
+    #[test]
+    fn sustain_pedal_cycle_does_not_allocate() {
+        // Pedal state is fixed-size arrays only: pressing/releasing
+        // the sustain pedal and deferring/releasing a note-off must
+        // not allocate on the audio thread.
+        let mut engine = GuitarEngine::new(
+            44100.0,
+            GuitarStringSetType::Electric010,
+            GuitarInstrumentMode::Electric,
+        );
+        engine.strummer.set_strum_speed_ms(0.0);
+        engine.note_on(0, 64, 0.9);
+        for _ in 0..100 {
+            engine.process_sample();
+        }
+        let before = violation_count();
+        assert_no_alloc(|| {
+            engine.set_sustain_pedal(true);
+            engine.note_off(0, 64);
+            engine.set_sustain_pedal(false);
+        });
         assert_eq!(violation_count(), before);
     }
 }

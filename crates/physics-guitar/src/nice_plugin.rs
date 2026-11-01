@@ -357,8 +357,23 @@ pub enum GuiGuitarEvent {
 /// Same curve as the piano plugin. Applied AFTER the insert FX in the
 /// sample loop: the EQ can add up to +12 dB per band to the engine
 /// output, so the engine's own limiter (which runs before the FX)
-/// cannot bound the final output. The engine-level limiter is kept:
-/// it bounds `GuitarEngine` output for engine-only consumers.
+/// cannot bound the final output.
+///
+/// The engine-level limiter is deliberately kept alongside this one,
+/// not removed as a duplication: the two stages have different jobs
+/// and different curves. The engine limiter (knee 0.9, asymptote 1.0)
+/// is the engine's output contract for engine-only consumers — the
+/// CLI renderer writes `process_sample()` straight to a WAV with no
+/// second limiter — while this limiter (knee 0.82, asymptote 0.99)
+/// is the DAW-facing bound after FX. The FX chain itself (EQ +
+/// reverb) is linear, so the pre-FX limiter does not tame FX drive;
+/// what the cascade changes, versus a single post-FX limiter, is the
+/// compression of loud signals: engine output above 0.9 is already
+/// compressed before the FX, and this stage compresses the boosted
+/// result again. Removing the engine limiter would therefore change
+/// loud-signal tone through FX and let CLI renders hard-clip. Both
+/// stages are transparent below their knees (0.9 / 0.82), so quiet
+/// signals pass through the cascade untouched.
 #[inline]
 fn soft_limit(x: f64) -> f64 {
     if x.abs() <= 0.82 {
@@ -496,23 +511,34 @@ impl Default for PhysicsGuitar {
 
 impl PhysicsGuitar {
     /// Apply one incoming MIDI CC: always record it for the editor's Learn
-    /// polling, drive the sostenuto pedal when CC66 arrives, and drive
-    /// the bound parameter when one is learned. Reserved pedal /
-    /// expression CCs (64/67/11) are recorded but otherwise ignored,
-    /// mirroring the piano. The manager lock is only tried, never
-    /// waited on, so a contended GUI thread can't stall the audio
-    /// thread; the next CC movement retries.
+    /// polling, drive the sustain (CC64) and sostenuto (CC66) pedals,
+    /// and drive the bound parameter when one is learned. CC67 (soft
+    /// pedal) and CC11 (expression) are recorded but otherwise
+    /// ignored: the piano gives them una-corda / expression-gain
+    /// semantics, but guitar has no hammer/una-corda mechanism to
+    /// mirror and no separate expression gain stage (master gain is
+    /// folded into the engine's pre-FX limiter), so inventing one
+    /// would be a new behavior, not a mirror. The reservation still
+    /// stands: neither CC can be Learn-bound (the manager refuses
+    /// excluded CCs). The manager lock is only tried, never waited
+    /// on, so a contended GUI thread can't stall the audio thread;
+    /// the next CC movement retries.
     fn handle_midi_cc(&mut self, cc: u8, value: f32) {
         self.last_cc.record(cc);
-        // Reserved pedal/expression CCs, mirroring the piano: CC64
-        // (sustain), CC67 (soft pedal) and CC11 (expression) change
-        // no parameter and cannot be Learn-bound (the manager
-        // refuses excluded CCs). Guitar implements no sustain /
-        // soft-pedal / expression semantics, so the reservation is
-        // the whole fix: the pedal must not be stealable by Learn
-        // and must behave the same on every instrument. CC66
-        // (sostenuto) keeps its own handling below.
-        if cc == 64 || cc == 67 || cc == 11 {
+        // CC64 (sustain) drives the engine's deferred-release pedal
+        // state. The down threshold is `cc_pedal_down` (> 0.05
+        // normalized, i.e. MIDI value > ~6), mirroring the sostenuto
+        // pedal and the piano's sustain edge — not the MIDI
+        // half-pedal point (64/127) — so both pedals agree.
+        if cc == 64 {
+            self.engine.set_sustain_pedal(cc_pedal_down(value as f64));
+            return;
+        }
+        // Reserved pedal/expression CCs, mirroring the piano: CC67
+        // (soft pedal) and CC11 (expression) change no parameter and
+        // cannot be Learn-bound (the manager refuses excluded CCs).
+        // CC66 (sostenuto) keeps its own handling below.
+        if cc == 67 || cc == 11 {
             return;
         }
         if cc == SOSTENUTO_CC {
@@ -976,6 +1002,26 @@ mod no_alloc_regression_tests {
 
         assert_eq!(violation_count(), violations_before);
     }
+
+    #[test]
+    fn sustain_cc_handling_does_not_allocate_on_the_audio_thread() {
+        // `handle_midi_cc` runs from the plugin's `process()` event
+        // loop: recording the CC and driving the sustain pedal must
+        // not allocate (fixed-size pedal arrays only).
+        let mut plugin = PhysicsGuitar::default();
+        plugin.engine.strummer.set_strum_speed_ms(0.0);
+        plugin.engine.note_on(0, 64, 0.9);
+        for _ in 0..100 {
+            plugin.engine.process_sample();
+        }
+        let violations_before = violation_count();
+        assert_no_alloc(|| {
+            plugin.handle_midi_cc(64, 1.0);
+            plugin.engine.note_off(0, 64);
+            plugin.handle_midi_cc(64, 0.0);
+        });
+        assert_eq!(violation_count(), violations_before);
+    }
 }
 
 #[cfg(test)]
@@ -1042,6 +1088,21 @@ mod midi_learn_tests {
     }
 
     #[test]
+    fn sustain_cc_drives_engine_not_learn() {
+        let mut plugin = PhysicsGuitar::default();
+        // Down threshold is `cc_pedal_down` (> 0.05 normalized),
+        // mirroring the sostenuto pedal: a small movement is up,
+        // anything above the edge is down.
+        plugin.handle_midi_cc(64, 0.03);
+        assert!(!plugin.engine.sustain_down);
+        plugin.handle_midi_cc(64, 0.06);
+        assert!(plugin.engine.sustain_down);
+        assert_eq!(plugin.last_cc.cc(), 64);
+        plugin.handle_midi_cc(64, 0.0);
+        assert!(!plugin.engine.sustain_down);
+    }
+
+    #[test]
     fn reserved_ccs_are_recorded_but_change_nothing_and_cannot_be_bound() {
         // The manager refuses to bind excluded CCs at all.
         let dir = TempDirGuard::new("guitar-reserved");
@@ -1061,10 +1122,12 @@ mod midi_learn_tests {
                 "CC{cc} must not be bindable"
             );
         }
-        // And the handler never drives a parameter or the pedal with
-        // them, mirroring the piano: they are recorded for Learn
-        // polling only, so a sustain pedal can never be stolen by
-        // Learn or move a knob on guitar.
+        // CC67/CC11 never drive a parameter or a pedal, mirroring
+        // the piano's reservation: they are recorded for Learn
+        // polling only, so they can never be stolen by Learn or
+        // move a knob on guitar. (CC64 is excluded from this loop:
+        // it drives the sustain pedal — see
+        // `sustain_cc_drives_engine_not_learn`.)
         assert!(
             plugin
                 .preset_manager
@@ -1073,10 +1136,11 @@ mod midi_learn_tests {
                 .unwrap()
         );
         let tone_before = plugin.params.tone.value();
-        for cc in [64u8, 67, 11] {
+        for cc in [67u8, 11] {
             plugin.handle_midi_cc(cc, 1.0);
             assert_eq!(plugin.last_cc.cc(), cc);
             assert!(!plugin.engine.sostenuto_down);
+            assert!(!plugin.engine.sustain_down);
             assert_eq!(plugin.params.tone.value(), tone_before);
         }
         // Sostenuto (CC66) keeps working.

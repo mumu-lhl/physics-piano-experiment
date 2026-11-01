@@ -154,6 +154,14 @@ pub struct BassEngine {
     pub sostenuto_down: bool,
     pub sostenuto_strings: [bool; STRING_COUNT],
     pub sostenuto_deferred: [bool; STRING_COUNT],
+    /// Sustain (damper) pedal, CC64: note-offs arriving while the
+    /// pedal is down are deferred (see `sustain_deferred`) instead
+    /// of releasing the string. Unlike sostenuto there is no
+    /// at-pedal-down capture: every note-off while the pedal is
+    /// down is held, including notes struck after the pedal went
+    /// down. Mirrors the guitar engine's sustain state.
+    pub sustain_down: bool,
+    pub sustain_deferred: [bool; STRING_COUNT],
 }
 
 impl BassEngine {
@@ -184,6 +192,8 @@ impl BassEngine {
             sostenuto_down: false,
             sostenuto_strings: [false; STRING_COUNT],
             sostenuto_deferred: [false; STRING_COUNT],
+            sustain_down: false,
+            sustain_deferred: [false; STRING_COUNT],
         }
     }
 
@@ -233,10 +243,12 @@ impl BassEngine {
         let fret = fret.min(24);
         let note = self.strings[index].open_midi.saturating_add(fret);
 
-        // A fresh strike supersedes any sostenuto capture: notes started
-        // after the pedal went down are not held by it.
+        // A fresh strike supersedes any sostenuto capture and any
+        // sustain deferral: notes started after a pedal went down
+        // are not held by it.
         self.sostenuto_strings[index] = false;
         self.sostenuto_deferred[index] = false;
+        self.sustain_deferred[index] = false;
 
         // Physical legato: if this string is currently vibrating and the fret changed,
         // perform smooth legato without resetting the wave grid!
@@ -304,7 +316,7 @@ impl BassEngine {
             }
         } else {
             for index in 0..STRING_COUNT {
-                if self.sostenuto_deferred[index] {
+                if self.sostenuto_deferred[index] && !self.sustain_deferred[index] {
                     self.strings[index].release();
                 }
                 self.sostenuto_strings[index] = false;
@@ -313,12 +325,45 @@ impl BassEngine {
         }
     }
 
+    /// Sustain pedal (CC64): pressing holds every note-off that
+    /// arrives while it is down; releasing applies the deferred
+    /// note-offs, except for strings still held by the sostenuto
+    /// pedal (whose own pedal-up releases them instead). No capture
+    /// is taken on press: deferral is decided at note-off time, so
+    /// notes struck after the pedal went down are held too.
+    pub fn set_sustain_pedal(&mut self, down: bool) {
+        if down == self.sustain_down {
+            return;
+        }
+        self.sustain_down = down;
+        if down {
+            self.sustain_deferred = [false; STRING_COUNT];
+        } else {
+            for index in 0..STRING_COUNT {
+                if self.sustain_deferred[index] {
+                    self.sustain_deferred[index] = false;
+                    if !self.sostenuto_deferred[index] {
+                        self.strings[index].release();
+                    }
+                }
+            }
+        }
+    }
+
     /// Release a string, deferring to the sostenuto pedal when it holds
-    /// this string: the note-off is remembered and applied on pedal-up.
+    /// this string and/or to the sustain pedal when it is down: the
+    /// note-off is remembered and applied on pedal-up.
     fn release_or_defer(&mut self, index: usize) {
+        let mut deferred = false;
         if self.sostenuto_down && self.sostenuto_strings[index] {
             self.sostenuto_deferred[index] = true;
-        } else {
+            deferred = true;
+        }
+        if self.sustain_down {
+            self.sustain_deferred[index] = true;
+            deferred = true;
+        }
+        if !deferred {
             self.strings[index].release();
         }
     }
@@ -537,6 +582,8 @@ impl BassEngine {
         self.sostenuto_down = false;
         self.sostenuto_strings = [false; STRING_COUNT];
         self.sostenuto_deferred = [false; STRING_COUNT];
+        self.sustain_down = false;
+        self.sustain_deferred = [false; STRING_COUNT];
     }
 
     pub fn total_energy(&self) -> f64 {
@@ -561,6 +608,14 @@ fn event_time(event: BassEvent) -> usize {
     }
 }
 
+/// Engine output soft limiter (knee 0.88, asymptote 1.0). This is the
+/// engine's output contract, not just a plugin convenience: the CLI
+/// renderer (`bin/cli.rs`) writes `process_sample()` straight to a WAV
+/// with no second limiter, so removing it would let loud engine output
+/// hard-clip at quantization. (The stereo pan applied afterwards can
+/// push the result slightly past 1.0; the plugin's post-FX limiter is
+/// the hard 0.99 bound — see `nice_plugin.rs`.) Both are kept
+/// deliberately.
 #[inline(always)]
 fn soft_limit(sample: f64) -> f64 {
     let magnitude = sample.abs();
@@ -661,6 +716,160 @@ mod tests {
             "retrigger discontinuity: jump {jump} vs recent scale {scale}"
         );
         assert!(engine.strings[1].string.energy() > 0.0);
+    }
+
+    #[test]
+    fn sustain_pedal_defers_note_off_until_pedal_up() {
+        let mut engine = BassEngine::new(48_000.0, BassMode::Electric, true);
+        engine.note_on_string(1, 5, 0.9);
+        for _ in 0..200 {
+            engine.process_sample();
+        }
+        assert!(engine.strings[1].string.is_held);
+
+        engine.set_sustain_pedal(true);
+        engine.note_off_string(1);
+        assert!(engine.sustain_deferred[1]);
+        assert!(engine.strings[1].string.is_held);
+        assert_eq!(engine.strings[1].current_note, Some(33));
+        for _ in 0..100 {
+            engine.process_sample();
+        }
+        assert!(
+            engine.strings[1].string.is_held && engine.strings[1].string.energy() > 1e-11,
+            "string must keep sounding while the sustain pedal is down"
+        );
+
+        engine.set_sustain_pedal(false);
+        assert!(!engine.sustain_deferred[1]);
+        assert!(!engine.strings[1].string.is_held);
+        assert!(engine.strings[1].string.is_releasing);
+    }
+
+    #[test]
+    fn sustain_pedal_holds_notes_struck_after_pedal_down() {
+        // Unlike sostenuto (which captures only notes sounding when
+        // the pedal goes down), sustain holds note-offs for notes
+        // struck after the pedal went down too.
+        let mut engine = BassEngine::new(48_000.0, BassMode::Electric, true);
+        engine.set_sustain_pedal(true);
+        engine.note_on_string(1, 5, 0.9);
+        for _ in 0..200 {
+            engine.process_sample();
+        }
+        engine.note_off_string(1);
+        assert!(engine.sustain_deferred[1]);
+        assert!(engine.strings[1].string.is_held);
+        engine.set_sustain_pedal(false);
+        assert!(!engine.strings[1].string.is_held);
+    }
+
+    #[test]
+    fn sustain_re_strike_supersedes_deferred_release() {
+        let mut engine = BassEngine::new(48_000.0, BassMode::Electric, true);
+        engine.note_on_string(1, 5, 0.9);
+        for _ in 0..200 {
+            engine.process_sample();
+        }
+        engine.set_sustain_pedal(true);
+        engine.note_off_string(1);
+        assert!(engine.sustain_deferred[1]);
+
+        // Fresh strike wins: the deferred release is dropped.
+        engine.note_on_string(1, 5, 0.9);
+        assert!(!engine.sustain_deferred[1]);
+        engine.set_sustain_pedal(false);
+        for _ in 0..100 {
+            engine.process_sample();
+        }
+        assert!(
+            engine.strings[1].string.is_held,
+            "re-struck string was released on pedal-up"
+        );
+        assert_eq!(engine.strings[1].current_note, Some(33));
+    }
+
+    #[test]
+    fn sustain_pedal_unused_leaves_note_off_unchanged() {
+        let mut engine = BassEngine::new(48_000.0, BassMode::Electric, true);
+        engine.note_on_string(1, 5, 0.9);
+        for _ in 0..200 {
+            engine.process_sample();
+        }
+        // Pedal never touched: note-off releases immediately, and a
+        // pedal press/release with no notes sounding is a no-op.
+        engine.note_off_string(1);
+        assert!(!engine.sustain_deferred[1]);
+        assert!(!engine.strings[1].string.is_held);
+        engine.set_sustain_pedal(true);
+        engine.set_sustain_pedal(false);
+        assert!(!engine.sustain_down);
+        assert_eq!(engine.sustain_deferred, [false; 5]);
+    }
+
+    #[test]
+    fn sustain_and_sostenuto_pedals_hold_independently() {
+        let mut engine = BassEngine::new(48_000.0, BassMode::Electric, true);
+        engine.note_on_string(1, 5, 0.9);
+        for _ in 0..200 {
+            engine.process_sample();
+        }
+        engine.set_sostenuto_pedal(true);
+        engine.set_sustain_pedal(true);
+        engine.note_off_string(1);
+        assert!(engine.sostenuto_deferred[1] && engine.sustain_deferred[1]);
+
+        // Sostenuto up must not release while sustain still holds.
+        engine.set_sostenuto_pedal(false);
+        assert!(engine.strings[1].string.is_held);
+        engine.set_sustain_pedal(false);
+        assert!(!engine.strings[1].string.is_held);
+
+        // Reverse order: sustain up first, sostenuto still holds.
+        engine.note_on_string(1, 5, 0.9);
+        for _ in 0..200 {
+            engine.process_sample();
+        }
+        engine.set_sustain_pedal(true);
+        engine.set_sostenuto_pedal(true);
+        engine.note_off_string(1);
+        engine.set_sustain_pedal(false);
+        assert!(engine.strings[1].string.is_held);
+        engine.set_sostenuto_pedal(false);
+        assert!(!engine.strings[1].string.is_held);
+    }
+
+    #[test]
+    fn engine_reset_clears_sustain_pedal() {
+        let mut engine = BassEngine::new(48_000.0, BassMode::Electric, true);
+        engine.note_on_string(1, 5, 0.9);
+        engine.set_sustain_pedal(true);
+        engine.note_off_string(1);
+        assert!(engine.sustain_deferred[1]);
+        engine.reset();
+        assert!(!engine.sustain_down);
+        assert_eq!(engine.sustain_deferred, [false; 5]);
+        assert!(!engine.sostenuto_down);
+    }
+
+    #[test]
+    fn engine_output_stays_bounded_at_max_drive_without_the_plugin_limiter() {
+        // The engine-level soft limiter bounds engine-only output
+        // (CLI renderer, tests) before any plugin post-FX limiter.
+        // The stereo pan applied afterwards can push the result
+        // slightly past 1.0 (pan factor up to 1.065), so the bound
+        // here is 1.1; the plugin's post-FX limiter is the hard
+        // 0.99 bound for DAW output.
+        let mut engine = BassEngine::new(48_000.0, BassMode::Electric, true);
+        engine.set_drive(1.0);
+        engine.note_on_string(1, 5, 1.0);
+        let mut peak = 0.0f64;
+        for _ in 0..48_000 {
+            let (l, r) = engine.process_sample();
+            assert!(l.is_finite() && r.is_finite());
+            peak = peak.max(l.abs()).max(r.abs());
+        }
+        assert!(peak <= 1.1, "engine output peak {peak}");
     }
 
     #[test]
