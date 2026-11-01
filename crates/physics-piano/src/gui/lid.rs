@@ -35,6 +35,7 @@ impl PianoLidWidget {
         learn: Option<LearnArm>,
     ) -> Handle<'_, Self> {
         let param_base = ParamWidgetBase::new(cx, &params.lid_angle);
+        let value = param_base.unmodulated_signal(cx);
 
         Self {
             params,
@@ -44,6 +45,16 @@ impl PianoLidWidget {
             learn,
         }
         .build(cx, |_| {})
+        // Keyboard-reachable slider: arrow keys nudge the angle (see
+        // `View::event` below). The accessible name is the visible
+        // title, already localized; the numeric value tracks the
+        // live angle on Vizia's 0..100 slider scale.
+        .navigable(true)
+        .role(Role::Slider)
+        .name(
+            translate(language, "piano.lid.title", "LID BAFFLE GEOMETRY").to_string(),
+        )
+        .numeric_value(value.map(|v| (*v as f64 * 100.0).round()))
     }
 
     fn end_drag(&mut self, cx: &mut EventContext) {
@@ -53,7 +64,20 @@ impl PianoLidWidget {
             self.param_base.end_set_parameter(cx);
         }
     }
+
+    /// Keyboard equivalent of a vertical drag: one bracketed gesture
+    /// per keypress, like the knob arrow-key steps.
+    fn nudge(&mut self, cx: &mut EventContext, delta: f32) {
+        let next = (self.param_base.unmodulated_normalized_value() + delta).clamp(0.0, 1.0);
+        self.param_base.begin_set_parameter(cx);
+        self.param_base.set_normalized_value(cx, next);
+        self.param_base.end_set_parameter(cx);
+    }
 }
+
+/// Arrow-key step as a fraction of the lid range: 0.05 = 3 degrees of
+/// the 0..60 degree travel per press.
+const LID_ARROW_STEP: f32 = 0.05;
 
 /// Lid length clamped so the tip stays inside the widget: at angle
 /// `angle_rad` the tip rises `sin(angle) * len` above the hinge, which
@@ -79,6 +103,13 @@ impl View for PianoLidWidget {
         Some("piano-lid-widget")
     }
 
+    fn accessibility(&self, _cx: &mut AccessContext, node: &mut AccessNode) {
+        // Numeric range for the 0..100 value bound in `new` (mirrors
+        // Vizia's built-in Knob): 0 = closed, 100 = 60 degrees.
+        node.set_min_numeric_value(0.0);
+        node.set_max_numeric_value(100.0);
+    }
+
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
         event.map(|window_event, meta| match window_event {
             WindowEvent::MouseDown(MouseButton::Left) => {
@@ -92,7 +123,19 @@ impl View for PianoLidWidget {
                 }
                 self.is_dragging = true;
                 cx.capture();
+                cx.focus();
                 self.param_base.begin_set_parameter(cx);
+                meta.consume();
+            }
+            // Arrow keys nudge the lid 3 degrees per press (0.05 of
+            // the 0..60 degree range) once the widget has keyboard
+            // focus; without this the lid is mouse-only.
+            WindowEvent::KeyDown(Code::ArrowUp | Code::ArrowRight, _) => {
+                self.nudge(cx, LID_ARROW_STEP);
+                meta.consume();
+            }
+            WindowEvent::KeyDown(Code::ArrowDown | Code::ArrowLeft, _) => {
+                self.nudge(cx, -LID_ARROW_STEP);
                 meta.consume();
             }
             WindowEvent::MouseDown(MouseButton::Right) => {

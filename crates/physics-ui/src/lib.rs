@@ -3,6 +3,7 @@
 mod curve_editor;
 mod device_row;
 mod language;
+mod save_status;
 pub mod midi_learn;
 mod preset_browser;
 mod preset_panel;
@@ -17,6 +18,7 @@ pub use curve_editor::VelocityCurveEditorWidget;
 pub use device_row::device_settings_row;
 pub use language::{Language, setup_vizia_fonts, translate, translate_format};
 pub use midi_learn::{LastCc, LearnArm, apply_midi_cc, build_param_map, build_ptr_to_id_map};
+pub use save_status::{SaveFailureKind, save_failure_message};
 pub use preset_browser::{
     PresetBrowserAction, PresetBrowserItem, PresetBrowserSignals, filter_browser_items,
     parse_tags_input, preset_browser, preset_browser_categories, preset_browser_items,

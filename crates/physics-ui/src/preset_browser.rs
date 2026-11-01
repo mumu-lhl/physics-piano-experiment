@@ -128,7 +128,15 @@ pub fn filter_browser_items(
                     return false;
                 }
             }
-            if !selected_tags.is_empty() && !selected_tags.iter().all(|tag| item.tags.contains(tag))
+            // Tag match is case-folded on both sides, the same fold
+            // `parse_tags_input` uses for dedup: a stored "Warm" must
+            // match a chip spelled "warm", and vice versa.
+            if !selected_tags.is_empty()
+                && !selected_tags.iter().all(|tag| {
+                    item.tags
+                        .iter()
+                        .any(|item_tag| item_tag.to_lowercase() == tag.to_lowercase())
+                })
             {
                 return false;
             }
@@ -195,6 +203,11 @@ pub fn preset_browser(cx: &mut Context, lang: Language, signals: PresetBrowserSi
                     .height(Pixels(26.0));
                 Binding::new(cx, category, move |cx| {
                     let selected = category.get();
+                    // Chip rows wrap; cap the area at three rows (3 x
+                    // 24px chips + wrap gaps) and scroll inside it, so
+                    // many categories can never push the list and tag
+                    // editor out of the fixed-height panel.
+                    ScrollView::new(cx, move |cx| {
                     HStack::new(cx, move |cx| {
                         let is_all = selected.is_none();
                         Button::new(cx, move |cx| {
@@ -235,6 +248,9 @@ pub fn preset_browser(cx: &mut Context, lang: Language, signals: PresetBrowserSi
                     // instead of being clipped by it.
                     .wrap(LayoutWrap::Wrap)
                     .min_height(Pixels(28.0));
+                    })
+                    .width(Stretch(1.0))
+                    .max_height(Pixels(84.0));
                 });
                 Binding::new(cx, selected_tags, move |cx| {
                     let selected = selected_tags.get();
@@ -247,6 +263,10 @@ pub fn preset_browser(cx: &mut Context, lang: Language, signals: PresetBrowserSi
                         // The row builder runs on every rebuild; clone the
                         // selection so the Fn closure stays callable.
                         let selected = selected.clone();
+                        // Same three-row scroll cap as the category
+                        // chips above: tag overflow scrolls instead of
+                        // pushing the list/tag editor out of the panel.
+                        ScrollView::new(cx, move |cx| {
                         HStack::new(cx, move |cx| {
                             for tag in all_tags {
                                 let tag_filter = tag.clone();
@@ -263,6 +283,9 @@ pub fn preset_browser(cx: &mut Context, lang: Language, signals: PresetBrowserSi
                         .horizontal_gap(Pixels(6.0))
                         .wrap(LayoutWrap::Wrap)
                         .min_height(Pixels(28.0));
+                        })
+                        .width(Stretch(1.0))
+                        .max_height(Pixels(84.0));
                     });
                 });
                 ScrollView::new(cx, move |cx| {
@@ -324,7 +347,11 @@ pub fn preset_browser(cx: &mut Context, lang: Language, signals: PresetBrowserSi
                     });
                 })
                 .width(Stretch(1.0))
-                .height(Pixels(300.0));
+                // Fill the fixed-height panel: chip rows may grow to
+                // their three-row caps, and the list absorbs the
+                // difference instead of overflowing the panel.
+                .height(Stretch(1.0))
+                .min_height(Pixels(120.0));
                 HStack::new(cx, move |cx| {
                     Label::new(cx, translate(lang, "gui.tags", "Tags")).class("browser-tags-label");
                     Label::new(cx, current_name.clone())
@@ -438,6 +465,30 @@ mod tests {
         assert_eq!(out[0].id, "b");
         let missing = vec!["nope".to_string()];
         let out = filter_browser_items(&items, "", None, false, &missing);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn filter_selected_tags_match_case_insensitively() {
+        let items = vec![
+            tagged("a", "Alpha", "General", false, &["Warm", "JAZZ"]),
+            tagged("b", "Beta", "General", false, &["warm"]),
+            tagged("c", "Gamma", "General", false, &["bright"]),
+        ];
+        // Stored "Warm" matches a lowercase chip, and vice versa.
+        let chip = vec!["warm".to_string()];
+        let out = filter_browser_items(&items, "", None, false, &chip);
+        assert_eq!(out.len(), 2);
+        let chip = vec!["WARM".to_string()];
+        let out = filter_browser_items(&items, "", None, false, &chip);
+        assert_eq!(out.len(), 2);
+        let chips = vec!["warm".to_string(), "jazz".to_string()];
+        let out = filter_browser_items(&items, "", None, false, &chips);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id, "a");
+        // The fold is equality, not substring: "warmer" matches nothing.
+        let chip = vec!["warmer".to_string()];
+        let out = filter_browser_items(&items, "", None, false, &chip);
         assert!(out.is_empty());
     }
 

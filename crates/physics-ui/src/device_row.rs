@@ -13,11 +13,20 @@ use std::time::Duration;
 use physics_presets::device_settings::{self, DeviceSettings};
 use vizia_plug::vizia::prelude::*;
 
-use crate::{Language, translate};
+use crate::{Language, SaveFailureKind, save_failure_message, translate};
 
 /// Builds the device row under the MIDI Learn row. Does nothing when this
 /// process is a plugin rather than a standalone binary.
-pub fn device_settings_row(cx: &mut Context, presets_dir: PathBuf, lang: Language) {
+///
+/// `save_status` is the editor-owned save-status line (shared with the
+/// preset/favorite/tag save sites): device save and restart failures
+/// show a short localized message there, and a successful save clears it.
+pub fn device_settings_row(
+    cx: &mut Context,
+    presets_dir: PathBuf,
+    lang: Language,
+    save_status: Signal<String>,
+) {
     if !device_settings::is_standalone() {
         return;
     }
@@ -25,6 +34,7 @@ pub fn device_settings_row(cx: &mut Context, presets_dir: PathBuf, lang: Languag
     let initial = DeviceSettings::load_from_dir(&presets_dir).validate(&available);
     let settings = Signal::new(initial);
     let dir = presets_dir.clone();
+    let status = save_status.clone();
 
     HStack::new(cx, |cx| {
         device_dropdown(
@@ -36,6 +46,8 @@ pub fn device_settings_row(cx: &mut Context, presets_dir: PathBuf, lang: Languag
             available.inputs,
             translate(lang, "gui.device-none", "None"),
             dir.clone(),
+            status.clone(),
+            lang,
         );
         device_dropdown(
             cx,
@@ -46,6 +58,8 @@ pub fn device_settings_row(cx: &mut Context, presets_dir: PathBuf, lang: Languag
             available.outputs,
             translate(lang, "gui.device-default-output", "System default"),
             dir.clone(),
+            status.clone(),
+            lang,
         );
         device_dropdown(
             cx,
@@ -56,6 +70,8 @@ pub fn device_settings_row(cx: &mut Context, presets_dir: PathBuf, lang: Languag
             available.midi_inputs,
             translate(lang, "gui.device-none", "None"),
             dir.clone(),
+            status.clone(),
+            lang,
         );
         device_dropdown(
             cx,
@@ -66,6 +82,8 @@ pub fn device_settings_row(cx: &mut Context, presets_dir: PathBuf, lang: Languag
             available.midi_outputs,
             translate(lang, "gui.device-none", "None"),
             dir.clone(),
+            status.clone(),
+            lang,
         );
         Button::new(cx, |cx| {
             Label::new(
@@ -75,16 +93,19 @@ pub fn device_settings_row(cx: &mut Context, presets_dir: PathBuf, lang: Languag
         })
         .class("btn-action")
         .width(Pixels(118.0))
-        .on_press(|_| {
+        .on_press(move |_| {
             // The plugin has no API to end the wrapper's event loop, so the
             // process exits directly once the relaunched child is spawned;
             // the child waits before opening devices so this process
             // releases them first. A spawn failure must not exit (the
-            // child never started); there is no status label in this row,
-            // so the failure is logged and the button stays inert.
+            // child never started); it is logged and shown on the
+            // editor's save-status line, and the button stays inert.
             match device_settings::spawn_restart(Duration::from_millis(800)) {
                 Ok(()) => std::process::exit(0),
-                Err(err) => eprintln!("Failed to spawn restarted standalone: {err}"),
+                Err(err) => {
+                    eprintln!("Failed to spawn restarted standalone: {err}");
+                    status.set(save_failure_message(lang, SaveFailureKind::Restart));
+                }
             }
         });
     })
@@ -105,6 +126,8 @@ fn device_dropdown(
     devices: Vec<String>,
     none_label: &str,
     dir: PathBuf,
+    save_status: Signal<String>,
+    lang: Language,
 ) {
     let label = label.to_string();
     let none_label = none_label.to_string();
@@ -146,6 +169,7 @@ fn device_dropdown(
                     .collect::<Vec<_>>();
                 for value in options {
                     let dir = dir.clone();
+                    let save_status = save_status.clone();
                     let display = value.clone().unwrap_or_else(|| popup_none.clone());
                     Button::new(cx, move |cx| {
                         Label::new(cx, display)
@@ -168,8 +192,11 @@ fn device_dropdown(
                                 "Failed to save device settings to {}: {err}",
                                 dir.display()
                             );
+                            save_status
+                                .set(save_failure_message(lang, SaveFailureKind::Device));
                             settings.set(DeviceSettings::load_from_dir(&dir));
                         } else {
+                            save_status.set(String::new());
                             settings.set(next);
                         }
                         cx.emit(PopupEvent::Close);

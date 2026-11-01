@@ -401,6 +401,13 @@ impl View for ParamSlider {
         Some("param-slider")
     }
 
+    fn accessibility(&self, _cx: &mut AccessContext, node: &mut AccessNode) {
+        // Numeric range for the 0..100 value bound by the editor-side
+        // `.numeric_value(...)` modifier (mirrors Vizia's built-in Knob).
+        node.set_min_numeric_value(0.0);
+        node.set_max_numeric_value(100.0);
+    }
+
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
         event.map(|param_slider_event, meta| match param_slider_event {
             ParamSliderEvent::CancelTextInput => {

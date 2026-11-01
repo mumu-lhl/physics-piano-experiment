@@ -177,6 +177,9 @@ impl SpectrumAnalyzerWidget {
         history: Arc<parking_lot::RwLock<Vec<f32>>>,
         sample_rate: f32,
     ) -> Handle<'_, Self> {
+        // Display-only canvas: a role and name are its text
+        // alternative (state is graphics-only). The name is not
+        // localized: the widget has no language plumbing.
         Self {
             history,
             sample_rate,
@@ -184,6 +187,8 @@ impl SpectrumAnalyzerWidget {
             prev_bars: RefCell::new(vec![0.0; SPECTRUM_BAR_COUNT]),
         }
         .build(cx, |_| {})
+        .role(Role::Canvas)
+        .name("Spectrum analyzer".to_string())
     }
 }
 

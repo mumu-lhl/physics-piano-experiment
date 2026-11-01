@@ -23,7 +23,13 @@ impl StereoVuMeterWidget {
         peak_l: Arc<AtomicF32>,
         peak_r: Arc<AtomicF32>,
     ) -> Handle<'_, Self> {
-        Self { peak_l, peak_r }.build(cx, |_| {})
+        // Display-only canvas: a role and name are its text
+        // alternative (state is graphics-only). The name is not
+        // localized: the widget has no language plumbing.
+        Self { peak_l, peak_r }
+            .build(cx, |_| {})
+            .role(Role::Canvas)
+            .name("Stereo level meters".to_string())
     }
 }
 

@@ -18,13 +18,13 @@ use physics_ui::Language;
 use physics_ui::{
     CancelParamGestureEvent, LastCc, LearnArm, PresetBrowserAction, PresetBrowserItem,
     PresetBrowserSignals, PresetPanelAction, PresetPanelLayout, PresetPanelSignals,
-    SpectrumAnalyzerWidget, StereoVuMeterWidget, WaveformWidget, add_base_theme, device_settings_row,
-    theme_toggle_button,
+    SaveFailureKind, SpectrumAnalyzerWidget, StereoVuMeterWidget, WaveformWidget, add_base_theme,
+    device_settings_row, theme_toggle_button,
     build_ptr_to_id_map,
     discrete_selector as shared_discrete_selector, filter_browser_items, map_param_history_event,
     parameter_knob, parse_tags_input, preset_browser, preset_browser_categories,
     preset_browser_items, preset_browser_tags, preset_choices, preset_display_name,
-    preset_panel, redraw_custom_view, set_param,
+    preset_panel, redraw_custom_view, save_failure_message, set_param,
     setup_vizia_fonts, translate, translate_format,
 };
 use std::collections::{HashMap, HashSet};
@@ -183,6 +183,10 @@ struct GuitarUiState {
     // shared LearnArm; the poll bookkeeping below is handler-local.
     learn_arm: LearnArm,
     learn_status: Signal<String>,
+    /// Short localized message for the last preset/favorite/tag/device
+    /// save failure, shown on the Learn row; empty when the last save
+    /// succeeded (or no save has been attempted).
+    save_status: Signal<String>,
     last_cc: Arc<LastCc>,
     last_seen_seq: u32,
     last_seen_pending: Option<String>,
@@ -344,6 +348,18 @@ impl GuitarUiState {
         ));
     }
 
+    /// Show a short localized save-failure message on the status line.
+    /// The detailed OS error stays in the `eprintln!` at the call site.
+    fn report_save_failure(&self, kind: SaveFailureKind) {
+        self.save_status
+            .set(save_failure_message(self.language.get(), kind));
+    }
+
+    /// Clear the save-status line after a successful save.
+    fn clear_save_status(&self) {
+        self.save_status.set(String::new());
+    }
+
     fn apply_history(&mut self, cx: &mut EventContext, redo: bool) {
         let changes = if redo {
             self.undo.write().redo()
@@ -400,6 +416,9 @@ impl Model for GuitarUiState {
                     // saving; reload the sidecar so the UI reflects
                     // the last saved value.
                     self.manager.write().load_favorites();
+                    self.report_save_failure(SaveFailureKind::Favorite);
+                } else {
+                    self.clear_save_status();
                 }
                 self.refresh_preset_signals();
             }
@@ -425,6 +444,9 @@ impl Model for GuitarUiState {
                     // reload the sidecar before re-reading tags_for
                     // below so the UI reflects the last saved value.
                     self.manager.write().load_tags();
+                    self.report_save_failure(SaveFailureKind::Tags);
+                } else {
+                    self.clear_save_status();
                 }
                 self.browser_tags_input
                     .set(self.manager.read().tags_for(&id).join(", "));
@@ -700,13 +722,20 @@ impl Model for GuitarUiState {
                     "guitar",
                     guitar_snapshot(&self.params),
                 );
-                if self.manager.write().save_user_preset(preset).is_ok() {
-                    self.selected_id.set(id);
-                    self.selected_name.set(name.clone());
-                    self.name_input.set(name);
-                    self.browser_tags_input.set(String::new());
-                    self.is_user_preset.set(true);
-                    self.refresh_preset_signals();
+                match self.manager.write().save_user_preset(preset) {
+                    Ok(()) => {
+                        self.clear_save_status();
+                        self.selected_id.set(id);
+                        self.selected_name.set(name.clone());
+                        self.name_input.set(name);
+                        self.browser_tags_input.set(String::new());
+                        self.is_user_preset.set(true);
+                        self.refresh_preset_signals();
+                    }
+                    Err(err) => {
+                        eprintln!("Failed to save preset {id}: {err}");
+                        self.report_save_failure(SaveFailureKind::Preset);
+                    }
                 }
             }
             GuitarUiEvent::Rename => {
@@ -736,6 +765,9 @@ impl Model for GuitarUiState {
                         // saving; reload the user presets so the manager
                         // again reflects the last saved value.
                         let _ = self.manager.write().load_user_presets();
+                        self.report_save_failure(SaveFailureKind::Preset);
+                    } else {
+                        self.clear_save_status();
                     }
                 }
             }
@@ -1151,6 +1183,7 @@ pub fn create_vizia_guitar_editor(
         // whose allocation never moves, so the pointers stay valid.
         let learn_arm = LearnArm::new(build_ptr_to_id_map(&params));
         let learn_status = Signal::new(String::new());
+        let save_status = Signal::new(String::new());
         setup_vizia_fonts(cx);
         if let Err(err) = add_base_theme(cx) {
             eprintln!("Failed to load shared Vizia theme: {err:?}");
@@ -1187,6 +1220,7 @@ pub fn create_vizia_guitar_editor(
             octave_offset: 0,
             learn_arm: learn_arm.clone(),
             learn_status: learn_status.clone(),
+            save_status: save_status.clone(),
             last_cc: last_cc.clone(),
             last_seen_seq: last_cc.seq(),
             last_seen_pending: None,
@@ -1200,6 +1234,7 @@ pub fn create_vizia_guitar_editor(
         let params_ui = params.clone();
         let learn_ui = learn_arm.clone();
         let learn_status_ui = learn_status.clone();
+        let save_status_ui = save_status.clone();
         let gui_tx_ui = gui_tx.clone();
         let active_frets_ui = active_frets_shared.clone();
         let string_energies_ui = string_energies_shared.clone();
@@ -1236,6 +1271,7 @@ pub fn create_vizia_guitar_editor(
             let params = params_ui.clone();
             let learn = learn_ui.clone();
             let learn_status = learn_status_ui.clone();
+            let save_status = save_status_ui.clone();
             let gui_tx = gui_tx_ui.clone();
             let active_frets_shared = active_frets_ui.clone();
             let string_energies_shared = string_energies_ui.clone();
@@ -1398,12 +1434,25 @@ pub fn create_vizia_guitar_editor(
                             Label::new(cx, if on { "LEARN ●" } else { "LEARN" })
                         })
                         .class("btn-action")
+                        // Pressed semantics: CHECKABLE + CHECKED makes
+                        // the accesskit tree report the Learn toggle
+                        // state instead of only changing the glyph.
+                        .checkable(true)
+                        .checked(learn_mode)
                         .on_press(|cx| {
                             cx.emit(GuitarUiEvent::ToggleLearn);
                         })
                         .width(Pixels(64.0));
                     });
                     Label::new(cx, learn_status.clone()).class("small-note");
+                    // Save-status line (P2-28): preset/favorite/tag/
+                    // device save failures show a short message here;
+                    // empty on success. Ellipsized so a long message
+                    // never pushes the theme toggle out of the row.
+                    Label::new(cx, save_status.clone())
+                        .class("small-note")
+                        .width(Stretch(1.0))
+                        .text_overflow(TextOverflow::Ellipsis);
                     Element::new(cx)
                         .width(Stretch(1.0))
                         .pointer_events(PointerEvents::None);
@@ -1412,7 +1461,7 @@ pub fn create_vizia_guitar_editor(
                 .horizontal_gap(Pixels(8.0));
 
                 // Standalone-only audio/MIDI device row; hidden in plugin builds.
-                device_settings_row(cx, presets_dir, lang);
+                device_settings_row(cx, presets_dir, lang, save_status.clone());
 
                 HStack::new(cx, |cx| {
                     // Rack 1: INSTRUMENT
@@ -1947,4 +1996,89 @@ pub fn create_vizia_guitar_editor(
             .height(Stretch(1.0));
         });
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// State whose preset manager cannot save: the presets directory
+    /// path is a regular file, so every sidecar write fails at the
+    /// atomic-write step. Permission bits cannot simulate this (the
+    /// tests run as root, which bypasses them).
+    fn fixture() -> (GuitarUiState, Signal<String>, std::path::PathBuf) {
+        let dir = std::env::temp_dir()
+            .join(format!("ppe-save-status-guitar-{}", std::process::id()));
+        std::fs::write(&dir, b"not a directory").unwrap();
+        let factory = vec![Preset::new("a", "A", "guitar", HashMap::new())];
+        let manager =
+            PresetManager::with_custom_dir("guitar", factory, dir.clone());
+        let params = Arc::new(PhysicsGuitarParams::default());
+        let save_status = Signal::new(String::new());
+        let (gui_tx, _rx) = crossbeam_channel::unbounded::<GuiGuitarEvent>();
+        let state = GuitarUiState {
+            params: params.clone(),
+            manager: Arc::new(parking_lot::RwLock::new(manager)),
+            undo: Arc::new(parking_lot::RwLock::new(UndoManager::default())),
+            selected_name: Signal::new("A".to_string()),
+            selected_id: Signal::new("a".to_string()),
+            preset_choices: Signal::new(Vec::new()),
+            browser_open: Signal::new(false),
+            browser_search: Signal::new(String::new()),
+            browser_category: Signal::new(None),
+            browser_favorites_only: Signal::new(false),
+            browser_categories: Signal::new(Vec::new()),
+            browser_filtered: Signal::new(Vec::new()),
+            browser_tags: Signal::new(Vec::new()),
+            browser_selected_tags: Signal::new(Vec::new()),
+            browser_tags_input: Signal::new(String::new()),
+            language: Signal::new(Language::English),
+            language_atom: Arc::new(AtomicU8::new(0)),
+            editor_state: ViziaState::new(|| (EDITOR_WIDTH, EDITOR_HEIGHT)),
+            name_input: Signal::new("A".to_string()),
+            is_user_preset: Signal::new(false),
+            can_undo: Signal::new(false),
+            can_redo: Signal::new(false),
+            suppress_undo: Arc::new(AtomicU32::new(0)),
+            discrete: DiscreteSelections {
+                mode: Signal::new(0),
+                pluck_style: Signal::new(0),
+                pickup_pos: Signal::new(0),
+                pickup_type: Signal::new(0),
+                cabinet_model: Signal::new(0),
+                groove_pattern: Signal::new(0),
+            },
+            gui_tx,
+            held_qwerty_keys: HashMap::new(),
+            held_string_keys: HashMap::new(),
+            held_nav_keys: HashSet::new(),
+            octave_offset: 0,
+            learn_arm: LearnArm::new(build_ptr_to_id_map(&params)),
+            learn_status: Signal::new(String::new()),
+            save_status: save_status.clone(),
+            last_cc: Arc::new(LastCc::new()),
+            last_seen_seq: 0,
+            last_seen_pending: None,
+        };
+        (state, save_status, dir)
+    }
+
+    #[test]
+    fn save_failure_status_is_set_and_cleared() {
+        let (state, save_status, dir) = fixture();
+        // The failing save the handlers react to is real: starring
+        // preset "a" cannot persist into a file-as-directory.
+        assert!(state.manager.write().toggle_favorite("a").is_err());
+        state.report_save_failure(SaveFailureKind::Favorite);
+        assert_eq!(save_status.get(), "Failed to save favorite");
+        state.report_save_failure(SaveFailureKind::Preset);
+        assert_eq!(save_status.get(), "Failed to save preset");
+        state.clear_save_status();
+        assert_eq!(save_status.get(), "");
+        // The message follows the editor language.
+        state.language.set(Language::SimplifiedChinese);
+        state.report_save_failure(SaveFailureKind::Tags);
+        assert_eq!(save_status.get(), "保存标签失败");
+        let _ = std::fs::remove_file(&dir);
+    }
 }

@@ -65,6 +65,11 @@ impl ParamButton {
         // `:checked` pseudo-class when the button is on. Uses modulated value — there's no
         // convenient way to display both modulated and unmodulated for a button.
         .checked(modulated_signal.map(|v| *v >= 0.5))
+        // Checkable so assistive technology reads the toggled state
+        // (accesskit `toggled` comes from CHECKABLE + CHECKED); the
+        // button is keyboard-reachable and toggles on Space/Enter.
+        .checkable(true)
+        .navigable(true)
     }
 
     /// Set the parameter's normalised value to either 0.0 or 1.0 depending on its current value.
@@ -108,6 +113,20 @@ impl View for ParamButton {
             // without action; the first press already toggled once.
             WindowEvent::MouseDoubleClick(MouseButton::Left)
             | WindowEvent::MouseTripleClick(MouseButton::Left) => {
+                meta.consume();
+            }
+            // Keyboard equivalent of a click: Space/Enter toggle the
+            // button when it has keyboard focus (Tab-reachable via
+            // `.navigable(true)` above). In Learn mode the keypress
+            // arms/clears exactly like a left click instead.
+            WindowEvent::KeyDown(Code::Space | Code::Enter | Code::NumpadEnter, _) => {
+                let intercepted = self
+                    .learn_intercept
+                    .as_ref()
+                    .is_some_and(|intercept| intercept(MouseButton::Left));
+                if !intercepted {
+                    self.toggle_value(cx);
+                }
                 meta.consume();
             }
             WindowEvent::MouseScroll(_scroll_x, scroll_y) if self.use_scroll_wheel => {

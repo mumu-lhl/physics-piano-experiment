@@ -42,7 +42,12 @@ impl PianoKeyboardWidget {
             held_mouse_key: None,
         }
         .build(cx, |_| {})
-        .focusable(true);
+        .focusable(true)
+        // Display canvas with QWERTY/mouse playing: a role and name
+        // are its text alternative. The name is not localized: the
+        // widget has no language plumbing.
+        .role(Role::Canvas)
+        .name("Piano keyboard".to_string());
         let entity = keyboard.entity();
         keyboard.context().with_current(entity, |cx| {
             // Observe releases before routing so a focus change or another captured view

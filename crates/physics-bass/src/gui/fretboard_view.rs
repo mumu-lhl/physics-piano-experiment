@@ -47,6 +47,9 @@ impl BassFretboardWidget {
         gui_tx: crossbeam_channel::Sender<GuiBassEvent>,
         language: Arc<AtomicU8>,
     ) -> Handle<'_, Self> {
+        // Display canvas: a role and name are its text alternative
+        // (state is graphics-only). The name is not localized, matching
+        // the widget's other untranslated canvas content.
         Self {
             params,
             active_frets,
@@ -57,6 +60,8 @@ impl BassFretboardWidget {
             held: None,
         }
         .build(cx, |_| {})
+        .role(Role::Canvas)
+        .name("Bass fretboard".to_string())
     }
 
     fn board_geometry(bounds: &BoundingBox) -> (f32, f32, f32, f32) {

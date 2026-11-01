@@ -25,12 +25,22 @@ const PAD_X: f32 = 10.0;
 const PAD_Y: f32 = 6.0;
 /// Grab radius around an interior handle.
 const GRAB_R: f32 = 11.0;
+/// Arrow-key step as a fraction of the point's 0..1 range.
+const CURVE_ARROW_STEP: f32 = 0.05;
 
 pub struct VelocityCurveEditorWidget {
     /// One gesture base per interior point parameter (25%, 50%, 75%).
     bases: [ParamWidgetBase; 3],
     /// Interior point currently being dragged (0..3, indexing `bases`).
     dragging: Option<usize>,
+    /// Interior point the keyboard arrows act on (0..3, indexing
+    /// `bases`). Left/Right move the selection, Up/Down adjust it.
+    /// Clicking a handle selects it too, so keyboard and mouse stay
+    /// in sync.
+    selected: usize,
+    /// Whether the widget currently has keyboard focus: the selected
+    /// handle gets a visible ring only while focused.
+    focused: bool,
     /// Optional MIDI Learn arming: in Learn mode clicking a handle arms
     /// that point's parameter instead of dragging it. The widget has no
     /// single bindable parameter (three points), so arming is per-handle.
@@ -56,9 +66,18 @@ impl VelocityCurveEditorWidget {
                 ParamWidgetBase::new(cx, point_75),
             ],
             dragging: None,
+            selected: 0,
+            focused: false,
             learn,
         }
         .build(cx, |_| {})
+        // Keyboard-reachable canvas: arrow keys select and adjust
+        // points (see `View::event`). The widget as a whole is not a
+        // single slider, so it carries the Canvas role and a name
+        // only; the per-point values stay in the drawn curve.
+        .navigable(true)
+        .role(Role::Canvas)
+        .name("Velocity curve editor".to_string())
     }
 
     /// All five point values; endpoints are locked, interior points come
@@ -106,6 +125,16 @@ impl VelocityCurveEditorWidget {
             self.bases[i].end_set_parameter(cx);
         }
     }
+
+    /// Keyboard equivalent of a vertical drag on the selected point:
+    /// one bracketed gesture per keypress, like the knob arrow steps.
+    fn nudge_selected(&mut self, cx: &mut EventContext, delta: f32) {
+        let base = &self.bases[self.selected];
+        let next = (base.unmodulated_normalized_value() + delta).clamp(0.0, 1.0);
+        base.begin_set_parameter(cx);
+        base.set_normalized_value(cx, next);
+        base.end_set_parameter(cx);
+    }
 }
 
 impl View for VelocityCurveEditorWidget {
@@ -129,6 +158,7 @@ impl View for VelocityCurveEditorWidget {
                         meta.consume();
                         return;
                     }
+                    self.selected = i - 1;
                     self.dragging = Some(i - 1);
                     cx.capture();
                     cx.focus();
@@ -185,11 +215,39 @@ impl View for VelocityCurveEditorWidget {
                     meta.consume();
                 }
             }
+            WindowEvent::FocusIn => {
+                self.focused = true;
+                cx.needs_redraw();
+            }
             WindowEvent::FocusOut if cx.focused() != cx.current() => {
+                self.focused = false;
                 self.end_drag(cx);
+                cx.needs_redraw();
             }
             WindowEvent::WindowFocused(false) => {
                 self.end_drag(cx);
+            }
+            // Keyboard equivalent of dragging a handle: Left/Right
+            // move the selection between the three interior points,
+            // Up/Down adjust the selected point. Without this the
+            // curve is mouse-only.
+            WindowEvent::KeyDown(Code::ArrowLeft, _) => {
+                self.selected = self.selected.saturating_sub(1);
+                cx.needs_redraw();
+                meta.consume();
+            }
+            WindowEvent::KeyDown(Code::ArrowRight, _) => {
+                self.selected = (self.selected + 1).min(2);
+                cx.needs_redraw();
+                meta.consume();
+            }
+            WindowEvent::KeyDown(Code::ArrowUp, _) => {
+                self.nudge_selected(cx, CURVE_ARROW_STEP);
+                meta.consume();
+            }
+            WindowEvent::KeyDown(Code::ArrowDown, _) => {
+                self.nudge_selected(cx, -CURVE_ARROW_STEP);
+                meta.consume();
             }
             _ => {}
         });
@@ -259,6 +317,16 @@ impl View for VelocityCurveEditorWidget {
                 let mut handle = vg::Path::new();
                 handle.circle(x, y, r);
                 canvas.fill_path(&handle, &gold);
+                // Keyboard selection: while the widget has keyboard
+                // focus, ring the handle the arrow keys will adjust.
+                if self.focused && self.selected == i - 1 {
+                    let mut ring = vg::Path::new();
+                    ring.circle(x, y, r + 3.5);
+                    canvas.stroke_path(
+                        &ring,
+                        &vg::Paint::color(vg::Color::rgb(255, 255, 255)).with_line_width(1.5),
+                    );
+                }
             }
         }
     }

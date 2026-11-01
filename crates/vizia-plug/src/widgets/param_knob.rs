@@ -97,6 +97,13 @@ impl View for ParamKnob {
         Some("param-knob")
     }
 
+    fn accessibility(&self, _cx: &mut AccessContext, node: &mut AccessNode) {
+        // Numeric range for the 0..100 value bound by the editor-side
+        // `.numeric_value(...)` modifier (mirrors Vizia's built-in Knob).
+        node.set_min_numeric_value(0.0);
+        node.set_max_numeric_value(100.0);
+    }
+
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
         event.map(|window_event, meta| match window_event {
             WindowEvent::MouseDown(MouseButton::Left) => {

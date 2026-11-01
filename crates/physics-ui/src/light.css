@@ -291,3 +291,11 @@
 .theme-light param-knob:focus {
     outline-color: #8a6d1f;
 }
+
+.theme-light param-slider:focus,
+.theme-light param-button:focus,
+.theme-light piano-lid-widget:focus,
+.theme-light mic-stage-widget:focus,
+.theme-light velocity-curve-editor:focus {
+    outline-color: #8a6d1f;
+}

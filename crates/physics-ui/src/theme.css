@@ -245,6 +245,20 @@ param-knob:focus {
     outline-offset: 2.0;
 }
 
+/* Same visible ring for every other keyboard-reachable control:
+   sliders and toggle buttons (Tab-reachable), and the lid / mic /
+   curve canvases (arrow-key operable once focused). The light-theme
+   variant below darkens the ring for contrast on #f7f7f5. */
+param-slider:focus,
+param-button:focus,
+piano-lid-widget:focus,
+mic-stage-widget:focus,
+velocity-curve-editor:focus {
+    outline-color: #ffd778;
+    outline-width: 2.0;
+    outline-offset: 2.0;
+}
+
 popup {
     background-color: #181a24;
     border-color: #383e54;

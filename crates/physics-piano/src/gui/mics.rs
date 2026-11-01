@@ -31,6 +31,29 @@ enum MicGroup {
     Ambient,
 }
 
+impl MicGroup {
+    /// Next group in the keyboard cycle order (Close -> Player -> Ambient).
+    fn next(self) -> Self {
+        match self {
+            MicGroup::Close => MicGroup::Player,
+            MicGroup::Player => MicGroup::Ambient,
+            MicGroup::Ambient => MicGroup::Close,
+        }
+    }
+
+    /// Previous group in the keyboard cycle order.
+    fn prev(self) -> Self {
+        match self {
+            MicGroup::Close => MicGroup::Ambient,
+            MicGroup::Player => MicGroup::Close,
+            MicGroup::Ambient => MicGroup::Player,
+        }
+    }
+}
+
+/// Arrow-key gain step as a fraction of the -60..+6 dB range.
+const MIC_ARROW_STEP: f32 = 0.05;
+
 /// Microphone capsule positions in window coordinates, computed from the widget
 /// bounds. Single source of truth for both drawing and drag hit-testing.
 struct MicPoints {
@@ -75,6 +98,13 @@ pub struct MicStageWidget {
     player_base: ParamWidgetBase,
     amb_base: ParamWidgetBase,
     drag: Option<(MicGroup, f32, f32)>,
+    /// Microphone group the keyboard arrows adjust (Left/Right cycle
+    /// groups, Up/Down adjust gain). Clicking a capsule selects its
+    /// group too, so keyboard and mouse stay in sync.
+    selected: MicGroup,
+    /// Whether the widget currently has keyboard focus: the selected
+    /// group's capsules get a visible ring only while focused.
+    focused: bool,
     language: Language,
     /// Optional MIDI Learn arming: each mic group has a single bindable
     /// gain parameter, so a Learn-mode click on a capsule arms that
@@ -92,16 +122,30 @@ impl MicStageWidget {
         let close_base = ParamWidgetBase::new(cx, &params.mic_close);
         let player_base = ParamWidgetBase::new(cx, &params.mic_player);
         let amb_base = ParamWidgetBase::new(cx, &params.mic_ambient);
+        let value = close_base.unmodulated_signal(cx);
         Self {
             params,
             close_base,
             player_base,
             amb_base,
             drag: None,
+            selected: MicGroup::Close,
+            focused: false,
             language,
             learn,
         }
         .build(cx, |_| {})
+        // Keyboard-reachable: arrow keys cycle groups and adjust the
+        // selected group's gain (see `View::event`). The accessible
+        // name is the visible title, already localized; the numeric
+        // value tracks the close gain (the default selected group)
+        // on Vizia's 0..100 slider scale.
+        .navigable(true)
+        .role(Role::Slider)
+        .name(
+            translate(language, "piano.mics.title", "SPATIAL ACOUSTIC SOUNDSTAGE").to_string(),
+        )
+        .numeric_value(value.map(|v| (*v as f64 * 100.0).round()))
     }
 
     fn base_for(&self, group: MicGroup) -> ParamWidgetBase {
@@ -148,11 +192,28 @@ impl MicStageWidget {
             self.base_for(group).end_set_parameter(cx);
         }
     }
+
+    /// Keyboard equivalent of a vertical drag on the selected group:
+    /// one bracketed gesture per keypress, like the knob arrow steps.
+    fn nudge_selected(&mut self, cx: &mut EventContext, delta: f32) {
+        let base = self.base_for(self.selected);
+        let next = (self.gain_norm(self.selected) + delta).clamp(0.0, 1.0);
+        base.begin_set_parameter(cx);
+        base.set_normalized_value(cx, next);
+        base.end_set_parameter(cx);
+    }
 }
 
 impl View for MicStageWidget {
     fn element(&self) -> Option<&'static str> {
         Some("mic-stage-widget")
+    }
+
+    fn accessibility(&self, _cx: &mut AccessContext, node: &mut AccessNode) {
+        // Numeric range for the 0..100 value bound in `new` (mirrors
+        // Vizia's built-in Knob).
+        node.set_min_numeric_value(0.0);
+        node.set_max_numeric_value(100.0);
     }
 
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
@@ -169,8 +230,10 @@ impl View for MicStageWidget {
                             return;
                         }
                     }
+                    self.selected = group;
                     self.drag = Some((group, self.gain_norm(group), my));
                     cx.capture();
+                    cx.focus();
                     self.base_for(group).begin_set_parameter(cx);
                     meta.consume();
                 }
@@ -194,11 +257,38 @@ impl View for MicStageWidget {
                     meta.consume();
                 }
             }
+            WindowEvent::FocusIn => {
+                self.focused = true;
+                cx.needs_redraw();
+            }
             WindowEvent::FocusOut if cx.focused() != cx.current() => {
+                self.focused = false;
                 self.end_drag(cx);
+                cx.needs_redraw();
             }
             WindowEvent::WindowFocused(false) => {
                 self.end_drag(cx);
+            }
+            // Keyboard equivalent of dragging a capsule: Left/Right
+            // cycle the selected group, Up/Down adjust its gain.
+            // Without this the mic gains are mouse-only.
+            WindowEvent::KeyDown(Code::ArrowLeft, _) => {
+                self.selected = self.selected.prev();
+                cx.needs_redraw();
+                meta.consume();
+            }
+            WindowEvent::KeyDown(Code::ArrowRight, _) => {
+                self.selected = self.selected.next();
+                cx.needs_redraw();
+                meta.consume();
+            }
+            WindowEvent::KeyDown(Code::ArrowUp, _) => {
+                self.nudge_selected(cx, MIC_ARROW_STEP);
+                meta.consume();
+            }
+            WindowEvent::KeyDown(Code::ArrowDown, _) => {
+                self.nudge_selected(cx, -MIC_ARROW_STEP);
+                meta.consume();
             }
             WindowEvent::MouseMove(_x, y) => {
                 if let Some((group, start_norm, start_y)) = self.drag {
@@ -387,6 +477,23 @@ impl View for MicStageWidget {
             18.0,
             (0.75, 0.45, 1.0),
         );
+
+        // Keyboard selection: while the widget has keyboard focus, ring
+        // the capsules of the group the arrow keys will adjust.
+        if self.focused {
+            let ring =
+                vg::Paint::color(vg::Color::rgb(255, 215, 120)).with_line_width(2.0);
+            let positions: &[(f32, f32)] = match self.selected {
+                MicGroup::Close => &[pts.close_l, pts.close_r],
+                MicGroup::Player => &[pts.player],
+                MicGroup::Ambient => &[pts.amb_l, pts.amb_r, pts.amb_c],
+            };
+            for &(x, y) in positions {
+                let mut circle = vg::Path::new();
+                circle.circle(x, y, GRAB_RADIUS);
+                canvas.stroke_path(&circle, &ring);
+            }
+        }
 
         // 4. Labels and Gain Readouts
         let title_str = translate(

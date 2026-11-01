@@ -94,12 +94,23 @@ pub fn parameter_slider_learn<P: Param + 'static>(
     learn: Option<LearnArm>,
 ) {
     let param_ptr = param.as_ptr();
+    let slider_base = ParamWidgetBase::new(cx, param);
+    let slider_value = slider_base.unmodulated_signal(cx);
     HStack::new(cx, move |cx| {
         Label::new(cx, label).width(Pixels(label_width));
         let mut slider = ParamSlider::new(cx, param)
             .disable_scroll_wheel()
             .width(Stretch(1.0))
-            .height(Pixels(20.0));
+            .height(Pixels(20.0))
+            // Tab-reachable with the same accessible name/role/value
+            // as the knobs (see `parameter_knob`). Arrow-key stepping
+            // is deliberately NOT added here: the slider owns an
+            // inline text-entry textbox, and arrow keys must keep
+            // editing text while it is active.
+            .navigable(true)
+            .role(Role::Slider)
+            .name(label.to_string())
+            .numeric_value(slider_value.map(|v| (*v as f64 * 100.0).round()));
         let restore_state = Arc::new(parking_lot::Mutex::new(SliderRestoreState::default()));
         let slider_entity = slider.entity();
         slider.context().with_current(slider_entity, |cx| {
@@ -276,11 +287,18 @@ pub fn parameter_knob<P: Param + 'static>(
         let mut knob = ParamKnob::new(cx, param)
             .width(Pixels(40.0))
             .height(Pixels(40.0))
-            // Tab-focusable: ParamKnob already steps on arrow keys once
-            // focused (focus is taken on mouse-down); without this the
-            // knobs are unreachable by keyboard. The focus ring is drawn
-            // by the `param-knob:focus` rule in theme.css.
-            .focusable(true);
+            // Tab-reachable: ParamKnob already steps on arrow keys once
+            // focused (focus is taken on mouse-down); `focusable`
+            // alone does not put a view in the Tab order — only
+            // `navigable` does. The focus ring is drawn by the
+            // `param-knob:focus` rule in theme.css. The accessible
+            // name is the visible label (already localized at the
+            // call site) and the numeric value tracks the live
+            // parameter on Vizia's 0..100 slider scale.
+            .navigable(true)
+            .role(Role::Slider)
+            .name(label.to_string())
+            .numeric_value(unmodulated.map(|v| (*v as f64 * 100.0).round()));
         let restore_state = Arc::new(parking_lot::Mutex::new(SliderRestoreState::default()));
         let knob_entity = knob.entity();
         knob.context().with_current(knob_entity, |cx| {

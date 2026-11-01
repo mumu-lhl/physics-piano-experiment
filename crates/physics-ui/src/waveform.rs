@@ -49,7 +49,14 @@ pub struct WaveformWidget {
 
 impl WaveformWidget {
     pub fn new(cx: &mut Context, history: Arc<parking_lot::RwLock<Vec<f32>>>) -> Handle<'_, Self> {
-        Self { history }.build(cx, |_| {})
+        // Display-only canvas: a role and name are its text
+        // alternative (state is graphics-only). The name is not
+        // localized: the widget has no language plumbing, matching
+        // its untranslated drawn content.
+        Self { history }
+            .build(cx, |_| {})
+            .role(Role::Canvas)
+            .name("Waveform".to_string())
     }
 }
 

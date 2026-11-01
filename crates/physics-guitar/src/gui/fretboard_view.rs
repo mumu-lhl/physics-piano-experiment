@@ -47,6 +47,9 @@ impl GuitarFretboardWidget {
         string_energies: Arc<[AtomicU32; 6]>,
         string_profiles: Arc<[[AtomicI32; 16]; 6]>,
     ) -> Handle<'_, Self> {
+        // Display canvas: a role and name are its text alternative
+        // (state is graphics-only). The name is not localized: the
+        // widget has no language plumbing.
         Self {
             active_frets,
             string_energies,
@@ -56,6 +59,8 @@ impl GuitarFretboardWidget {
             active_strum_frets: [None; 6],
         }
         .build(cx, |_| {})
+        .role(Role::Canvas)
+        .name("Guitar fretboard".to_string())
     }
 
     fn release_all(&mut self, cx: &mut EventContext) {

@@ -110,6 +110,24 @@ impl ParamRegistry {
     /// [`parameter_values_changed`](nice_plug::prelude::Editor::parameter_values_changed) hook
     /// (which reports "something moved but we don't know what") so every widget catches up
     /// in one sweep.
+    ///
+    /// The full sweep is load-bearing and must NOT be replaced by a targeted refresh on the
+    /// 33 ms `RefreshDisplay` tick (see the three editors): there is no per-binding dirty
+    /// tracking anywhere in the stack, so at tick time nothing records *which* parameter
+    /// moved — discovering that is exactly what this sweep does, by re-reading every
+    /// `ParamPtr` and letting [`SyncSignal::set_if_changed`] drop the unchanged ones. The
+    /// writers that bypass notification are real: the audio thread applies learned MIDI CCs
+    /// with `ParamPtr::_internal_set_normalized_value` (no task is posted, no callback
+    /// fires), and host/GUI writes round-trip through nice-plug's `GuiContext` without
+    /// leaving a dirty set this crate could consult. A targeted refresh would need dirty
+    /// instrumentation at every writer across all three instruments plus the nice-plug
+    /// boundary; any writer missed reintroduces stale knobs (the P1-13 failure mode the
+    /// sweep exists to prevent). The cost is one atomic read and one float compare per
+    /// registered signal per tick — negligible against a missed refresh. Use
+    /// [`flush_one`](Self::flush_one) only where the changed parameter is known, i.e. the
+    /// host-driven `parameter_value_changed` / `parameter_modulation_changed` callbacks,
+    /// which keep their full sweep too because they receive an id with no `ParamPtr`
+    /// lookup in this crate.
     pub fn flush_all(&self) {
         let signals = self.inner.signals.lock();
 
@@ -159,3 +177,75 @@ impl Default for ParamRegistry {
 }
 
 impl Model for ParamRegistry {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nice_plug_core::params::range::FloatRange;
+    use nice_plug_core::params::{FloatParam, Param};
+
+    struct TestParams {
+        pub tone: FloatParam,
+        pub gain: FloatParam,
+    }
+
+    /// Boxed params plus their `ParamPtr`s, mirroring the MIDI Learn
+    /// fixture: the pointers borrow the params, so the params must
+    /// never move after the pointers are taken. (No `Params` derive:
+    /// the derive macro hardcodes the `nice-plug` facade crate, which
+    /// this crate does not depend on; `Param::as_ptr` is enough.)
+    fn fixture() -> (Box<TestParams>, ParamPtr, ParamPtr) {
+        let params = Box::new(TestParams {
+            tone: FloatParam::new("Tone", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            gain: FloatParam::new("Gain", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
+        });
+        let tone = params.tone.as_ptr();
+        let gain = params.gain.as_ptr();
+        (params, tone, gain)
+    }
+
+    /// The MIDI CC pattern: a direct `ParamPtr` write with no
+    /// notification of any kind. `flush_all` — the 33 ms tick's
+    /// refresh — must still surface the new value in the signal.
+    #[test]
+    fn flush_all_picks_up_direct_param_writes() {
+        let (_params, tone, _gain) = fixture();
+        let registry = ParamRegistry::new();
+        let signal = registry.unmodulated(tone);
+        assert_eq!(signal.get(), 0.5);
+
+        // SAFETY: the boxed params outlive this test; mirrors
+        // `apply_midi_cc`'s direct write on the audio thread.
+        unsafe {
+            assert!(tone._internal_set_normalized_value(0.25));
+        }
+        // The signal is stale until a flush happens: nothing notified it.
+        assert_eq!(signal.get(), 0.5);
+
+        registry.flush_all();
+        assert_eq!(signal.get(), 0.25);
+    }
+
+    /// `flush_one` is targeted: flushing the wrong parameter leaves
+    /// the moved parameter's signal stale. That staleness is exactly
+    /// why the 33 ms tick cannot use `flush_one` — at tick time the
+    /// moved parameter is unknown, so only `flush_all` is safe.
+    #[test]
+    fn flush_one_leaves_other_params_untouched() {
+        let (_params, tone, gain) = fixture();
+        let registry = ParamRegistry::new();
+        let tone_signal = registry.unmodulated(tone);
+        let gain_signal = registry.unmodulated(gain);
+
+        // SAFETY: see above.
+        unsafe {
+            assert!(gain._internal_set_normalized_value(0.75));
+        }
+        registry.flush_one(tone);
+        assert_eq!(tone_signal.get(), 0.5);
+        assert_eq!(gain_signal.get(), 0.5);
+
+        registry.flush_all();
+        assert_eq!(gain_signal.get(), 0.75);
+    }
+}
