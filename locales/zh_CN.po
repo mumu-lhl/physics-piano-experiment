@@ -1052,3 +1052,23 @@ msgstr "CC{cc} 已保留，不可学习"
 msgctxt "learn.save_failed"
 msgid "Failed to save binding for {param}: {error}"
 msgstr "保存 {param} 的绑定失败：{error}"
+
+msgctxt "gui.save_failed_favorite"
+msgid "Failed to save favorite"
+msgstr "保存收藏失败"
+
+msgctxt "gui.save_failed_tags"
+msgid "Failed to save tags"
+msgstr "保存标签失败"
+
+msgctxt "gui.save_failed_preset"
+msgid "Failed to save preset"
+msgstr "保存预设失败"
+
+msgctxt "gui.save_failed_device"
+msgid "Failed to save device settings"
+msgstr "保存设备设置失败"
+
+msgctxt "gui.save_failed_restart"
+msgid "Failed to restart"
+msgstr "重启失败"

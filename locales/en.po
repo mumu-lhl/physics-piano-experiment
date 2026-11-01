@@ -1052,3 +1052,23 @@ msgstr "CC{cc} is reserved and can't be learned"
 msgctxt "learn.save_failed"
 msgid "Failed to save binding for {param}: {error}"
 msgstr "Failed to save binding for {param}: {error}"
+
+msgctxt "gui.save_failed_favorite"
+msgid "Failed to save favorite"
+msgstr "Failed to save favorite"
+
+msgctxt "gui.save_failed_tags"
+msgid "Failed to save tags"
+msgstr "Failed to save tags"
+
+msgctxt "gui.save_failed_preset"
+msgid "Failed to save preset"
+msgstr "Failed to save preset"
+
+msgctxt "gui.save_failed_device"
+msgid "Failed to save device settings"
+msgstr "Failed to save device settings"
+
+msgctxt "gui.save_failed_restart"
+msgid "Failed to restart"
+msgstr "Failed to restart"

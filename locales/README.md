@@ -22,19 +22,21 @@ installation is needed by users.
 ## Updating the source template
 
 When adding or changing English UI strings, regenerate the template from the
-Rust call sites. The shared lookup functions take `(language, context, msgid)`:
+Rust call sites with the durable extractor (it blanks comment lines instead
+of stripping them, so the `#: ` refs point at the true call-site lines; its
+scanner mirrors `crates/physics-ui/tests/i18n_keys.rs`). The shared lookup
+functions take `(language, context, msgid)`:
 
 ```sh
-find crates/physics-ui/src \
-  crates/physics-piano/src/gui crates/physics-piano/src/presets.rs \
-  crates/physics-guitar/src/gui crates/physics-guitar/src/presets.rs \
-  crates/physics-bass/src/gui.rs crates/physics-bass/src/gui \
-  crates/physics-drum/src/gui.rs crates/physics-drum/src/gui \
-  -name '*.rs' -print0 \
-  | xargs -0 xgettext --language=Rust --from-code=UTF-8 \
-      --keyword=translate:2c,3 --keyword=translate_format:2c,3 \
-      --output=locales/physics-instruments.pot
+python3 ~/workspace/physics-maintenance/extract_pot.py --root .
+python3 ~/workspace/physics-maintenance/verify-pot.py --root .
 ```
+
+The extractor rewrites only the `#: ` refs by default and refuses to add or
+drop keys: if the sources gained or lost a key, review the reported diff
+first, update the `.po` catalogs, then re-run with `--allow-key-changes`.
+Validate the catalogs with `msgfmt --check-format` on each `.po`/`.pot`
+file before committing.
 
 Review the generated POT before committing it, then merge it into each PO
 catalog with Weblate or `msgmerge --update locales/fr.po locales/physics-instruments.pot`.
