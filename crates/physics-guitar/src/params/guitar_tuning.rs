@@ -62,14 +62,21 @@ impl GuitarStringParams {
 }
 
 /// Generates the standard 6-string physical parameters based on set type.
-pub fn generate_guitar_string_set(
+///
+/// Stack-allocated: this is a `const fn` returning a fixed array, so
+/// callers on the audio thread (notably [`crate::engine::GuitarEngine::set_mode`],
+/// called from `process()` on every mode change) can re-voice the
+/// strings without the heap allocation the `Vec`-returning generator
+/// performed. That allocation tripped nice-plug's no-allocation guard
+/// and, under memory pressure, aborted the debug standalone.
+pub const fn generate_guitar_string_set_array(
     set_type: GuitarStringSetType,
     num_modes: usize,
-) -> Vec<GuitarStringParams> {
+) -> [GuitarStringParams; 6] {
     let scale_length = 0.648; // 25.5 inches standard
 
     match set_type {
-        GuitarStringSetType::Electric010 => vec![
+        GuitarStringSetType::Electric010 => [
             // 1st string (E4, 329.63 Hz, .010")
             GuitarStringParams {
                 string_index: 1,
@@ -167,7 +174,7 @@ pub fn generate_guitar_string_set(
                 num_modes,
             },
         ],
-        GuitarStringSetType::Acoustic012 => vec![
+        GuitarStringSetType::Acoustic012 => [
             // Phosphor Bronze .012 - .053
             GuitarStringParams {
                 string_index: 1,
@@ -260,7 +267,7 @@ pub fn generate_guitar_string_set(
                 num_modes,
             },
         ],
-        GuitarStringSetType::ClassicalNylon => vec![
+        GuitarStringSetType::ClassicalNylon => [
             // Classical Nylon Standard Tension
             GuitarStringParams {
                 string_index: 1,
@@ -354,4 +361,17 @@ pub fn generate_guitar_string_set(
             },
         ],
     }
+}
+
+/// Generates the standard 6-string physical parameters based on set type.
+///
+/// Heap-allocating convenience wrapper over
+/// [`generate_guitar_string_set_array`]: identical values, for
+/// construction-time and test callers only. Audio-thread callers must
+/// use the array generator instead.
+pub fn generate_guitar_string_set(
+    set_type: GuitarStringSetType,
+    num_modes: usize,
+) -> Vec<GuitarStringParams> {
+    generate_guitar_string_set_array(set_type, num_modes).to_vec()
 }

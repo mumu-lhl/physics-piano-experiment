@@ -11,7 +11,7 @@ use crate::core::pickup::{MagneticPickup, PickupSelector, PickupType};
 use crate::core::pluck::{PluckExciter, PluckStyle};
 use crate::core::squeak::FingerSqueakGenerator;
 use crate::core::strummer::{SmartStrummer, StrumDirection, StrumPluckEvent};
-use crate::params::{GuitarStringSetType, generate_guitar_string_set};
+use crate::params::{GuitarStringSetType, generate_guitar_string_set_array};
 
 const ELECTRIC_OUTPUT_TRIM: f64 = 0.5;
 const ACOUSTIC_OUTPUT_TRIM: f64 = 0.05;
@@ -107,7 +107,7 @@ impl GuitarEngine {
         mode: GuitarInstrumentMode,
     ) -> Self {
         let dt = 1.0 / sample_rate;
-        let string_params = generate_guitar_string_set(set_type, 30);
+        let string_params = generate_guitar_string_set_array(set_type, 30);
         let mut strings = Vec::with_capacity(6);
 
         for p in string_params {
@@ -164,7 +164,11 @@ impl GuitarEngine {
                 GuitarInstrumentMode::Acoustic => GuitarStringSetType::Acoustic012,
                 GuitarInstrumentMode::Electric => GuitarStringSetType::Electric010,
             };
-            let string_params = generate_guitar_string_set(set_type, 30);
+            let string_params = generate_guitar_string_set_array(set_type, 30);
+            // Stack array: `set_mode` runs on the audio thread (called
+            // from `process()` on every mode change), so the old
+            // `Vec`-returning generator's heap allocation tripped the
+            // no-allocation guard here.
             for (i, p) in string_params.into_iter().enumerate() {
                 if i < self.strings.len() {
                     let fret = self.strings[i].current_fret;

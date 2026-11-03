@@ -856,4 +856,33 @@ mod no_alloc_regression_tests {
         });
         assert_eq!(violation_count(), before);
     }
+
+    #[test]
+    fn mode_flip_does_not_allocate() {
+        // Regression (P0-2): `GuitarEngine::set_mode` used to call the
+        // `Vec`-returning string-set generator on the audio thread, so
+        // every mode flip heap-allocated 576 bytes and tripped the
+        // no-allocation guard (aborting the debug standalone under
+        // memory pressure). It now iterates a stack array; flipping
+        // modes repeatedly under the guard must add no violations.
+        // On the old code path each flip allocated the `Vec` buffer
+        // inside `assert_no_alloc`, raising `violation_count()`.
+        use crate::engine::{GuitarEngine, GuitarInstrumentMode};
+        let mut engine = GuitarEngine::new(
+            44100.0,
+            GuitarStringSetType::Electric010,
+            GuitarInstrumentMode::Electric,
+        );
+        let before = violation_count();
+        assert_no_alloc(|| {
+            engine.set_mode(GuitarInstrumentMode::Acoustic);
+            engine.set_mode(GuitarInstrumentMode::Electric);
+            engine.set_mode(GuitarInstrumentMode::Acoustic);
+        });
+        assert_eq!(violation_count(), before);
+        // The flips really re-voiced the strings: high-E tension is
+        // 71.8 N for the electric set, 103.6 N for the acoustic set.
+        assert_eq!(engine.mode, GuitarInstrumentMode::Acoustic);
+        assert!((engine.strings[0].params.tension - 103.6).abs() < 1e-9);
+    }
 }
