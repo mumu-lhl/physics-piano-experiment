@@ -7,7 +7,7 @@ use physics_dsp::{
     sanitize_floating_point_environment,
 };
 use physics_presets::{PresetManager, UndoManager, guitar_factory_presets};
-use physics_ui::{LastCc, apply_midi_cc, build_param_map};
+use physics_ui::{LastCc, apply_midi_cc, apply_preset_values, build_param_map};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
@@ -484,6 +484,22 @@ impl Default for PhysicsGuitar {
             .map(|(id, _, _)| id)
             .collect();
         preset_manager.prune_stale_midi_mappings(&valid_param_ids);
+        // P0-1: apply the launch factory preset here, at
+        // plugin-instance init, through the same normalized-value
+        // conversion the GUI preset path uses. Construction always
+        // precedes host state restore (the wrappers build the plugin
+        // with `P::default()` and only then call
+        // `deserialize_object`, which overwrites every parameter via
+        // `_internal_set_plain_value`), so a restored project still
+        // wins, while a fresh instance sounds and displays the preset
+        // the editor names. Param defaults are deliberately
+        // unchanged: double-click/right-click reset still restores
+        // the documented default, which may differ from the preset.
+        // No undo entry is created: the `UndoManager` below is fresh
+        // and this write bypasses the GUI event path entirely.
+        if let Some(preset) = preset_manager.get_preset("strat_clean_chime") {
+            apply_preset_values(&param_map, preset);
+        }
 
         Self {
             params,
@@ -1240,5 +1256,53 @@ mod output_limiter_tests {
         plugin.reset();
         assert!(plugin.engine.strings.iter().all(|s| s.total_energy() == 0.0));
         assert_eq!(plugin.engine.active_notes_on_string, [None; 6]);
+    }
+}
+
+#[cfg(test)]
+mod launch_preset_tests {
+    use super::*;
+
+    /// P0-1 regression: a fresh plugin instance already holds the
+    /// launch factory preset's values (the editor names Strat Clean
+    /// Chime from the moment it opens), parameters the preset does
+    /// not cover keep their defaults, and launch creates no undo
+    /// entry.
+    #[test]
+    fn fresh_plugin_applies_strat_clean_chime_preset_without_undo_entry() {
+        let plugin = PhysicsGuitar::default();
+        assert_eq!(plugin.params.mode.value(), 0);
+        assert_eq!(plugin.params.pluck_style.value(), 0);
+        assert_eq!(plugin.params.pickup_pos.value(), 4);
+        assert_eq!(plugin.params.pickup_type.value(), 0);
+        assert!((plugin.params.tone.value() - 0.95).abs() < 1e-6);
+        assert!((plugin.params.amp_drive.value() - 0.15).abs() < 1e-6);
+        assert!(plugin.params.cab_enabled.value());
+        assert!((plugin.params.strum_speed.value() - 6.0).abs() < 1e-6);
+        assert!((plugin.params.fret_buzz.value() - 0.30).abs() < 1e-6);
+        assert!((plugin.params.pluck_pos.value() - 0.16).abs() < 1e-6);
+        assert!((plugin.params.finger_squeak.value() - 0.25).abs() < 1e-6);
+        assert_eq!(plugin.params.groove_pattern.value(), 0);
+        // Not covered by the preset: defaults survive.
+        assert!((plugin.params.amp_bass.value() - 0.50).abs() < 1e-6);
+        assert!((plugin.params.groove_bpm.value() - 120.0).abs() < 1e-6);
+        assert!(!plugin.undo_manager.read().can_undo());
+        assert!(!plugin.undo_manager.read().can_redo());
+    }
+
+    /// The launch preset is an applied value, not a new default:
+    /// `PhysicsGuitarParams::default()` still constructs the documented
+    /// defaults, which double-click/right-click reset restores.
+    #[test]
+    fn param_defaults_are_unchanged_by_the_launch_preset() {
+        let params = PhysicsGuitarParams::default();
+        assert_eq!(params.pickup_pos.value(), 0);
+        assert_eq!(params.pickup_type.value(), 1);
+        assert!((params.tone.value() - 1.0).abs() < 1e-6);
+        assert!((params.amp_drive.value() - 0.25).abs() < 1e-6);
+        assert!((params.strum_speed.value() - 18.0).abs() < 1e-6);
+        assert!((params.fret_buzz.value() - 0.35).abs() < 1e-6);
+        assert!((params.pluck_pos.value() - 0.15).abs() < 1e-6);
+        assert!((params.finger_squeak.value() - 0.40).abs() < 1e-6);
     }
 }

@@ -15,7 +15,7 @@ use physics_dsp::{
     sanitize_floating_point_environment,
 };
 use physics_presets::{PresetManager, UndoManager, piano_factory_presets};
-use physics_ui::{LastCc, apply_midi_cc, build_param_map};
+use physics_ui::{LastCc, apply_midi_cc, apply_preset_values, build_param_map};
 
 #[derive(Params)]
 pub struct PhysicsPianoParams {
@@ -417,6 +417,27 @@ impl Default for PhysicsPiano {
             .map(|(id, _, _)| id)
             .collect();
         preset_manager.prune_stale_midi_mappings(&valid_param_ids);
+        // P0-1: apply the launch factory preset here, at
+        // plugin-instance init, through the same normalized-value
+        // conversion the GUI preset path uses. Construction always
+        // precedes host state restore (the wrappers build the plugin
+        // with `P::default()` and only then call
+        // `deserialize_object`, which overwrites every parameter via
+        // `_internal_set_plain_value`), so a restored project still
+        // wins, while a fresh instance sounds and displays the preset
+        // the editor names. Param defaults are deliberately
+        // unchanged: double-click/right-click reset still restores
+        // the documented default, which may differ from the preset.
+        // No undo entry is created: the `UndoManager` below is fresh
+        // and this write bypasses the GUI event path entirely. The
+        // preset is cloned and migrated first, as in the GUI handler:
+        // its legacy `velocity_curve` exponent becomes curve points,
+        // so launch and preset navigation agree exactly.
+        if let Some(preset) = preset_manager.get_preset("steinway_concert_d").cloned() {
+            let mut preset = preset;
+            migrate_velocity_curve_params(&mut preset.params);
+            apply_preset_values(&param_map, &preset);
+        }
 
         Self {
             params,
@@ -1117,5 +1138,57 @@ mod event_time_tests {
         }];
         clamp_event_times(&mut events, 0);
         assert_eq!(event_time(&events[0]), 0);
+    }
+}
+
+#[cfg(test)]
+mod launch_preset_tests {
+    use super::*;
+
+    /// P0-1 regression: a fresh plugin instance already holds the
+    /// launch factory preset's values (the editor names Steinway D
+    /// Concert Grand from the moment it opens), the legacy
+    /// `velocity_curve` exponent is migrated to curve points exactly
+    /// as preset navigation does, and launch creates no undo entry.
+    /// Most Steinway values coincide with the param defaults; the
+    /// discriminating value is hammer hardness (1.05 vs the 1.0
+    /// default).
+    #[test]
+    fn fresh_plugin_applies_steinway_preset_without_undo_entry() {
+        let plugin = PhysicsPiano::default();
+        assert!(
+            plugin
+                .preset_manager
+                .read()
+                .get_preset("steinway_concert_d")
+                .is_some()
+        );
+        assert!((plugin.params.inharmonicity_scale.value() - 1.0).abs() < 1e-6);
+        assert!((plugin.params.hammer_hardness.value() - 1.05).abs() < 1e-6);
+        assert!((plugin.params.unison_detuning.value() - 1.0).abs() < 1e-6);
+        assert!((plugin.params.phantom_gain.value() - 1.0).abs() < 1e-6);
+        assert!((plugin.params.key_noise.value() - 1.0).abs() < 1e-6);
+        assert!((plugin.params.damper_noise.value() - 1.0).abs() < 1e-6);
+        assert!((plugin.params.pedal_noise.value() - 1.0).abs() < 1e-6);
+        assert!((plugin.params.mic_close.value() - 0.0).abs() < 1e-6);
+        assert!((plugin.params.mic_player.value() - -3.0).abs() < 1e-6);
+        assert!((plugin.params.mic_ambient.value() - -6.0).abs() < 1e-6);
+        assert!((plugin.params.lid_angle.value() - 45.0).abs() < 1e-6);
+        assert!((plugin.params.velocity_point_25.value() - 0.25).abs() < 1e-6);
+        assert!((plugin.params.velocity_point_50.value() - 0.5).abs() < 1e-6);
+        assert!((plugin.params.velocity_point_75.value() - 0.75).abs() < 1e-6);
+        assert!(!plugin.undo_manager.read().can_undo());
+        assert!(!plugin.undo_manager.read().can_redo());
+    }
+
+    /// The launch preset is an applied value, not a new default:
+    /// `PhysicsPianoParams::default()` still constructs the documented
+    /// defaults, which double-click/right-click reset restores.
+    #[test]
+    fn param_defaults_are_unchanged_by_the_launch_preset() {
+        let params = PhysicsPianoParams::default();
+        assert!((params.hammer_hardness.value() - 1.0).abs() < 1e-6);
+        assert!((params.inharmonicity_scale.value() - 1.0).abs() < 1e-6);
+        assert!((params.lid_angle.value() - 45.0).abs() < 1e-6);
     }
 }

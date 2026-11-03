@@ -11,7 +11,7 @@ use physics_dsp::{
     sanitize_floating_point_environment,
 };
 use physics_presets::{PresetManager, UndoManager, bass_factory_presets};
-use physics_ui::{LastCc, apply_midi_cc, build_param_map};
+use physics_ui::{LastCc, apply_midi_cc, apply_preset_values, build_param_map};
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -256,6 +256,22 @@ impl Default for PhysicsBass {
             .map(|(id, _, _)| id)
             .collect();
         preset_manager.prune_stale_midi_mappings(&valid_param_ids);
+        // P0-1: apply the launch factory preset here, at
+        // plugin-instance init, through the same normalized-value
+        // conversion the GUI preset path uses. Construction always
+        // precedes host state restore (the wrappers build the plugin
+        // with `P::default()` and only then call
+        // `deserialize_object`, which overwrites every parameter via
+        // `_internal_set_plain_value`), so a restored project still
+        // wins, while a fresh instance sounds and displays the preset
+        // the editor names. Param defaults are deliberately
+        // unchanged: double-click/right-click reset still restores
+        // the documented default, which may differ from the preset.
+        // No undo entry is created: the `UndoManager` below is fresh
+        // and this write bypasses the GUI event path entirely.
+        if let Some(preset) = preset_manager.get_preset("bass_finger_punch") {
+            apply_preset_values(&param_map, preset);
+        }
         Self {
             params,
             param_map,
@@ -948,5 +964,47 @@ mod post_fx_limiter_tests {
             saw_unlimited,
             "boosted EQ should exceed 0.99 before limiting"
         );
+    }
+}
+
+#[cfg(test)]
+mod launch_preset_tests {
+    use super::*;
+
+    /// P0-1 regression: a fresh plugin instance already holds the
+    /// launch factory preset's values (the editor names Finger Punch
+    /// from the moment it opens), parameters the preset does not
+    /// cover keep their defaults, and launch creates no undo entry.
+    #[test]
+    fn fresh_plugin_applies_finger_punch_preset_without_undo_entry() {
+        let plugin = PhysicsBass::default();
+        assert_eq!(plugin.params.mode.value(), 0);
+        assert_eq!(plugin.params.pluck_style.value(), 0);
+        assert!(!plugin.params.five_string.value());
+        assert!((plugin.params.pickup_position.value() - 0.16).abs() < 1e-6);
+        assert!((plugin.params.pluck_position.value() - 0.22).abs() < 1e-6);
+        assert!((plugin.params.tone.value() - 0.70).abs() < 1e-6);
+        assert!((plugin.params.fret_buzz.value() - 0.20).abs() < 1e-6);
+        assert!((plugin.params.body_mix.value() - 0.42).abs() < 1e-6);
+        assert!((plugin.params.master_gain.value() - 0.90).abs() < 1e-6);
+        // Not covered by the preset: defaults survive.
+        assert!((plugin.params.drive.value() - 0.0).abs() < 1e-6);
+        assert!((plugin.params.fx_reverb_decay.value() - 0.5).abs() < 1e-6);
+        assert!(!plugin.undo_manager.read().can_undo());
+        assert!(!plugin.undo_manager.read().can_redo());
+    }
+
+    /// The launch preset is an applied value, not a new default:
+    /// `PhysicsBassParams::default()` still constructs the documented
+    /// defaults, which double-click/right-click reset restores.
+    #[test]
+    fn param_defaults_are_unchanged_by_the_launch_preset() {
+        let params = PhysicsBassParams::default();
+        assert!((params.tone.value() - 0.72).abs() < 1e-6);
+        assert!((params.fret_buzz.value() - 0.30).abs() < 1e-6);
+        assert!((params.body_mix.value() - 0.75).abs() < 1e-6);
+        assert!((params.pickup_position.value() - 0.18).abs() < 1e-6);
+        assert!((params.pluck_position.value() - 0.18).abs() < 1e-6);
+        assert!((params.master_gain.value() - 1.0).abs() < 1e-6);
     }
 }
