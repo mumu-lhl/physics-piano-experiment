@@ -204,3 +204,18 @@ param-knob knob .knob-head {
 param-knob knob .knob-tick {
   background-color: #ffd778;
 }
+
+/* Keyboard focus indication for knobs: the head's border turns gold
+   while the knob has keyboard focus (`:focus-visible` is the
+   keyboard-focus indicator; a mouse click takes focus without
+   visibility and shows no ring). An outline on `param-knob` cannot
+   serve here: Vizia repaints focus changes into a transparent dirty
+   surface composited over the previous frame, so pixels no view
+   repaints — like an outline band over the knob's transparent
+   background — survive forever, and every Tab-visited knob kept its
+   ring. The head border is repainted on every knob redraw, so it
+   follows focus exactly: exactly one gold head at a time. The
+   light-theme variant in physics-ui's light.css darkens the gold. */
+param-knob:focus-visible knob .knob-head {
+  border-color: #ffd778;
+}

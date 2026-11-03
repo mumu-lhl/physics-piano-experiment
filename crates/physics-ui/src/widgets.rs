@@ -6,6 +6,7 @@ use vizia_plug::widgets::param_base::ParamWidgetBase;
 use vizia_plug::widgets::*;
 
 use crate::midi_learn::LearnArm;
+use crate::preset_panel::attach_dropdown_keyboard_nav;
 use crate::{Language, translate};
 
 #[derive(Default)]
@@ -118,19 +119,24 @@ pub fn parameter_slider_learn<P: Param + 'static>(
                 move |_: &mut ParamSlider, cx: &mut EventContext, event: &mut Event| {
                     event.map(|window, meta| match window {
                         WindowEvent::MouseDown(MouseButton::Left) => {
-                            // MIDI Learn arming, mirroring parameter_knob.
-                            if let Some(learn) = &learn {
-                                if learn.arm(param_ptr) {
-                                    meta.consume();
-                                    return;
-                                }
-                            }
+                            // Bounds first: listeners see every event in
+                            // the tree, so an unguarded arm() here would
+                            // arm a hash-order-random slider for a click
+                            // anywhere in the window. Only a click
+                            // inside this slider arms it, mirroring
+                            // parameter_knob.
                             let bounds = cx.bounds();
                             let mouse = cx.mouse();
                             let inside = mouse.cursor_x >= bounds.x
                                 && mouse.cursor_x <= bounds.x + bounds.w
                                 && mouse.cursor_y >= bounds.y
                                 && mouse.cursor_y <= bounds.y + bounds.h;
+                            if let Some(learn) = &learn {
+                                if inside && learn.arm(param_ptr) {
+                                    meta.consume();
+                                    return;
+                                }
+                            }
                             if inside {
                                 restore_state
                                     .lock()
@@ -199,17 +205,14 @@ pub fn parameter_slider_learn<P: Param + 'static>(
                             meta.consume();
                         }
                         WindowEvent::MouseDown(MouseButton::Right) => {
-                            // MIDI Learn clear: in Learn mode a right-click
-                            // only queues a binding clear and must not
-                            // restore the value or write an undo record
-                            // — including when nothing is bound, in which
-                            // case the click is consumed silently.
-                            if let Some(learn) = &learn {
-                                if learn.request_clear(param_ptr) {
-                                    meta.consume();
-                                    return;
-                                }
-                            }
+                            // Same bounds gate as the left-click arm
+                            // above: only a right-click inside this
+                            // slider queues its clear in Learn mode.
+                            // In Learn mode a right-click only queues a
+                            // binding clear and must not restore the
+                            // value or write an undo record — including
+                            // when nothing is bound, in which case the
+                            // click is consumed silently.
                             let bounds = cx.bounds();
                             let mouse = cx.mouse();
                             if mouse.cursor_x < bounds.x
@@ -218,6 +221,12 @@ pub fn parameter_slider_learn<P: Param + 'static>(
                                 || mouse.cursor_y > bounds.y + bounds.h
                             {
                                 return;
+                            }
+                            if let Some(learn) = &learn {
+                                if learn.request_clear(param_ptr) {
+                                    meta.consume();
+                                    return;
+                                }
                             }
                             if let Some(point) = restore_state.lock().take_restore_value() {
                                 if point.completed {
@@ -258,12 +267,32 @@ pub fn parameter_slider_learn<P: Param + 'static>(
     .horizontal_gap(Pixels(6.0));
 }
 
+/// Parse typed knob-entry text through the parameter's own parser and
+/// clamp to the unit range. The parser accepts the formatted display
+/// value with its unit ("-3 dB", "70 %") or a bare number; anything
+/// else yields `None` and the entry changes nothing.
+fn parse_knob_entry(param_base: ParamWidgetBase, text: &str) -> Option<f32> {
+    param_base
+        .string_to_normalized_value(text)
+        .map(|normalized| normalized.clamp(0.0, 1.0))
+}
+
 /// Builds a compact rotary parameter control: label above, knob, formatted
 /// value readout below. The knob itself is 40px; `cell_width` sets the cell
 /// (piano/bass groups use 120px for two cells per row, guitar uses 84px for
 /// three). Right-click restore mirrors the slider: during a drag it restores
 /// the pre-drag value and ends the drag; after a completed drag it discards
 /// that drag's undo record and restores inside a bracketed gesture.
+///
+/// Double-clicking the readout opens text entry (the slider's
+/// Alt+click pattern, moved to the readout so the knob's own
+/// double-click keeps resetting to the default): type the parameter's
+/// formatted value with units, Enter commits inside one bracketed
+/// gesture (one undo entry, clamped to range), Escape cancels. While
+/// MIDI Learn mode is on, readout double-clicks do nothing — clicks
+/// belong to arming. When a knob is the pending Learn target its cell
+/// gets the `knob-learn-armed` class, and a bound knob's readout
+/// carries its `CCn` suffix (see `LearnArm::bindings`).
 pub fn parameter_knob<P: Param + 'static>(
     cx: &mut Context,
     label: &'static str,
@@ -282,6 +311,31 @@ pub fn parameter_knob<P: Param + 'static>(
     // colon the slider rows used as a separator is dropped for display.
     let label = label.strip_suffix(':').unwrap_or(label);
     let param_ptr = param.as_ptr();
+    // Learn display state, resolved once from the shared arm: the
+    // parameter id for the armed highlight and the bound-CC badge.
+    let param_id: Option<String> = learn
+        .as_ref()
+        .and_then(|arm| arm.ptr_to_id.get(&param_ptr).cloned());
+    let armed_learn = learn.clone();
+    let armed_param_id = param_id.clone();
+    let armed: Memo<bool> = Memo::new(move |_| match &armed_learn {
+        Some(arm) => arm.mode.get() && arm.pending.get().as_deref() == armed_param_id.as_deref(),
+        None => false,
+    });
+    let badge_learn = learn.clone();
+    let badge_param_id = param_id.clone();
+    let readout_text: Memo<String> = Memo::new(move |_| {
+        let text = display_value.get();
+        if let (Some(arm), Some(id)) = (&badge_learn, &badge_param_id) {
+            if let Some(cc) = arm.bindings.get().get(id) {
+                return format!("{text}  CC{cc}");
+            }
+        }
+        text
+    });
+    // Whether this cell's readout is showing the text-entry textbox.
+    let editing = Signal::new(false);
+    let learn_mode = learn.as_ref().map(|arm| arm.mode.clone());
     VStack::new(cx, move |cx| {
         Label::new(cx, label).class("knob-label");
         let mut knob = ParamKnob::new(cx, param)
@@ -291,7 +345,8 @@ pub fn parameter_knob<P: Param + 'static>(
             // focused (focus is taken on mouse-down); `focusable`
             // alone does not put a view in the Tab order — only
             // `navigable` does. The focus ring is drawn by the
-            // `param-knob:focus` rule in theme.css. The accessible
+            // `param-knob:focus-visible knob .knob-head` rule in
+            // vizia-plug's widgets.css. The accessible
             // name is the visible label (already localized at the
             // call site) and the numeric value tracks the live
             // parameter on Vizia's 0..100 slider scale.
@@ -306,21 +361,25 @@ pub fn parameter_knob<P: Param + 'static>(
                 move |_: &mut ParamKnob, cx: &mut EventContext, event: &mut Event| {
                     event.map(|window, meta| match window {
                         WindowEvent::MouseDown(MouseButton::Left) => {
-                            // MIDI Learn arming: in Learn mode a knob click
-                            // only arms the parameter for the next CC and
-                            // must not start a drag gesture.
-                            if let Some(learn) = &learn {
-                                if learn.arm(param_ptr) {
-                                    meta.consume();
-                                    return;
-                                }
-                            }
+                            // Bounds first: listeners see every event in
+                            // the tree, so an unguarded arm() here would
+                            // arm a hash-order-random knob for a click
+                            // anywhere in the window. Only a click
+                            // inside this knob arms it; in Learn mode
+                            // such a click only arms and must not start
+                            // a drag gesture.
                             let bounds = cx.bounds();
                             let mouse = cx.mouse();
                             let inside = mouse.cursor_x >= bounds.x
                                 && mouse.cursor_x <= bounds.x + bounds.w
                                 && mouse.cursor_y >= bounds.y
                                 && mouse.cursor_y <= bounds.y + bounds.h;
+                            if let Some(learn) = &learn {
+                                if inside && learn.arm(param_ptr) {
+                                    meta.consume();
+                                    return;
+                                }
+                            }
                             if inside {
                                 restore_state
                                     .lock()
@@ -331,14 +390,9 @@ pub fn parameter_knob<P: Param + 'static>(
                             restore_state.lock().finish();
                         }
                         WindowEvent::MouseDown(MouseButton::Right) => {
-                            // MIDI Learn clear, mirroring parameter_knob:
-                            // consume without restoring in Learn mode.
-                            if let Some(learn) = &learn {
-                                if learn.request_clear(param_ptr) {
-                                    meta.consume();
-                                    return;
-                                }
-                            }
+                            // Same bounds gate as the left-click arm
+                            // above: only a right-click inside this
+                            // knob queues its clear in Learn mode.
                             let bounds = cx.bounds();
                             let mouse = cx.mouse();
                             if mouse.cursor_x < bounds.x
@@ -347,6 +401,14 @@ pub fn parameter_knob<P: Param + 'static>(
                                 || mouse.cursor_y > bounds.y + bounds.h
                             {
                                 return;
+                            }
+                            // MIDI Learn clear, mirroring parameter_knob:
+                            // consume without restoring in Learn mode.
+                            if let Some(learn) = &learn {
+                                if learn.request_clear(param_ptr) {
+                                    meta.consume();
+                                    return;
+                                }
                             }
                             if let Some(point) = restore_state.lock().take_restore_value() {
                                 if point.completed {
@@ -386,15 +448,131 @@ pub fn parameter_knob<P: Param + 'static>(
         // the cell: a Memo-bound label can measure as zero-height in
         // flow layout, which let the next knob row start too high and
         // overlap the readout. The box reserves the row's height no
-        // matter what the label measures.
-        VStack::new(cx, |cx| {
-            Label::new(cx, display_value).class("knob-value");
+        // matter what the label measures. Double-clicking the readout
+        // swaps the label for the value-entry textbox (the textbox's
+        // own submit/cancel callbacks apply or discard the typed
+        // value); the box listener below catches
+        // double-clicks on the box padding, and the label's own
+        // handler catches double-clicks on the text itself.
+        let editing_for_box = editing.clone();
+        let learn_mode_for_box = learn_mode.clone();
+        let mut value_box = VStack::new(cx, |cx| {
+            let editing_binding = editing.clone();
+            Binding::new(cx, editing_binding, move |cx| {
+                if editing.get() {
+                    // The submit path applies the typed value directly
+                    // from the textbox's own submit callback (view phase,
+                    // like `ParamSlider`'s `on_submit` emitting its event):
+                    // one bracketed host gesture, one undo entry.
+                    // Unparseable text changes nothing and writes no
+                    // undo entry. Cancel (Escape / focus loss) just
+                    // closes the entry.
+                    let editing_close = editing.clone();
+                    let editing_cancel = editing.clone();
+                    Textbox::new(cx, display_value)
+                        .class("knob-value-entry")
+                        .on_submit(move |cx, text: String, success: bool| {
+                            if success {
+                                if let Some(normalized) = parse_knob_entry(param_base, &text) {
+                                    // Emit the gesture targeted at the
+                                    // root: closing the entry below
+                                    // rebuilds the Binding and destroys
+                                    // this textbox before queued events
+                                    // dispatch, and events targeted at
+                                    // a removed entity never propagate
+                                    // up to ParamModel. Root-targeted
+                                    // events survive the rebuild (the
+                                    // ParamModel lives on the root).
+                                    cx.with_current(Entity::root(), |cx| {
+                                        param_base.begin_set_parameter(cx);
+                                        param_base.set_normalized_value(cx, normalized);
+                                        param_base.end_set_parameter(cx);
+                                    });
+                                }
+                            }
+                            editing_close.set(false);
+                        })
+                        .on_cancel(move |_cx| {
+                            editing_cancel.set(false);
+                        })
+                        .on_build(|cx| {
+                            cx.emit(TextEvent::StartEdit);
+                            cx.emit(TextEvent::SelectAll);
+                        })
+                        .height(Stretch(1.0))
+                        .width(Stretch(1.0));
+                } else {
+                    // The listener below is invoked for every event in
+                    // the tree, so it must only act on double-clicks
+                    // actually targeted at this label (`meta.target ==
+                    // cx.current()`): an unguarded listener would open
+                    // this cell's entry on any double-click anywhere
+                    // and, by consuming the event, would swallow the
+                    // knob's own double-click reset.
+                    let editing_open = editing.clone();
+                    let learn_mode_signal = learn_mode.clone();
+                    let mut readout_label = Label::new(cx, readout_text)
+                        .class("knob-value")
+                        .width(Stretch(1.0));
+                    let label_entity = readout_label.entity();
+                    readout_label.context().with_current(label_entity, |cx| {
+                        cx.add_listener(
+                            move |_: &mut Label, cx: &mut EventContext, event: &mut Event| {
+                                event.map(|window, meta| {
+                                    if matches!(
+                                        window,
+                                        WindowEvent::MouseDoubleClick(MouseButton::Left)
+                                    ) && meta.target == cx.current()
+                                    {
+                                        // Learn mode is read at click time:
+                                        // the label is built once, but Learn
+                                        // can toggle later.
+                                        let learn_on = learn_mode_signal
+                                            .as_ref()
+                                            .map_or(false, |mode| mode.get());
+                                        if !learn_on {
+                                            editing_open.set(true);
+                                            meta.consume();
+                                        }
+                                    }
+                                });
+                            },
+                        );
+                    });
+                }
+            });
         })
         .class("knob-value-box")
         .width(Stretch(1.0))
         .height(Pixels(14.0));
+        let value_box_entity = value_box.entity();
+        value_box.context().with_current(value_box_entity, |cx| {
+            let editing_open = editing_for_box;
+            let learn_mode_signal = learn_mode_for_box;
+            cx.add_listener(
+                move |_: &mut VStack, cx: &mut EventContext, event: &mut Event| {
+                    event.map(|window, meta| {
+                        // Target-checked like the label listener: this
+                        // box listener only covers double-clicks on the
+                        // box padding (target == the box itself), never
+                        // clicks on the knob or other cells.
+                        if matches!(window, WindowEvent::MouseDoubleClick(MouseButton::Left))
+                            && meta.target == cx.current()
+                        {
+                            let learn_on =
+                                learn_mode_signal.as_ref().map_or(false, |mode| mode.get());
+                            if !learn_on {
+                                editing_open.set(true);
+                                meta.consume();
+                            }
+                        }
+                    });
+                },
+            );
+        });
     })
     .class("knob-cell")
+    .toggle_class("knob-learn-armed", armed)
     .width(Pixels(cell_width))
     .tooltip(move |cx| {
         Tooltip::new(cx, |cx| {
@@ -441,7 +619,15 @@ pub fn discrete_selector<F>(
     let trigger_learn = learn.clone();
     HStack::new(cx, move |cx| {
         Label::new(cx, label).width(Pixels(label_width));
-        Dropdown::new(
+        // Keyboard navigation (same helper as the preset/language
+        // dropdowns): the nav closures below read clones made here,
+        // before the popup closure moves `options`/`on_select`.
+        let nav_options = options.clone();
+        let nav_selected = selected;
+        let nav_on_select = on_select.clone();
+        let dropdown_open = Signal::new(false);
+        let dropdown_highlighted: Signal<Option<usize>> = Signal::new(None);
+        let selector_dropdown = Dropdown::new(
             cx,
             move |cx| {
                 let display_options = trigger_options.clone();
@@ -473,17 +659,26 @@ pub fn discrete_selector<F>(
                     let entity = trigger.entity();
                     trigger.context().with_current(entity, |cx| {
                         cx.add_listener(
-                            move |_: &mut Button,
-                                  _cx: &mut EventContext,
-                                  event: &mut Event| {
+                            move |_: &mut Button, cx: &mut EventContext, event: &mut Event| {
+                                // Bounds-gated like the knob/slider arm
+                                // listeners: listeners see every event
+                                // in the tree, so an unguarded arm()
+                                // would arm this selector for a click
+                                // anywhere in the window.
+                                let bounds = cx.bounds();
+                                let mouse = cx.mouse();
+                                let inside = mouse.cursor_x >= bounds.x
+                                    && mouse.cursor_x <= bounds.x + bounds.w
+                                    && mouse.cursor_y >= bounds.y
+                                    && mouse.cursor_y <= bounds.y + bounds.h;
                                 event.map(|window, meta| match window {
                                     WindowEvent::MouseDown(MouseButton::Left) => {
-                                        if learn.arm(ptr) {
+                                        if inside && learn.arm(ptr) {
                                             meta.consume();
                                         }
                                     }
                                     WindowEvent::MouseDown(MouseButton::Right) => {
-                                        if learn.request_clear(ptr) {
+                                        if inside && learn.request_clear(ptr) {
                                             meta.consume();
                                         }
                                     }
@@ -494,25 +689,64 @@ pub fn discrete_selector<F>(
                     });
                 }
             },
-            move |cx| {
-                for (value, name) in options.clone() {
-                    let on_select = on_select.clone();
-                    Button::new(cx, move |cx| {
-                        Label::new(cx, name.clone())
-                            .alignment(Alignment::Left)
-                            .width(Stretch(1.0))
-                            .text_overflow(TextOverflow::Ellipsis)
-                    })
-                    .on_press(move |cx| {
-                        on_select(cx, value);
-                        cx.emit(PopupEvent::Close);
-                    })
-                    .width(Stretch(1.0))
-                    .max_width(Pixels(320.0));
+            {
+                let highlighted = dropdown_highlighted;
+                move |cx| {
+                    for (index, (value, name)) in options.clone().into_iter().enumerate() {
+                        let on_select = on_select.clone();
+                        Button::new(cx, move |cx| {
+                            Label::new(cx, name.clone())
+                                .alignment(Alignment::Left)
+                                .width(Stretch(1.0))
+                                .text_overflow(TextOverflow::Ellipsis)
+                        })
+                        .toggle_class(
+                            "preset-item-highlight",
+                            highlighted.map(move |current| *current == Some(index)),
+                        )
+                        .on_hover(move |_| highlighted.set(Some(index)))
+                        .on_press(move |cx| {
+                            on_select(cx, value);
+                            cx.emit(PopupEvent::Close);
+                        })
+                        .width(Stretch(1.0))
+                        .max_width(Pixels(320.0));
+                    }
                 }
             },
         )
         .width(Stretch(1.0));
+        attach_dropdown_keyboard_nav(
+            selector_dropdown,
+            dropdown_open,
+            dropdown_highlighted,
+            {
+                let nav_options = nav_options.clone();
+                move || {
+                    if nav_options.is_empty() {
+                        None
+                    } else {
+                        nav_options
+                            .iter()
+                            .position(|(option, _)| *option == nav_selected.get())
+                            .or(Some(0))
+                    }
+                }
+            },
+            {
+                let nav_options = nav_options.clone();
+                move || nav_options.len()
+            },
+            {
+                let nav_options = nav_options.clone();
+                let nav_on_select = nav_on_select.clone();
+                move |cx: &mut EventContext, index: usize| {
+                    if let Some((value, _)) = nav_options.get(index) {
+                        nav_on_select(cx, *value);
+                    }
+                }
+            },
+        );
     })
     .height(Pixels(23.0))
     .horizontal_gap(Pixels(6.0));
@@ -625,6 +859,49 @@ pub fn redraw_custom_view(cx: &mut EventContext, element: &str) {
 #[cfg(test)]
 mod tests {
     use super::SliderRestoreState;
+    use super::{ParamWidgetBase, parse_knob_entry};
+    use nice_plug::prelude::*;
+    use vizia_plug::vizia::prelude::*;
+
+    #[derive(Params)]
+    struct EntryTestParams {
+        #[id = "gain"]
+        pub gain: FloatParam,
+    }
+
+    impl Default for EntryTestParams {
+        fn default() -> Self {
+            Self {
+                gain: FloatParam::new(
+                    "Gain",
+                    0.0,
+                    FloatRange::Linear {
+                        min: -12.0,
+                        max: 12.0,
+                    },
+                )
+                .with_unit(" dB"),
+            }
+        }
+    }
+
+    #[test]
+    fn knob_entry_accepts_formatted_units_and_bare_numbers() {
+        let params = EntryTestParams::default();
+        let cx = Context::default();
+        let base = ParamWidgetBase::new(&cx, &params.gain);
+        // Formatted display value, with the unit the readout shows.
+        assert!((parse_knob_entry(base, "-3 dB").unwrap() - 0.375).abs() < 1e-6);
+        // Bare number in plain units.
+        assert!((parse_knob_entry(base, "0.5").unwrap() - 0.520_833_3).abs() < 1e-6);
+        // Out-of-range input clamps to the ends instead of rejecting.
+        assert_eq!(parse_knob_entry(base, "999 dB"), Some(1.0));
+        assert_eq!(parse_knob_entry(base, "-999"), Some(0.0));
+        // Garbage changes nothing.
+        assert_eq!(parse_knob_entry(base, "abc"), None);
+        assert_eq!(parse_knob_entry(base, ""), None);
+        assert_eq!(parse_knob_entry(base, "dB"), None);
+    }
 
     #[test]
     fn right_click_restores_value_from_the_last_completed_adjustment() {

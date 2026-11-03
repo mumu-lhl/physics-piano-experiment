@@ -80,6 +80,27 @@ label {
     alignment: center;
 }
 
+/* MIDI Learn arming highlight on the knob cell: orange border + tint,
+   deliberately distinct from the gold focus ring drawn on the knob
+   itself (`param-knob:focus-visible knob .knob-head` in vizia-plug's
+   widgets.css). The light-theme variant in light.css
+   darkens the border for contrast on white. */
+.knob-learn-armed {
+    border-width: 1px;
+    border-color: #ff9f43;
+    border-radius: 5px;
+    background-color: rgba(255, 159, 67, 0.12);
+}
+
+/* Value-entry textbox replacing a knob readout while editing: it must
+   fit the 14px readout box, so it takes the box's height and the
+   readout's font size instead of the default 26px textbox metrics. */
+.knob-value-entry {
+    font-size: 10.0;
+    child-space: 0px;
+    border-radius: 2px;
+}
+
 .instrument-view {
     background-color: #0c0f14;
     border-color: #303949;
@@ -235,14 +256,23 @@ textbox:focus {
     border-color: #ffd778;
 }
 
-/* Keyboard focus must be visible on knobs: Tab reaches them (see
-   `parameter_knob`), and arrow keys already adjust the value once
-   focused. The ring uses the gold accent; the light-theme variant
-   below in light.css darkens it for contrast on #f7f7f5. */
-param-knob:focus {
-    outline-color: #ffd778;
-    outline-width: 2.0;
-    outline-offset: 2.0;
+/* Keyboard focus on knobs is shown by the gold head border (see the
+   `param-knob:focus-visible knob .knob-head` rule in vizia-plug's
+   widgets.css), NOT by an outline here: Vizia composites focus-change
+   repaints from a transparent dirty surface, so an outline band over
+   the knob's transparent background is never erased once drawn and
+   every Tab-visited knob kept its ring. The same `px`-units caveat
+   applies to the other `:focus` rules below: bare numbers are dropped
+   by Vizia's length parser, so their width/offset never applied. */
+
+/* Suppress Vizia's built-in `*:focus-visible` outline (3px, grey) on
+   knobs: it would draw a second, square indicator next to the gold
+   head border, and — by the same dirty-surface mechanism — it would
+   stick on every visited knob. `0px` (units required, see above)
+   keeps the knob outline-free in both themes; the head border is the
+   single focus indicator. */
+param-knob:focus-visible {
+    outline-width: 0px;
 }
 
 /* Same visible ring for every other keyboard-reachable control:
@@ -255,8 +285,8 @@ piano-lid-widget:focus,
 mic-stage-widget:focus,
 velocity-curve-editor:focus {
     outline-color: #ffd778;
-    outline-width: 2.0;
-    outline-offset: 2.0;
+    outline-width: 2.0px;
+    outline-offset: 2.0px;
 }
 
 popup {
@@ -306,6 +336,23 @@ popup {
 
 .preset-item:hover {
     background-color: #2c3246;
+    color: #ffd778;
+}
+
+/* Keyboard highlight for dropdown rows (see attach_dropdown_keyboard_nav
+   in preset_panel.rs): gold-tinted so it reads apart from plain hover. */
+.preset-item-highlight {
+    background-color: #333a55;
+    color: #ffd778;
+}
+
+.preset-item-highlight:hover {
+    background-color: #3d4568;
+}
+
+/* The label carries its own color rule, so the highlight must set it
+   directly (same pattern as `.preset-dropdown:active label`). */
+.preset-item-highlight label {
     color: #ffd778;
 }
 
