@@ -40,12 +40,24 @@
     color: #8a6d1f;
 }
 
+/* Knob labels/readouts darkened + bold for rendered >=4.5:1 on white
+   (nominal 17.0:1 / 14.5:1 on #ffffff, 14.6:1 / 12.4:1 on the #f0ede6
+   instrument view): the previous #33363f/#6e5600 (nominal 12.1:1/7.0:1)
+   rendered at ~2.0:1 medians in screenshots once thin-glyph
+   anti-aliasing blended with the background. Dark theme untouched. */
 .theme-light .knob-label {
-    color: #4a4e5a;
+    color: #1a1c22;
+    font-weight: bold;
 }
 
 .theme-light .knob-value {
-    color: #8a6d1f;
+    color: #332800;
+    font-weight: bold;
+}
+
+.theme-light .knob-learn-armed {
+    border-color: #9a6700;
+    background-color: #fdf3dd;
 }
 
 .theme-light .instrument-view {
@@ -187,6 +199,19 @@
     color: #8a6d1f;
 }
 
+.theme-light .preset-item-highlight {
+    background-color: #f3e6b8;
+    color: #8a6d1f;
+}
+
+.theme-light .preset-item-highlight:hover {
+    background-color: #ecdc9e;
+}
+
+.theme-light .preset-item-highlight label {
+    color: #8a6d1f;
+}
+
 .theme-light .browser-dim {
     background-color: rgba(40, 45, 60, 0.35);
 }
@@ -286,10 +311,10 @@
     color: #8a6d1f;
 }
 
-/* Darker amber ring: the gold #ffd778 focus ring is near-invisible on
-   the light background. */
-.theme-light param-knob:focus {
-    outline-color: #8a6d1f;
+/* Darker amber focus gold: the #ffd778 head border is near-invisible
+   on the light background. */
+.theme-light param-knob:focus-visible knob .knob-head {
+    border-color: #8a6d1f;
 }
 
 .theme-light param-slider:focus,

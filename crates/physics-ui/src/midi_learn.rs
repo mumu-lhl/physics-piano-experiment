@@ -64,6 +64,23 @@ pub fn apply_midi_cc(
     Some(id.clone())
 }
 
+/// Invert a CC -> parameter-id mapping into a parameter-id -> CC
+/// display map. Binding is exclusive (one CC per parameter id, see
+/// `PresetManager::bind_midi_cc`), so a well-formed input inverts
+/// losslessly; if a stale sidecar ever maps two CCs to one id, the
+/// lowest CC wins deterministically instead of depending on hash
+/// iteration order.
+pub fn invert_midi_mappings(mappings: &HashMap<u8, String>) -> HashMap<String, u8> {
+    let mut inverted: HashMap<String, u8> = HashMap::new();
+    for (cc, id) in mappings {
+        inverted
+            .entry(id.clone())
+            .and_modify(|kept| *kept = (*kept).min(*cc))
+            .or_insert(*cc);
+    }
+    inverted
+}
+
 /// GUI-thread Learn state shared between the Learn button, the arming
 /// hooks in `parameter_knob`/`parameter_slider`/`discrete_selector`/
 /// `ParamButton`/lid/mic/curve widgets, and the editor's display timer.
@@ -78,6 +95,11 @@ pub struct LearnArm {
     /// the id, and reports the outcome on the Learn status line. Kept
     /// separate from `pending` so a clear never arms a bind.
     pub clear_pending: Signal<Option<String>>,
+    /// Parameter id -> bound CC, for the per-knob "CC7" badge in
+    /// `parameter_knob`. Refreshed by the editor's display timer via
+    /// [`LearnArm::refresh_bindings`]; shown whether or not Learn mode
+    /// is on, so a bound knob stays identified after Learn is disarmed.
+    pub bindings: Signal<HashMap<String, u8>>,
     /// `ParamPtr` -> parameter id, built once from `param_map()`.
     pub ptr_to_id: Arc<HashMap<ParamPtr, String>>,
 }
@@ -88,8 +110,25 @@ impl LearnArm {
             mode: Signal::new(false),
             pending: Signal::new(None),
             clear_pending: Signal::new(None),
+            bindings: Signal::new(HashMap::new()),
             ptr_to_id: Arc::new(ptr_to_id),
         }
+    }
+
+    /// Refresh the bound-CC display map from the manager's live
+    /// mappings. The signal is only written when the inverted map
+    /// actually changed, so a 33ms display timer calling this every
+    /// tick does not churn the reactive graph.
+    pub fn refresh_bindings(&self, mappings: &HashMap<u8, String>) {
+        let inverted = invert_midi_mappings(mappings);
+        if self.bindings.get() != inverted {
+            self.bindings.set(inverted);
+        }
+    }
+
+    /// The CC bound to `param_id`, if any, for the knob badge.
+    pub fn bound_cc(&self, param_id: &str) -> Option<u8> {
+        self.bindings.get().get(param_id).copied()
     }
 
     /// Arm `ptr` for Learn binding. Returns `true` when Learn mode is on
@@ -279,6 +318,78 @@ mod tests {
         // Arming and clearing are independent signals: neither clobbers
         // the other.
         assert_eq!(arm.pending.get(), Some("tone".to_string()));
+    }
+
+    #[test]
+    fn invert_midi_mappings_inverts_one_to_one() {
+        let mut mappings = HashMap::new();
+        mappings.insert(7, "tone".to_string());
+        mappings.insert(21, "gain".to_string());
+        let inverted = invert_midi_mappings(&mappings);
+        assert_eq!(inverted.len(), 2);
+        assert_eq!(inverted["tone"], 7);
+        assert_eq!(inverted["gain"], 21);
+    }
+
+    #[test]
+    fn invert_midi_mappings_picks_lowest_cc_for_duplicate_ids() {
+        let mut mappings = HashMap::new();
+        mappings.insert(21, "tone".to_string());
+        mappings.insert(7, "tone".to_string());
+        let inverted = invert_midi_mappings(&mappings);
+        assert_eq!(inverted.len(), 1);
+        assert_eq!(inverted["tone"], 7);
+    }
+
+    #[test]
+    fn refresh_bindings_tracks_binds_and_clears() {
+        let (_params, _fwd, arm) = learn_arm_fixture();
+        assert_eq!(arm.bound_cc("tone"), None);
+        let mut mappings = HashMap::new();
+        mappings.insert(7, "tone".to_string());
+        arm.refresh_bindings(&mappings);
+        assert_eq!(arm.bound_cc("tone"), Some(7));
+        assert_eq!(arm.bound_cc("gain"), None);
+        // Clearing the mapping (e.g. Learn-mode right-click) drops the badge.
+        mappings.clear();
+        arm.refresh_bindings(&mappings);
+        assert_eq!(arm.bound_cc("tone"), None);
+    }
+
+    #[test]
+    fn refresh_bindings_reads_manager_live_mappings() {
+        // The shape the editors' display timers use: the manager's
+        // live mappings, read through `midi_mappings()`, feed
+        // `refresh_bindings`, which populates the badge source
+        // (`bound_cc`) the knob readouts render as "  CC{cc}".
+        // Binding through the manager (as the Learn bind poll does)
+        // and refreshing must surface the CC; unbinding (as the
+        // Learn clear path does) and refreshing must drop it.
+        let dir =
+            std::env::temp_dir().join(format!("physics-ui-midi-learn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut manager = physics_presets::PresetManager::with_custom_dir(
+            "piano",
+            vec![physics_presets::Preset::new(
+                "a",
+                "Alpha",
+                "piano",
+                HashMap::new(),
+            )],
+            dir.clone(),
+        );
+        let (_params, _fwd, arm) = learn_arm_fixture();
+        arm.refresh_bindings(manager.midi_mappings());
+        assert_eq!(arm.bound_cc("tone"), None);
+        assert!(manager.bind_midi_cc(7, "tone").unwrap());
+        arm.refresh_bindings(manager.midi_mappings());
+        assert_eq!(arm.bound_cc("tone"), Some(7));
+        assert_eq!(arm.bound_cc("gain"), None);
+        assert!(manager.unbind_midi_cc(7).unwrap());
+        arm.refresh_bindings(manager.midi_mappings());
+        assert_eq!(arm.bound_cc("tone"), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

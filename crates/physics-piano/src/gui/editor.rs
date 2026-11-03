@@ -395,6 +395,17 @@ impl Model for PianoUiState {
                 }
             }
             PianoUiEvent::RefreshDisplay => {
+                // Keep the bound-CC badges (see `LearnArm::bindings`)
+                // in sync with the manager's live mappings on every
+                // tick, whether or not Learn mode is on: a binding
+                // made earlier (or loaded from the sidecar) must stay
+                // badged after Learn is disarmed, and a cleared
+                // binding must drop its badge. `refresh_bindings`
+                // only writes the signal when the inverted map
+                // changed, so calling it every 33ms does not churn
+                // the reactive graph.
+                self.learn_arm
+                    .refresh_bindings(self.manager.read().midi_mappings());
                 // MIDI Learn: while armed, poll for a newly moved
                 // controller and bind it. Learn mode stays on after a
                 // successful bind so several knobs can be bound in a row.
