@@ -143,7 +143,7 @@ impl ParamKnob {
         'p: 'c,
         P: Param + 'static,
     {
-        let param_base = ParamWidgetBase::new(cx, param);
+        let param_base = ParamWidgetBase::new(param);
         let default_normal = param_base.default_normalized_value();
         Self {
             param_base,
