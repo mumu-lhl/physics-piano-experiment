@@ -119,9 +119,9 @@ impl MicStageWidget {
         language: Language,
         learn: Option<LearnArm>,
     ) -> Handle<'_, Self> {
-        let close_base = ParamWidgetBase::new(cx, &params.mic_close);
-        let player_base = ParamWidgetBase::new(cx, &params.mic_player);
-        let amb_base = ParamWidgetBase::new(cx, &params.mic_ambient);
+        let close_base = ParamWidgetBase::new(&params.mic_close);
+        let player_base = ParamWidgetBase::new(&params.mic_player);
+        let amb_base = ParamWidgetBase::new(&params.mic_ambient);
         let value = close_base.unmodulated_signal(cx);
         Self {
             params,

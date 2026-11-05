@@ -91,7 +91,7 @@ impl ParamSlider {
         'p: 'c,
         P: Param + 'static,
     {
-        let param_base = ParamWidgetBase::new(cx, param);
+        let param_base = ParamWidgetBase::new(param);
         let text_input_active = SyncSignal::new(false);
         let style = SyncSignal::new(ParamSliderStyle::Centered);
         let label_override: SyncSignal<Option<String>> = SyncSignal::new(None);

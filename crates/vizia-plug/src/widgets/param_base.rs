@@ -106,12 +106,12 @@ impl ParamWidgetBase {
     ///     'p: 'c,
     ///     P: Param + 'static,
     /// {
-    ///     let param_base = ParamWidgetBase::new(cx, param);
+    ///     let param_base = ParamWidgetBase::new(param);
     ///     // ... build the view tree, pass `param` through to any nested
     ///     // `ParamWidgetBase::view` / `build_view` calls ...
     /// }
     /// ```
-    pub fn new<P: Param>(_cx: &Context, param: &P) -> Self {
+    pub fn new<P: Param>(param: &P) -> Self {
         Self {
             param_ptr: param.as_ptr(),
         }

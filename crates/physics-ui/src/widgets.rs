@@ -95,7 +95,7 @@ pub fn parameter_slider_learn<P: Param + 'static>(
     learn: Option<LearnArm>,
 ) {
     let param_ptr = param.as_ptr();
-    let slider_base = ParamWidgetBase::new(cx, param);
+    let slider_base = ParamWidgetBase::new(param);
     let slider_value = slider_base.unmodulated_signal(cx);
     HStack::new(cx, move |cx| {
         Label::new(cx, label).width(Pixels(label_width));
@@ -301,7 +301,7 @@ pub fn parameter_knob<P: Param + 'static>(
     tooltip: &'static str,
     learn: Option<LearnArm>,
 ) {
-    let param_base = ParamWidgetBase::new(cx, param);
+    let param_base = ParamWidgetBase::new(param);
     let unmodulated = param_base.unmodulated_signal(cx);
     let display_value: Memo<String> = Memo::new(move |_| {
         let current = unmodulated.get();
@@ -888,8 +888,7 @@ mod tests {
     #[test]
     fn knob_entry_accepts_formatted_units_and_bare_numbers() {
         let params = EntryTestParams::default();
-        let cx = Context::default();
-        let base = ParamWidgetBase::new(&cx, &params.gain);
+        let base = ParamWidgetBase::new(&params.gain);
         // Formatted display value, with the unit the readout shows.
         assert!((parse_knob_entry(base, "-3 dB").unwrap() - 0.375).abs() < 1e-6);
         // Bare number in plain units.

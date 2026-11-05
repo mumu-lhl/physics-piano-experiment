@@ -34,7 +34,7 @@ impl PianoLidWidget {
         language: Language,
         learn: Option<LearnArm>,
     ) -> Handle<'_, Self> {
-        let param_base = ParamWidgetBase::new(cx, &params.lid_angle);
+        let param_base = ParamWidgetBase::new(&params.lid_angle);
         let value = param_base.unmodulated_signal(cx);
 
         Self {

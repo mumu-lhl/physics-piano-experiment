@@ -38,7 +38,7 @@ impl ParamButton {
         'p: 'c,
         P: Param + 'static,
     {
-        let param_base = ParamWidgetBase::new(cx, param);
+        let param_base = ParamWidgetBase::new(param);
         let modulated_signal = param_base.modulated_signal(cx);
         let label_override: SyncSignal<Option<String>> = SyncSignal::new(None);
 

@@ -61,9 +61,9 @@ impl VelocityCurveEditorWidget {
     {
         Self {
             bases: [
-                ParamWidgetBase::new(cx, point_25),
-                ParamWidgetBase::new(cx, point_50),
-                ParamWidgetBase::new(cx, point_75),
+                ParamWidgetBase::new(point_25),
+                ParamWidgetBase::new(point_50),
+                ParamWidgetBase::new(point_75),
             ],
             dragging: None,
             selected: 0,
