@@ -1009,6 +1009,38 @@ msgctxt "fx.reverb_decay"
 msgid "Reverb Decay:"
 msgstr "Reverb Decay:"
 
+msgctxt "fx.delay_time"
+msgid "Delay Time:"
+msgstr "Delay Time:"
+
+msgctxt "fx.delay_feedback"
+msgid "Delay Feedback:"
+msgstr "Delay Feedback:"
+
+msgctxt "fx.delay_mix"
+msgid "Delay Mix:"
+msgstr "Delay Mix:"
+
+msgctxt "fx.comp_threshold"
+msgid "Comp Threshold:"
+msgstr "Comp Threshold:"
+
+msgctxt "fx.comp_ratio"
+msgid "Comp Ratio:"
+msgstr "Comp Ratio:"
+
+msgctxt "fx.comp_attack"
+msgid "Comp Attack:"
+msgstr "Comp Attack:"
+
+msgctxt "fx.comp_release"
+msgid "Comp Release:"
+msgstr "Comp Release:"
+
+msgctxt "fx.comp_makeup"
+msgid "Comp Makeup:"
+msgstr "Comp Makeup:"
+
 msgctxt "fx.tooltip.eq_low"
 msgid "Low shelf EQ at 120 Hz: boosts or cuts bass."
 msgstr "Low shelf EQ at 120 Hz: boosts or cuts bass."
@@ -1028,6 +1060,38 @@ msgstr "Reverb amount: 0 is dry, higher adds hall sound."
 msgctxt "fx.tooltip.reverb_decay"
 msgid "Reverb length: longer decay means a bigger hall."
 msgstr "Reverb length: longer decay means a bigger hall."
+
+msgctxt "fx.tooltip.delay_time"
+msgid "Delay time: echo repeats after this many milliseconds."
+msgstr "Delay time: echo repeats after this many milliseconds."
+
+msgctxt "fx.tooltip.delay_feedback"
+msgid "Delay feedback: higher repeats the echo more times."
+msgstr "Delay feedback: higher repeats the echo more times."
+
+msgctxt "fx.tooltip.delay_mix"
+msgid "Delay amount: 0 is dry, higher adds echo."
+msgstr "Delay amount: 0 is dry, higher adds echo."
+
+msgctxt "fx.tooltip.comp_threshold"
+msgid "Compressor threshold: signals above this level get reduced."
+msgstr "Compressor threshold: signals above this level get reduced."
+
+msgctxt "fx.tooltip.comp_ratio"
+msgid "Compressor ratio: how much louder signals are reduced."
+msgstr "Compressor ratio: how much louder signals are reduced."
+
+msgctxt "fx.tooltip.comp_attack"
+msgid "Compressor attack: how fast it clamps loud transients."
+msgstr "Compressor attack: how fast it clamps loud transients."
+
+msgctxt "fx.tooltip.comp_release"
+msgid "Compressor release: how fast it lets go after the signal drops."
+msgstr "Compressor release: how fast it lets go after the signal drops."
+
+msgctxt "fx.tooltip.comp_makeup"
+msgid "Compressor makeup gain: restores level after compression."
+msgstr "Compressor makeup gain: restores level after compression."
 
 msgctxt "learn.on"
 msgid "Learn on: click a knob"

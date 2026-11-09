@@ -1009,6 +1009,38 @@ msgctxt "fx.reverb_decay"
 msgid "Reverb Decay:"
 msgstr "混响衰减："
 
+msgctxt "fx.delay_time"
+msgid "Delay Time:"
+msgstr "延迟时间："
+
+msgctxt "fx.delay_feedback"
+msgid "Delay Feedback:"
+msgstr "延迟反馈："
+
+msgctxt "fx.delay_mix"
+msgid "Delay Mix:"
+msgstr "延迟量："
+
+msgctxt "fx.comp_threshold"
+msgid "Comp Threshold:"
+msgstr "压缩阈值："
+
+msgctxt "fx.comp_ratio"
+msgid "Comp Ratio:"
+msgstr "压缩比："
+
+msgctxt "fx.comp_attack"
+msgid "Comp Attack:"
+msgstr "压缩启动："
+
+msgctxt "fx.comp_release"
+msgid "Comp Release:"
+msgstr "压缩释放："
+
+msgctxt "fx.comp_makeup"
+msgid "Comp Makeup:"
+msgstr "压缩补偿："
+
 msgctxt "fx.tooltip.eq_low"
 msgid "Low shelf EQ at 120 Hz: boosts or cuts bass."
 msgstr "120 Hz 低频搁架均衡：提升或削减低频。"
@@ -1028,6 +1060,38 @@ msgstr "混响量：0 为干声，越大厅堂感越强。"
 msgctxt "fx.tooltip.reverb_decay"
 msgid "Reverb length: longer decay means a bigger hall."
 msgstr "混响长度：衰减越长，厅堂越大。"
+
+msgctxt "fx.tooltip.delay_time"
+msgid "Delay time: echo repeats after this many milliseconds."
+msgstr "延迟时间：回声在这么多毫秒后重复。"
+
+msgctxt "fx.tooltip.delay_feedback"
+msgid "Delay feedback: higher repeats the echo more times."
+msgstr "延迟反馈：越高回声重复次数越多。"
+
+msgctxt "fx.tooltip.delay_mix"
+msgid "Delay amount: 0 is dry, higher adds echo."
+msgstr "延迟量：0 为干声，越高回声越明显。"
+
+msgctxt "fx.tooltip.comp_threshold"
+msgid "Compressor threshold: signals above this level get reduced."
+msgstr "压缩阈值：超过此电平的信号会被压低。"
+
+msgctxt "fx.tooltip.comp_ratio"
+msgid "Compressor ratio: how much louder signals are reduced."
+msgstr "压缩比：超过阈值的信号被压缩的程度。"
+
+msgctxt "fx.tooltip.comp_attack"
+msgid "Compressor attack: how fast it clamps loud transients."
+msgstr "压缩启动时间：压住瞬态的速度。"
+
+msgctxt "fx.tooltip.comp_release"
+msgid "Compressor release: how fast it lets go after the signal drops."
+msgstr "压缩释放时间：信号回落后松开的速度。"
+
+msgctxt "fx.tooltip.comp_makeup"
+msgid "Compressor makeup gain: restores level after compression."
+msgstr "压缩补偿增益：压缩后恢复电平。"
 
 msgctxt "learn.on"
 msgid "Learn on: click a knob"
