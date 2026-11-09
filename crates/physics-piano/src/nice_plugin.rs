@@ -109,6 +109,38 @@ pub struct PhysicsPianoParams {
     /// FX: reverb decay [0.0 ~ 1.0], higher = longer tail
     #[id = "fx_reverb_decay"]
     pub fx_reverb_decay: FloatParam,
+
+    /// FX: delay time in ms [1 ~ 2000]
+    #[id = "fx_delay_time"]
+    pub fx_delay_time: FloatParam,
+
+    /// FX: delay feedback [0.0 ~ 0.95], higher = more repeats
+    #[id = "fx_delay_feedback"]
+    pub fx_delay_feedback: FloatParam,
+
+    /// FX: delay dry/wet mix [0.0 ~ 1.0], 0 = dry
+    #[id = "fx_delay_mix"]
+    pub fx_delay_mix: FloatParam,
+
+    /// FX: compressor threshold in dB [-60 ~ 0]
+    #[id = "fx_comp_threshold"]
+    pub fx_comp_threshold: FloatParam,
+
+    /// FX: compressor ratio [1 ~ 20]
+    #[id = "fx_comp_ratio"]
+    pub fx_comp_ratio: FloatParam,
+
+    /// FX: compressor attack in ms [0.1 ~ 100]
+    #[id = "fx_comp_attack"]
+    pub fx_comp_attack: FloatParam,
+
+    /// FX: compressor release in ms [10 ~ 1000]
+    #[id = "fx_comp_release"]
+    pub fx_comp_release: FloatParam,
+
+    /// FX: compressor makeup gain in dB [0 ~ 24]
+    #[id = "fx_comp_makeup"]
+    pub fx_comp_makeup: FloatParam,
 }
 
 /// Migrates legacy velocity-curve preset entries to curve points. Old
@@ -328,6 +360,89 @@ impl Default for PhysicsPianoParams {
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )
             .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            fx_delay_time: FloatParam::new(
+                "Delay Time",
+                250.0,
+                FloatRange::Linear {
+                    min: 1.0,
+                    max: 2000.0,
+                },
+            )
+            .with_unit(" ms")
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
+
+            fx_delay_feedback: FloatParam::new(
+                "Delay Feedback",
+                0.35,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 0.95,
+                },
+            )
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            fx_delay_mix: FloatParam::new(
+                "Delay Mix",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            fx_comp_threshold: FloatParam::new(
+                "Compressor Threshold",
+                -18.0,
+                FloatRange::Linear {
+                    min: -60.0,
+                    max: 0.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            fx_comp_ratio: FloatParam::new(
+                "Compressor Ratio",
+                1.0,
+                FloatRange::Linear {
+                    min: 1.0,
+                    max: 20.0,
+                },
+            )
+            .with_unit(":1")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            fx_comp_attack: FloatParam::new(
+                "Compressor Attack",
+                10.0,
+                FloatRange::Linear {
+                    min: 0.1,
+                    max: 100.0,
+                },
+            )
+            .with_unit(" ms")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            fx_comp_release: FloatParam::new(
+                "Compressor Release",
+                100.0,
+                FloatRange::Linear {
+                    min: 10.0,
+                    max: 1000.0,
+                },
+            )
+            .with_unit(" ms")
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
+
+            fx_comp_makeup: FloatParam::new(
+                "Compressor Makeup",
+                0.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 24.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
         }
     }
 }
@@ -779,6 +894,14 @@ impl Plugin for PhysicsPiano {
             self.params.fx_eq_high.value() as f64,
             self.params.fx_reverb_mix.value() as f64,
             self.params.fx_reverb_decay.value() as f64,
+            self.params.fx_delay_time.value() as f64,
+            self.params.fx_delay_feedback.value() as f64,
+            self.params.fx_delay_mix.value() as f64,
+            self.params.fx_comp_threshold.value() as f64,
+            self.params.fx_comp_ratio.value() as f64,
+            self.params.fx_comp_attack.value() as f64,
+            self.params.fx_comp_release.value() as f64,
+            self.params.fx_comp_makeup.value() as f64,
         );
         self.fx.process_block(
             &mut self.scratch_l[..num_samples],
@@ -1190,5 +1313,13 @@ mod launch_preset_tests {
         assert!((params.hammer_hardness.value() - 1.0).abs() < 1e-6);
         assert!((params.inharmonicity_scale.value() - 1.0).abs() < 1e-6);
         assert!((params.lid_angle.value() - 45.0).abs() < 1e-6);
+        assert!((params.fx_delay_time.value() - 250.0).abs() < 1e-6);
+        assert!((params.fx_delay_feedback.value() - 0.35).abs() < 1e-6);
+        assert!((params.fx_delay_mix.value() - 0.0).abs() < 1e-6);
+        assert!((params.fx_comp_threshold.value() - -18.0).abs() < 1e-6);
+        assert!((params.fx_comp_ratio.value() - 1.0).abs() < 1e-6);
+        assert!((params.fx_comp_attack.value() - 10.0).abs() < 1e-6);
+        assert!((params.fx_comp_release.value() - 100.0).abs() < 1e-6);
+        assert!((params.fx_comp_makeup.value() - 0.0).abs() < 1e-6);
     }
 }

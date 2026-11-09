@@ -132,6 +132,38 @@ pub struct PhysicsGuitarParams {
     /// FX: reverb decay [0.0 ~ 1.0], higher = longer tail
     #[id = "fx_reverb_decay"]
     pub fx_reverb_decay: FloatParam,
+
+    /// FX: delay time [1 ms ~ 2000 ms]
+    #[id = "fx_delay_time"]
+    pub fx_delay_time: FloatParam,
+
+    /// FX: delay feedback [0.0 ~ 0.95], higher = more repeats
+    #[id = "fx_delay_feedback"]
+    pub fx_delay_feedback: FloatParam,
+
+    /// FX: delay dry/wet mix [0.0 ~ 1.0], 0 = dry
+    #[id = "fx_delay_mix"]
+    pub fx_delay_mix: FloatParam,
+
+    /// FX: compressor threshold [-60 dB ~ 0 dB]
+    #[id = "fx_comp_threshold"]
+    pub fx_comp_threshold: FloatParam,
+
+    /// FX: compressor ratio [1:1 ~ 20:1]
+    #[id = "fx_comp_ratio"]
+    pub fx_comp_ratio: FloatParam,
+
+    /// FX: compressor attack [0.1 ms ~ 100 ms]
+    #[id = "fx_comp_attack"]
+    pub fx_comp_attack: FloatParam,
+
+    /// FX: compressor release [10 ms ~ 1000 ms]
+    #[id = "fx_comp_release"]
+    pub fx_comp_release: FloatParam,
+
+    /// FX: compressor makeup gain [0 dB ~ +24 dB]
+    #[id = "fx_comp_makeup"]
+    pub fx_comp_makeup: FloatParam,
 }
 
 impl Default for PhysicsGuitarParams {
@@ -320,6 +352,89 @@ impl Default for PhysicsGuitarParams {
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )
             .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            fx_delay_time: FloatParam::new(
+                "Delay Time",
+                250.0,
+                FloatRange::Linear {
+                    min: 1.0,
+                    max: 2000.0,
+                },
+            )
+            .with_unit(" ms")
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
+
+            fx_delay_feedback: FloatParam::new(
+                "Delay Feedback",
+                0.35,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 0.95,
+                },
+            )
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            fx_delay_mix: FloatParam::new(
+                "Delay Mix",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
+
+            fx_comp_threshold: FloatParam::new(
+                "Compressor Threshold",
+                -18.0,
+                FloatRange::Linear {
+                    min: -60.0,
+                    max: 0.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            fx_comp_ratio: FloatParam::new(
+                "Compressor Ratio",
+                1.0,
+                FloatRange::Linear {
+                    min: 1.0,
+                    max: 20.0,
+                },
+            )
+            .with_unit(":1")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            fx_comp_attack: FloatParam::new(
+                "Compressor Attack",
+                10.0,
+                FloatRange::Linear {
+                    min: 0.1,
+                    max: 100.0,
+                },
+            )
+            .with_unit(" ms")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+
+            fx_comp_release: FloatParam::new(
+                "Compressor Release",
+                100.0,
+                FloatRange::Linear {
+                    min: 10.0,
+                    max: 1000.0,
+                },
+            )
+            .with_unit(" ms")
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
+
+            fx_comp_makeup: FloatParam::new(
+                "Compressor Makeup",
+                0.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 24.0,
+                },
+            )
+            .with_unit(" dB")
+            .with_value_to_string(formatters::v2s_f32_rounded(1)),
         }
     }
 }
@@ -801,12 +916,13 @@ impl Plugin for PhysicsGuitar {
         self.engine.pluck_pos_ratio = self.params.pluck_pos.value() as f64;
         self.engine.master_volume = self.params.master_gain.value() as f64;
 
-        // Insert FX (3-band EQ + reverb) on the engine output. Neutral by
-        // default (0 dB EQ, dry mix), so existing presets sound unchanged
-        // until FX is dialed in. EQ and reverb are linear, so placing FX
-        // after the master volume is equivalent to placing it before;
-        // the final output is soft-limited after the FX in the sample
-        // loop below, since the EQ can add +12 dB per band.
+        // Insert FX (3-band EQ + reverb + delay + compressor) on the engine
+        // output. Neutral by default (0 dB EQ, dry mix, 1:1 ratio), so
+        // existing presets sound unchanged until FX is dialed in. EQ and
+        // reverb are linear, so placing FX after the master volume is
+        // equivalent to placing it before; the final output is soft-limited
+        // after the FX in the sample loop below, since the EQ can add
+        // +12 dB per band.
         self.fx.set_sample_rate(self.sample_rate as f64);
         self.fx.set_params(
             self.params.fx_eq_low.value() as f64,
@@ -814,6 +930,14 @@ impl Plugin for PhysicsGuitar {
             self.params.fx_eq_high.value() as f64,
             self.params.fx_reverb_mix.value() as f64,
             self.params.fx_reverb_decay.value() as f64,
+            self.params.fx_delay_time.value() as f64,
+            self.params.fx_delay_feedback.value() as f64,
+            self.params.fx_delay_mix.value() as f64,
+            self.params.fx_comp_threshold.value() as f64,
+            self.params.fx_comp_ratio.value() as f64,
+            self.params.fx_comp_attack.value() as f64,
+            self.params.fx_comp_release.value() as f64,
+            self.params.fx_comp_makeup.value() as f64,
         );
 
         // 3. Sample-accurate MIDI / MPE dispatch
@@ -1209,7 +1333,9 @@ mod output_limiter_tests {
         // `ProcessContext`, so this tests the exact composition that
         // loop performs: engine output -> FxChain -> `soft_limit`.
         let mut fx = FxChain::new(44100.0);
-        fx.set_params(12.0, 12.0, 12.0, 0.0, 0.5);
+        fx.set_params(
+            12.0, 12.0, 12.0, 0.0, 0.5, 250.0, 0.35, 0.0, -18.0, 1.0, 10.0, 100.0, 0.0,
+        );
         let mut peak_unlimited = 0.0f64;
         let mut peak_limited = 0.0f64;
         for n in 0..44100 {
@@ -1235,7 +1361,9 @@ mod output_limiter_tests {
         engine.strummer.set_strum_speed_ms(0.0);
         engine.note_on(6, 40, 1.0);
         let mut fx = FxChain::new(44100.0);
-        fx.set_params(12.0, 12.0, 12.0, 0.0, 0.5);
+        fx.set_params(
+            12.0, 12.0, 12.0, 0.0, 0.5, 250.0, 0.35, 0.0, -18.0, 1.0, 10.0, 100.0, 0.0,
+        );
         for _ in 0..44100 {
             let (l, r) = engine.process_sample();
             let (l, r) = fx.process_sample(l, r);
@@ -1304,5 +1432,18 @@ mod launch_preset_tests {
         assert!((params.fret_buzz.value() - 0.35).abs() < 1e-6);
         assert!((params.pluck_pos.value() - 0.15).abs() < 1e-6);
         assert!((params.finger_squeak.value() - 0.40).abs() < 1e-6);
+        assert!((params.fx_eq_low.value() - 0.0).abs() < 1e-6);
+        assert!((params.fx_eq_mid.value() - 0.0).abs() < 1e-6);
+        assert!((params.fx_eq_high.value() - 0.0).abs() < 1e-6);
+        assert!((params.fx_reverb_mix.value() - 0.0).abs() < 1e-6);
+        assert!((params.fx_reverb_decay.value() - 0.5).abs() < 1e-6);
+        assert!((params.fx_delay_time.value() - 250.0).abs() < 1e-6);
+        assert!((params.fx_delay_feedback.value() - 0.35).abs() < 1e-6);
+        assert!((params.fx_delay_mix.value() - 0.0).abs() < 1e-6);
+        assert!((params.fx_comp_threshold.value() - -18.0).abs() < 1e-6);
+        assert!((params.fx_comp_ratio.value() - 1.0).abs() < 1e-6);
+        assert!((params.fx_comp_attack.value() - 10.0).abs() < 1e-6);
+        assert!((params.fx_comp_release.value() - 100.0).abs() < 1e-6);
+        assert!((params.fx_comp_makeup.value() - 0.0).abs() < 1e-6);
     }
 }
