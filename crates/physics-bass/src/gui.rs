@@ -98,6 +98,14 @@ fn bass_value(params: &PhysicsBassParams, id: &str) -> Option<f32> {
         "fx_eq_high" => params.fx_eq_high.value(),
         "fx_reverb_mix" => params.fx_reverb_mix.value(),
         "fx_reverb_decay" => params.fx_reverb_decay.value(),
+        "fx_delay_time" => params.fx_delay_time.value(),
+        "fx_delay_feedback" => params.fx_delay_feedback.value(),
+        "fx_delay_mix" => params.fx_delay_mix.value(),
+        "fx_comp_threshold" => params.fx_comp_threshold.value(),
+        "fx_comp_ratio" => params.fx_comp_ratio.value(),
+        "fx_comp_attack" => params.fx_comp_attack.value(),
+        "fx_comp_release" => params.fx_comp_release.value(),
+        "fx_comp_makeup" => params.fx_comp_makeup.value(),
         _ => return None,
     })
 }
@@ -119,6 +127,14 @@ fn set_bass_value(cx: &mut EventContext, params: &PhysicsBassParams, id: &str, v
         "fx_eq_high" => set_param(cx, &params.fx_eq_high, value),
         "fx_reverb_mix" => set_param(cx, &params.fx_reverb_mix, value),
         "fx_reverb_decay" => set_param(cx, &params.fx_reverb_decay, value),
+        "fx_delay_time" => set_param(cx, &params.fx_delay_time, value),
+        "fx_delay_feedback" => set_param(cx, &params.fx_delay_feedback, value),
+        "fx_delay_mix" => set_param(cx, &params.fx_delay_mix, value),
+        "fx_comp_threshold" => set_param(cx, &params.fx_comp_threshold, value),
+        "fx_comp_ratio" => set_param(cx, &params.fx_comp_ratio, value),
+        "fx_comp_attack" => set_param(cx, &params.fx_comp_attack, value),
+        "fx_comp_release" => set_param(cx, &params.fx_comp_release, value),
+        "fx_comp_makeup" => set_param(cx, &params.fx_comp_makeup, value),
         _ => {}
     }
 }
@@ -140,6 +156,14 @@ fn bass_snapshot(params: &PhysicsBassParams) -> HashMap<String, f32> {
         "fx_eq_high",
         "fx_reverb_mix",
         "fx_reverb_decay",
+        "fx_delay_time",
+        "fx_delay_feedback",
+        "fx_delay_mix",
+        "fx_comp_threshold",
+        "fx_comp_ratio",
+        "fx_comp_attack",
+        "fx_comp_release",
+        "fx_comp_makeup",
     ]
     .into_iter()
     .filter_map(|id| bass_value(params, id).map(|value| (id.to_string(), value)))
@@ -693,6 +717,22 @@ impl Model for BassUiState {
                 "fx_reverb_mix"
             } else if ptr == params.fx_reverb_decay.as_ptr() {
                 "fx_reverb_decay"
+            } else if ptr == params.fx_delay_time.as_ptr() {
+                "fx_delay_time"
+            } else if ptr == params.fx_delay_feedback.as_ptr() {
+                "fx_delay_feedback"
+            } else if ptr == params.fx_delay_mix.as_ptr() {
+                "fx_delay_mix"
+            } else if ptr == params.fx_comp_threshold.as_ptr() {
+                "fx_comp_threshold"
+            } else if ptr == params.fx_comp_ratio.as_ptr() {
+                "fx_comp_ratio"
+            } else if ptr == params.fx_comp_attack.as_ptr() {
+                "fx_comp_attack"
+            } else if ptr == params.fx_comp_release.as_ptr() {
+                "fx_comp_release"
+            } else if ptr == params.fx_comp_makeup.as_ptr() {
+                "fx_comp_makeup"
             } else {
                 return;
             };
@@ -745,6 +785,22 @@ impl Model for BassUiState {
                 ("fx_reverb_mix", params.fx_reverb_mix.value())
             } else if ptr == params.fx_reverb_decay.as_ptr() {
                 ("fx_reverb_decay", params.fx_reverb_decay.value())
+            } else if ptr == params.fx_delay_time.as_ptr() {
+                ("fx_delay_time", params.fx_delay_time.value())
+            } else if ptr == params.fx_delay_feedback.as_ptr() {
+                ("fx_delay_feedback", params.fx_delay_feedback.value())
+            } else if ptr == params.fx_delay_mix.as_ptr() {
+                ("fx_delay_mix", params.fx_delay_mix.value())
+            } else if ptr == params.fx_comp_threshold.as_ptr() {
+                ("fx_comp_threshold", params.fx_comp_threshold.value())
+            } else if ptr == params.fx_comp_ratio.as_ptr() {
+                ("fx_comp_ratio", params.fx_comp_ratio.value())
+            } else if ptr == params.fx_comp_attack.as_ptr() {
+                ("fx_comp_attack", params.fx_comp_attack.value())
+            } else if ptr == params.fx_comp_release.as_ptr() {
+                ("fx_comp_release", params.fx_comp_release.value())
+            } else if ptr == params.fx_comp_makeup.as_ptr() {
+                ("fx_comp_makeup", params.fx_comp_makeup.value())
             } else {
                 return;
             };
@@ -1301,10 +1357,24 @@ pub fn create_vizia_bass_editor(
                         parameter_knob(cx, translate(lang, "fx.reverb_decay", "Reverb Decay:"), &params.fx_reverb_decay, 120.0, translate(lang, "fx.tooltip.reverb_decay", "Reverb length: longer decay means a bigger hall."), Some(learn.clone()));
                     })
                     .horizontal_gap(Pixels(8.0));
+                    HStack::new(cx, |cx| {
+                        parameter_knob(cx, translate(lang, "fx.delay_time", "Delay Time:"), &params.fx_delay_time, 120.0, translate(lang, "fx.tooltip.delay_time", "Delay time: echo repeats after this many milliseconds."), Some(learn.clone()));
+                        parameter_knob(cx, translate(lang, "fx.delay_feedback", "Delay Feedback:"), &params.fx_delay_feedback, 120.0, translate(lang, "fx.tooltip.delay_feedback", "Delay feedback: higher repeats the echo more times."), Some(learn.clone()));
+                        parameter_knob(cx, translate(lang, "fx.delay_mix", "Delay Mix:"), &params.fx_delay_mix, 120.0, translate(lang, "fx.tooltip.delay_mix", "Delay amount: 0 is dry, higher adds echo."), Some(learn.clone()));
+                    })
+                    .horizontal_gap(Pixels(8.0));
+                    HStack::new(cx, |cx| {
+                        parameter_knob(cx, translate(lang, "fx.comp_threshold", "Comp Threshold:"), &params.fx_comp_threshold, 120.0, translate(lang, "fx.tooltip.comp_threshold", "Compressor threshold: signals above this level get reduced."), Some(learn.clone()));
+                        parameter_knob(cx, translate(lang, "fx.comp_ratio", "Comp Ratio:"), &params.fx_comp_ratio, 120.0, translate(lang, "fx.tooltip.comp_ratio", "Compressor ratio: how much louder signals are reduced."), Some(learn.clone()));
+                        parameter_knob(cx, translate(lang, "fx.comp_attack", "Comp Attack:"), &params.fx_comp_attack, 120.0, translate(lang, "fx.tooltip.comp_attack", "Compressor attack: how fast it clamps loud transients."), Some(learn.clone()));
+                        parameter_knob(cx, translate(lang, "fx.comp_release", "Comp Release:"), &params.fx_comp_release, 120.0, translate(lang, "fx.tooltip.comp_release", "Compressor release: how fast it lets go after the signal drops."), Some(learn.clone()));
+                        parameter_knob(cx, translate(lang, "fx.comp_makeup", "Comp Makeup:"), &params.fx_comp_makeup, 120.0, translate(lang, "fx.tooltip.comp_makeup", "Compressor makeup gain: restores level after compression."), Some(learn.clone()));
+                    })
+                    .horizontal_gap(Pixels(8.0));
                 })
                 .class("rack-box")
                 .width(Stretch(1.0))
-                .height(Pixels(110.0));
+                .height(Pixels(260.0));
 
                 Label::new(cx, translate(lang, "bass.fretboard_hint", "Open notes + 24 frets · Keys 1-5 open strings · A-L notes · Z/X octaves")).class("hint-text");
                 BassFretboardWidget::new(

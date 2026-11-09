@@ -151,6 +151,14 @@ fn piano_value(params: &PhysicsPianoParams, id: &str) -> Option<f32> {
         "fx_eq_high" => params.fx_eq_high.value(),
         "fx_reverb_mix" => params.fx_reverb_mix.value(),
         "fx_reverb_decay" => params.fx_reverb_decay.value(),
+        "fx_delay_time" => params.fx_delay_time.value(),
+        "fx_delay_feedback" => params.fx_delay_feedback.value(),
+        "fx_delay_mix" => params.fx_delay_mix.value(),
+        "fx_comp_threshold" => params.fx_comp_threshold.value(),
+        "fx_comp_ratio" => params.fx_comp_ratio.value(),
+        "fx_comp_attack" => params.fx_comp_attack.value(),
+        "fx_comp_release" => params.fx_comp_release.value(),
+        "fx_comp_makeup" => params.fx_comp_makeup.value(),
         "sustain" => params.sustain_pedal.value(),
         "gain" => params.master_gain.value(),
         "unacorda" => f32::from(params.una_corda.value()),
@@ -179,6 +187,14 @@ fn set_piano_value(cx: &mut EventContext, params: &PhysicsPianoParams, id: &str,
         "fx_eq_high" => set_param(cx, &params.fx_eq_high, value),
         "fx_reverb_mix" => set_param(cx, &params.fx_reverb_mix, value),
         "fx_reverb_decay" => set_param(cx, &params.fx_reverb_decay, value),
+        "fx_delay_time" => set_param(cx, &params.fx_delay_time, value),
+        "fx_delay_feedback" => set_param(cx, &params.fx_delay_feedback, value),
+        "fx_delay_mix" => set_param(cx, &params.fx_delay_mix, value),
+        "fx_comp_threshold" => set_param(cx, &params.fx_comp_threshold, value),
+        "fx_comp_ratio" => set_param(cx, &params.fx_comp_ratio, value),
+        "fx_comp_attack" => set_param(cx, &params.fx_comp_attack, value),
+        "fx_comp_release" => set_param(cx, &params.fx_comp_release, value),
+        "fx_comp_makeup" => set_param(cx, &params.fx_comp_makeup, value),
         "sustain" => set_param(cx, &params.sustain_pedal, value),
         "gain" => set_param(cx, &params.master_gain, value),
         "unacorda" => set_param(cx, &params.una_corda, value >= 0.5),
@@ -207,6 +223,14 @@ fn piano_snapshot(params: &PhysicsPianoParams) -> HashMap<String, f32> {
         "fx_eq_high",
         "fx_reverb_mix",
         "fx_reverb_decay",
+        "fx_delay_time",
+        "fx_delay_feedback",
+        "fx_delay_mix",
+        "fx_comp_threshold",
+        "fx_comp_ratio",
+        "fx_comp_attack",
+        "fx_comp_release",
+        "fx_comp_makeup",
         "sustain",
         "gain",
         "unacorda",
@@ -745,6 +769,22 @@ impl Model for PianoUiState {
                 "fx_reverb_mix"
             } else if ptr == params.fx_reverb_decay.as_ptr() {
                 "fx_reverb_decay"
+            } else if ptr == params.fx_delay_time.as_ptr() {
+                "fx_delay_time"
+            } else if ptr == params.fx_delay_feedback.as_ptr() {
+                "fx_delay_feedback"
+            } else if ptr == params.fx_delay_mix.as_ptr() {
+                "fx_delay_mix"
+            } else if ptr == params.fx_comp_threshold.as_ptr() {
+                "fx_comp_threshold"
+            } else if ptr == params.fx_comp_ratio.as_ptr() {
+                "fx_comp_ratio"
+            } else if ptr == params.fx_comp_attack.as_ptr() {
+                "fx_comp_attack"
+            } else if ptr == params.fx_comp_release.as_ptr() {
+                "fx_comp_release"
+            } else if ptr == params.fx_comp_makeup.as_ptr() {
+                "fx_comp_makeup"
             } else if ptr == params.sustain_pedal.as_ptr() {
                 "sustain"
             } else if ptr == params.master_gain.as_ptr() {
@@ -811,6 +851,22 @@ impl Model for PianoUiState {
                 ("fx_reverb_mix", params.fx_reverb_mix.value())
             } else if ptr == params.fx_reverb_decay.as_ptr() {
                 ("fx_reverb_decay", params.fx_reverb_decay.value())
+            } else if ptr == params.fx_delay_time.as_ptr() {
+                ("fx_delay_time", params.fx_delay_time.value())
+            } else if ptr == params.fx_delay_feedback.as_ptr() {
+                ("fx_delay_feedback", params.fx_delay_feedback.value())
+            } else if ptr == params.fx_delay_mix.as_ptr() {
+                ("fx_delay_mix", params.fx_delay_mix.value())
+            } else if ptr == params.fx_comp_threshold.as_ptr() {
+                ("fx_comp_threshold", params.fx_comp_threshold.value())
+            } else if ptr == params.fx_comp_ratio.as_ptr() {
+                ("fx_comp_ratio", params.fx_comp_ratio.value())
+            } else if ptr == params.fx_comp_attack.as_ptr() {
+                ("fx_comp_attack", params.fx_comp_attack.value())
+            } else if ptr == params.fx_comp_release.as_ptr() {
+                ("fx_comp_release", params.fx_comp_release.value())
+            } else if ptr == params.fx_comp_makeup.as_ptr() {
+                ("fx_comp_makeup", params.fx_comp_makeup.value())
             } else if ptr == params.sustain_pedal.as_ptr() {
                 ("sustain", params.sustain_pedal.value())
             } else if ptr == params.master_gain.as_ptr() {
@@ -1485,10 +1541,104 @@ pub fn create_vizia_piano_editor(
                         );
                     })
                     .horizontal_gap(Pixels(8.0));
+                    HStack::new(cx, |cx| {
+                        knob(
+                            cx,
+                            translate(lang, "fx.delay_time", "Delay Time:"),
+                            &params.fx_delay_time,
+                            translate(
+                                lang,
+                                "fx.tooltip.delay_time",
+                                "Delay time: echo repeats after this many milliseconds.",
+                            ),
+                            &learn,
+                        );
+                        knob(
+                            cx,
+                            translate(lang, "fx.delay_feedback", "Delay Feedback:"),
+                            &params.fx_delay_feedback,
+                            translate(
+                                lang,
+                                "fx.tooltip.delay_feedback",
+                                "Delay feedback: higher repeats the echo more times.",
+                            ),
+                            &learn,
+                        );
+                        knob(
+                            cx,
+                            translate(lang, "fx.delay_mix", "Delay Mix:"),
+                            &params.fx_delay_mix,
+                            translate(
+                                lang,
+                                "fx.tooltip.delay_mix",
+                                "Delay amount: 0 is dry, higher adds echo.",
+                            ),
+                            &learn,
+                        );
+                    })
+                    .horizontal_gap(Pixels(8.0));
+                    HStack::new(cx, |cx| {
+                        knob(
+                            cx,
+                            translate(lang, "fx.comp_threshold", "Comp Threshold:"),
+                            &params.fx_comp_threshold,
+                            translate(
+                                lang,
+                                "fx.tooltip.comp_threshold",
+                                "Compressor threshold: signals above this level get reduced.",
+                            ),
+                            &learn,
+                        );
+                        knob(
+                            cx,
+                            translate(lang, "fx.comp_ratio", "Comp Ratio:"),
+                            &params.fx_comp_ratio,
+                            translate(
+                                lang,
+                                "fx.tooltip.comp_ratio",
+                                "Compressor ratio: how much louder signals are reduced.",
+                            ),
+                            &learn,
+                        );
+                        knob(
+                            cx,
+                            translate(lang, "fx.comp_attack", "Comp Attack:"),
+                            &params.fx_comp_attack,
+                            translate(
+                                lang,
+                                "fx.tooltip.comp_attack",
+                                "Compressor attack: how fast it clamps loud transients.",
+                            ),
+                            &learn,
+                        );
+                        knob(
+                            cx,
+                            translate(lang, "fx.comp_release", "Comp Release:"),
+                            &params.fx_comp_release,
+                            translate(
+                                lang,
+                                "fx.tooltip.comp_release",
+                                "Compressor release: how fast it lets go after the signal drops.",
+                            ),
+                            &learn,
+                        );
+                        knob(
+                            cx,
+                            translate(lang, "fx.comp_makeup", "Comp Makeup:"),
+                            &params.fx_comp_makeup,
+                            translate(
+                                lang,
+                                "fx.tooltip.comp_makeup",
+                                "Compressor makeup gain: restores level after compression.",
+                            ),
+                            &learn,
+                        );
+                    })
+                    .horizontal_gap(Pixels(8.0));
                 })
                 .class("rack-box")
                 .width(Stretch(1.0))
-                .height(Pixels(110.0));
+                .height(Pixels(256.0));
 
                 PianoKeyboardWidget::new(
                     cx,
